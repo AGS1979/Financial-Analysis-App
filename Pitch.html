@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aranca Financial Suite - Pitch Deck</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            --aranca-blue: #00416A;
+            --aranca-red: #D9232D;
+            --slate-900: #020617;
+            --slate-800: #1e293b;
+            --slate-600: #475569;
+            --slate-400: #94a3b8;
+            --slate-200: #e2e8f0;
+            --slate-100: #f1f5f9;
+            --sky-400: #38bdf8;
+        }
+        
+        .slide {
+            width: 100%;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 2rem 4rem;
+            scroll-snap-align: start;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .slide-content {
+            max-width: 1200px;
+            width: 100%;
+            position: relative;
+            z-index: 2;
+        }
+
+        .slide-number {
+            position: absolute;
+            bottom: 2rem;
+            right: 2rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--slate-400);
+            z-index: 3;
+        }
+
+        .aranca-logo-img {
+            height: 60px; /* Increased logo size */
+        }
+
+        .nav-button {
+            position: fixed;
+            top: 50%;
+            transform: translateY(-50%);
+            background-color: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(5px);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 0.75rem;
+            cursor: pointer;
+            z-index: 100;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: background-color 0.3s ease;
+        }
+        .nav-button:hover {
+            background-color: rgba(255, 255, 255, 0.2);
+        }
+        #prevBtn { left: 2rem; }
+        #nextBtn { right: 2rem; }
+
+        /* Animation */
+        .reveal {
+            opacity: 0;
+            transform: translateY(40px);
+            transition: opacity 0.8s ease-out, transform 0.6s ease-out;
+        }
+        .reveal.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .reveal-fast { transition-duration: 0.4s; }
+        .stagger-1 { transition-delay: 0.1s; }
+        .stagger-2 { transition-delay: 0.2s; }
+        .stagger-3 { transition-delay: 0.3s; }
+        .stagger-4 { transition-delay: 0.4s; }
+
+        /* Backgrounds */
+        .dark-bg {
+            background-color: var(--slate-900);
+            color: var(--slate-200);
+        }
+        .light-bg {
+            background-color: #f8fafc; /* Slightly lighter than slate-100 */
+            color: var(--slate-800);
+        }
+        .grid-bg {
+            background-image:
+                linear-gradient(to right, rgba(226, 232, 240, 0.7) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(226, 232, 240, 0.7) 1px, transparent 1px);
+            background-size: 50px 50px;
+        }
+        .dark-grid-bg {
+            background-image:
+                linear-gradient(to right, rgba(30, 41, 59, 0.5) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(30, 41, 59, 0.5) 1px, transparent 1px);
+            background-size: 80px 80px;
+        }
+        
+        /* Glassmorphism Card */
+        .glass-card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 1rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+
+        /* Screenshot Mockup */
+        .browser-mockup {
+            border-radius: 1.5rem !important;
+            background-color: #374151;
+            padding: 0.75rem;
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+        }
+        .browser-mockup-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+        }
+        .browser-mockup-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+        .browser-mockup img {
+            border-bottom-left-radius: 0.375rem;
+            border-bottom-right-radius: 0.375rem;
+            width: 120%;
+            display: block;
+        }
+
+    </style>
+</head>
+<body class="bg-slate-900">
+
+    <div id="presentation-container" style="scroll-snap-type: y mandatory; height: 100vh; overflow-y: scroll;">
+
+        <!-- Slide 1: Title Slide -->
+        <div id="slide1" class="slide dark-bg dark-grid-bg">
+            <div class="slide-content text-center">
+                <img src="logo.png" alt="Aranca Logo" class="mx-auto mb-8 aranca-logo-img reveal">
+                <h1 class="text-6xl font-bold mb-4 text-white reveal stagger-1">Aranca Financial Suite</h1>
+                <p class="text-2xl font-light text-slate-300 reveal stagger-2">AI-Powered Analytics for Institutional Investment</p>
+            </div>
+            <div class="slide-number">1 / 11</div>
+        </div>
+
+        <!-- Slide 2: The Problem -->
+        <div id="slide2" class="slide light-bg grid-bg">
+            <div class="slide-content">
+                <h2 class="text-5xl font-bold text-center mb-6 reveal" style="color: var(--aranca-blue);">The Modern Analyst's Dilemma</h2>
+                <p class="text-center text-slate-500 text-xl mb-16 reveal stagger-1">Information is abundant, but insights are scarce.</p>
+                <div class="grid md:grid-cols-3 gap-12">
+                    <div class="text-center reveal stagger-2">
+                        <div class="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-white shadow-lg"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-10 h-10" style="color: var(--aranca-red);"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg></div>
+                        <h3 class="text-2xl font-semibold mb-3">Manual Drudgery</h3>
+                        <p class="text-slate-600 text-lg leading-relaxed">Analysts are trapped in low-value tasks like data extraction and formatting, sacrificing time for true analysis.</p>
+                    </div>
+                    <div class="text-center reveal stagger-3">
+                        <div class="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-white shadow-lg"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-10 h-10" style="color: var(--aranca-red);"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" /></svg></div>
+                        <h3 class="text-2xl font-semibold mb-3">Information Overload</h3>
+                        <p class="text-slate-600 text-lg leading-relaxed">Navigating thousands of pages in filings to find critical insights is inefficient, error-prone, and unsustainable.</p>
+                    </div>
+                    <div class="text-center reveal stagger-4">
+                        <div class="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-white shadow-lg"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-10 h-10" style="color: var(--aranca-red);"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" /></svg></div>
+                        <h3 class="text-2xl font-semibold mb-3">Siloed Workflows</h3>
+                        <p class="text-slate-600 text-lg leading-relaxed">Jumping between disconnected tools for valuation, research, and portfolio management creates friction and data silos.</p>
+                    </div>
+                </div>
+            </div>
+            <div class="slide-number">2 / 11</div>
+        </div>
+
+        <!-- Slide 3: The Solution -->
+        <div id="slide3" class="slide light-bg grid-bg">
+            <div class="slide-content text-center">
+                <h2 class="text-4xl font-bold mb-4 reveal" style="color: var(--aranca-blue);">The Solution: A Unified Intelligence Layer</h2>
+                <p class="text-slate-600 text-lg mb-10 max-w-4xl mx-auto reveal stagger-1">The Aranca Financial Suite centralizes your workflow, transforming unstructured data into actionable intelligence and freeing analysts to focus on what matters: **generating alpha.**</p>
+                <div class="browser-mockup reveal stagger-2">
+                    <div class="browser-mockup-header">
+                        <div class="browser-mockup-dot" style="background-color: #f87171;"></div>
+                        <div class="browser-mockup-dot" style="background-color: #fbbd23;"></div>
+                        <div class="browser-mockup-dot" style="background-color: #34d399;"></div>
+                    </div>
+                    <img src="Dashboard.png" alt="Aranca Financial Suite Dashboard">
+                </div>
+            </div>
+            <div class="slide-number">3 / 11</div>
+        </div>
+
+        <!-- Slide 4: Core Tools Overview -->
+        <div id="slide4" class="slide dark-bg dark-grid-bg">
+            <div class="slide-content">
+                <h2 class="text-4xl font-bold text-center mb-16 text-white reveal">A Comprehensive Toolkit for Every Analyst</h2>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                    <div class="glass-card p-6 reveal stagger-1">
+                        <h3 class="text-xl font-semibold mb-2 text-white">Pre-IPO Memo Generator</h3>
+                        <p class="text-slate-400">Instantly generate institutional-quality investment memos from DRHPs.</p>
+                    </div>
+                    <div class="glass-card p-6 reveal stagger-2">
+                        <h3 class="text-xl font-semibold mb-2 text-white">DCF Ginny</h3>
+                        <p class="text-slate-400">Create robust, document-driven DCF models that integrate qualitative guidance.</p>
+                    </div>
+                    <div class="glass-card p-6 reveal stagger-3">
+                        <h3 class="text-xl font-semibold mb-2 text-white">Special Situations Analyzer</h3>
+                        <p class="text-slate-400">Analyze complex events like M&A, spin-offs, and activist campaigns.</p>
+                    </div>
+                    <div class="glass-card p-6 reveal stagger-2">
+                        <h3 class="text-xl font-semibold mb-2 text-white">ESG Analyzer</h3>
+                        <p class="text-slate-400">Extract, analyze, and compare key ESG metrics from sustainability reports.</p>
+                    </div>
+                    <div class="glass-card p-6 reveal stagger-3">
+                        <h3 class="text-xl font-semibold mb-2 text-white">Portfolio Agent</h3>
+                        <p class="text-slate-400">Build a persistent, queryable knowledge base for your entire portfolio.</p>
+                    </div>
+                    <div class="glass-card p-6 reveal stagger-4">
+                        <h3 class="text-xl font-semibold mb-2 text-white">And More...</h3>
+                        <p class="text-slate-400">A constantly evolving platform driven by client needs and market trends.</p>
+                    </div>
+                </div>
+            </div>
+            <div class="slide-number">4 / 11</div>
+        </div>
+
+        <!-- Slide 5: Pre-IPO Memo -->
+ <div id="slide5" class="slide light-bg grid-bg">
+    <div class="slide-content text-center">
+        <h3 class="text-4xl font-bold mb-4 reveal" style="color: var(--aranca-blue);">Pre-IPO Memo Generator</h3>
+        <p class="text-slate-600 text-lg mb-10 max-w-4xl mx-auto reveal stagger-1">Go from a 500-page DRHP to a structured, analytical investment memo in minutes. Our AI reads, understands, and synthesizes the entire document for rapid analysis.</p>
+        <div class="browser-mockup reveal stagger-2 max-w-5xl mx-auto">
+            <div class="browser-mockup-header">
+                <div class="browser-mockup-dot" style="background-color: #f87171;"></div>
+                <div class="browser-mockup-dot" style="background-color: #fbbd23;"></div>
+                <div class="browser-mockup-dot" style="background-color: #34d399;"></div>
+            </div>
+            <img src="PreIPO.png" alt="Pre-IPO Memo Generator Screenshot" onerror="this.onerror=null;this.src='image_78f43c.jpg';">
+        </div>
+    </div>
+    <div class="slide-number">5 / 11</div>
+</div>
+
+
+
+        <!-- Slide 6: DCF Ginny -->
+
+<div id="slide6" class="slide light-bg grid-bg">
+    <div class="slide-content text-center">
+        <h3 class="text-4xl font-bold mb-4 reveal" style="color: var(--aranca-blue);">DCF Ginny</h3>
+        <p class="text-slate-600 text-lg mb-10 max-w-4xl mx-auto reveal stagger-1">Fuse quantitative data with qualitative guidance from earnings calls. The AI generates base, bull, and bear case scenarios with detailed justifications, creating a more nuanced valuation.</p>
+        <div class="browser-mockup reveal stagger-2 max-w-5xl mx-auto">
+            <div class="browser-mockup-header">
+                <div class="browser-mockup-dot" style="background-color: #f87171;"></div>
+                <div class="browser-mockup-dot" style="background-color: #fbbd23;"></div>
+                <div class="browser-mockup-dot" style="background-color: #34d399;"></div>
+            </div>
+            <img src="DCFGinny.png" alt="Pre-IPO Memo Generator Screenshot" onerror="this.onerror=null;this.src='image_78f43c.jpg';">
+        </div>
+    </div>
+    <div class="slide-number">6 / 11</div>
+</div>
+
+
+        
+        <!-- Slide 7: Special Situations Analyzer -->
+
+<div id="slide6" class="slide light-bg grid-bg">
+    <div class="slide-content text-center">
+        <h3 class="text-4xl font-bold mb-4 reveal" style="color: var(--aranca-blue);">Special Situations Analyzer</h3>
+        <p class="text-slate-600 text-lg mb-10 max-w-4xl mx-auto reveal stagger-1">Provides a structured framework to analyze market-moving events. Generate tailored memos for M&A, spin-offs, and activist campaigns, complete with integrated valuation modules.</p>
+        <div class="browser-mockup reveal stagger-2 max-w-5xl mx-auto">
+            <div class="browser-mockup-header">
+                <div class="browser-mockup-dot" style="background-color: #f87171;"></div>
+                <div class="browser-mockup-dot" style="background-color: #fbbd23;"></div>
+                <div class="browser-mockup-dot" style="background-color: #34d399;"></div>
+            </div>
+            <img src="SS.png" alt="Pre-IPO Memo Generator Screenshot" onerror="this.onerror=null;this.src='image_78f43c.jpg';">
+        </div>
+    </div>
+    <div class="slide-number">7 / 11</div>
+</div>
+
+
+
+        <!-- Slide 8: ESG Analyzer -->
+        <div id="slide6" class="slide light-bg grid-bg">
+    <div class="slide-content text-center">
+        <h3 class="text-4xl font-bold mb-4 reveal" style="color: var(--aranca-blue);">ESG Analyzer</h3>
+        <p class="text-slate-600 text-lg mb-10 max-w-4xl mx-auto reveal stagger-1">Automate the extraction of ESG data from dense sustainability reports. Benchmark companies against peers and generate comparative reports instantly to integrate governance into your investment thesis.</p>
+        <div class="browser-mockup reveal stagger-2 max-w-5xl mx-auto">
+            <div class="browser-mockup-header">
+                <div class="browser-mockup-dot" style="background-color: #f87171;"></div>
+                <div class="browser-mockup-dot" style="background-color: #fbbd23;"></div>
+                <div class="browser-mockup-dot" style="background-color: #34d399;"></div>
+            </div>
+            <img src="ESG.png" alt="Pre-IPO Memo Generator Screenshot" onerror="this.onerror=null;this.src='image_78f43c.jpg';">
+        </div>
+    </div>
+    <div class="slide-number">8 / 11</div>
+</div>
+
+
+    
+
+        <!-- Slide 9: Portfolio Agent -->
+
+<div id="slide6" class="slide light-bg grid-bg">
+    <div class="slide-content text-center">
+        <h3 class="text-4xl font-bold mb-4 reveal" style="color: var(--aranca-blue);">Portfolio Agent</h3>
+        <p class="text-slate-600 text-lg mb-10 max-w-4xl mx-auto reveal stagger-1">Your team's collective brain. Index all your research, 10-Ks, and transcripts into a persistent, queryable knowledge base. Ask complex questions across your entire portfolio and get synthesized answers with source attribution.</p>
+        <div class="browser-mockup reveal stagger-2 max-w-5xl mx-auto">
+            <div class="browser-mockup-header">
+                <div class="browser-mockup-dot" style="background-color: #f87171;"></div>
+                <div class="browser-mockup-dot" style="background-color: #fbbd23;"></div>
+                <div class="browser-mockup-dot" style="background-color: #34d399;"></div>
+            </div>
+            <img src="PortAgent.png" alt="Pre-IPO Memo Generator Screenshot" onerror="this.onerror=null;this.src='image_78f43c.jpg';">
+        </div>
+    </div>
+    <div class="slide-number">8 / 11</div>
+</div>
+
+
+
+        <!-- Slide 10: Technology & Security -->
+        <div id="slide10" class="slide dark-bg dark-grid-bg">
+            <div class="slide-content text-center">
+                <h2 class="text-4xl font-bold mb-4 text-white reveal">Enterprise-Grade Technology</h2>
+                <p class="text-lg text-slate-400 mb-12 reveal stagger-1">Secure, scalable, and built to integrate.</p>
+                <div class="grid md:grid-cols-3 gap-8 text-left">
+                    <div class="glass-card p-8 reveal stagger-2">
+                        <h3 class="text-xl font-semibold mb-2 text-white">Secure & Compliant</h3>
+                        <p class="text-slate-400">Built on a robust cloud architecture, ensuring data security, privacy, and high availability for institutional workflows.</p>
+                    </div>
+                    <div class="glass-card p-8 reveal stagger-3">
+                        <h3 class="text-xl font-semibold mb-2 text-white">State-of-the-Art AI</h3>
+                        <p class="text-slate-400">Leverages cutting-edge LLMs and vector databases for deep contextual understanding and rapid information retrieval.</p>
+                    </div>
+                    <div class="glass-card p-8 reveal stagger-4">
+                        <h3 class="text-xl font-semibold mb-2 text-white">Seamless Integration</h3>
+                        <p class="text-slate-400">Designed to fit into your existing ecosystem with flexible data exports and API access for deeper integration.</p>
+                    </div>
+                </div>
+            </div>
+            <div class="slide-number">10 / 11</div>
+        </div>
+        
+        <!-- Slide 11: Call to Action -->
+        <div id="slide11" class="slide dark-bg">
+             <div class="absolute inset-0 dark-grid-bg opacity-50"></div>
+            <div class="slide-content text-center text-white">
+                 <img src="logo.png" alt="Aranca Logo" class="mx-auto mb-8 aranca-logo-img reveal">
+                <h2 class="text-5xl font-bold mb-6 reveal stagger-1">Let's Redefine Financial Analysis.</h2>
+                <p class="text-xl font-light text-slate-300 mb-12 max-w-3xl mx-auto reveal stagger-2">We invite you to experience the future of investment research. Let's schedule a live demo to showcase how the Aranca Financial Suite can be tailored to your firm's unique workflow.</p>
+                <button class="bg-white font-bold py-4 px-10 rounded-full text-lg hover:bg-slate-200 transition-colors duration-300 reveal stagger-3" style="color: var(--aranca-blue);">Request a Live Demo</button>
+            </div>
+            <div class="slide-number">11 / 11</div>
+        </div>
+
+    </div>
+
+    <button id="prevBtn" class="nav-button">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5" /></svg>
+    </button>
+    <button id="nextBtn" class="nav-button">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
+    </button>
+
+    <script>
+        const container = document.getElementById('presentation-container');
+        const slides = document.querySelectorAll('.slide');
+        const prevBtn = document.getElementById('prevBtn');
+        const nextBtn = document.getElementById('nextBtn');
+        let currentSlide = 0;
+
+        function goToSlide(slideIndex) {
+            if (slideIndex >= 0 && slideIndex < slides.length) {
+                slides[slideIndex].scrollIntoView({ behavior: 'smooth' });
+                currentSlide = slideIndex;
+            }
+        }
+
+        prevBtn.addEventListener('click', () => {
+            goToSlide(currentSlide - 1);
+        });
+
+        nextBtn.addEventListener('click', () => {
+            goToSlide(currentSlide + 1);
+        });
+        
+        container.addEventListener('scroll', () => {
+            const slideHeight = container.clientHeight;
+            currentSlide = Math.round(container.scrollTop / slideHeight);
+        });
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.querySelectorAll('.reveal').forEach(el => {
+                        el.classList.add('visible');
+                    });
+                } else {
+                     entry.target.querySelectorAll('.reveal').forEach(el => {
+                        // Optional: remove class to re-animate on scroll back
+                        // el.classList.remove('visible');
+                    });
+                }
+            });
+        }, { threshold: 0.3 });
+
+        slides.forEach(slide => {
+            observer.observe(slide);
+        });
+
+    </script>
+</body>
+</html>
