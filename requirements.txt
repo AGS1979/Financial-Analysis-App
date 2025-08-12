@@ -16,3 +16,4 @@ pinecone
 PyPDF2
 markdown
 st-supabase-connection
+gotrue
