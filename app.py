@@ -1,3 +1,4 @@
+from st_supabase_connection import SupabaseConnection
 import hashlib # For password hashing
 import html # Used to escape markdown characters
 import io
@@ -297,33 +298,36 @@ st.markdown(
 # 0. USER AUTHENTICATION (MODIFIED)
 # ==============================================================================
 
-# --- Database and Whitelist Configuration ---
-USER_DB_FILE = "users.csv"
-WHITELIST_FILE = "whitelist.csv"
 
-# --- Whitelist Management ---
-def get_whitelist() -> list:
-    """Loads whitelisted emails from CSV, creates file if it doesn't exist."""
-    if not os.path.exists(WHITELIST_FILE):
-        # Create an empty whitelist with a header
-        pd.DataFrame(columns=["email"]).to_csv(WHITELIST_FILE, index=False)
-    return pd.read_csv(WHITELIST_FILE)["email"].tolist()
+# Initialize the Supabase connection
+conn = st.connection("supabase", type=SupabaseConnection)
 
-def save_whitelist(emails: list):
-    """Saves the email list to the whitelist CSV."""
-    pd.DataFrame({"email": emails}).to_csv(WHITELIST_FILE, index=False)
+# --- New Database Functions for Whitelist ---
+def get_whitelist_db():
+    """Fetches whitelisted emails from the Supabase database."""
+    rows = conn.query("*", table="whitelist", ttl=0).execute()
+    return [row['email'] for row in rows.data]
 
-# --- User Database Management ---
-def get_user_db():
-    """Loads user data from CSV, creates the file with an 'email' column if it doesn't exist."""
-    if not os.path.exists(USER_DB_FILE):
-        df = pd.DataFrame(columns=["email", "password_hash"])
-        df.to_csv(USER_DB_FILE, index=False)
-    return pd.read_csv(USER_DB_FILE)
+def add_to_whitelist_db(email: str):
+    """Adds a new email to the whitelist table."""
+    conn.insert("whitelist", data=[{"email": email}]).execute()
 
-def save_user_db(df):
-    """Saves the user dataframe to CSV."""
-    df.to_csv(USER_DB_FILE, index=False)
+def remove_from_whitelist_db(email: str):
+    """Removes an email from the whitelist table."""
+    conn.delete("whitelist").eq("email", email).execute()
+
+# --- New Database Functions for Users ---
+def get_users_db():
+    """Fetches user data from the Supabase database."""
+    rows = conn.query("*", table="users", ttl=0).execute()
+    # Return an empty DataFrame with correct columns if there's no data
+    if not rows.data:
+        return pd.DataFrame(columns=['email', 'password_hash'])
+    return pd.DataFrame(rows.data)
+
+def add_user_db(email: str, hashed_password: str):
+    """Adds a new user to the users table."""
+    conn.insert("users", data=[{"email": email, "password_hash": hashed_password}]).execute()
 
 # --- Password Hashing ---
 def hash_password(password):
@@ -336,7 +340,7 @@ def verify_password(stored_password_hash, provided_password):
 
 # --- Authentication UI ---
 def authentication_ui():
-    """Handles the login and sign-up UI using email and a whitelist."""
+    """Handles the login and sign-up UI using the Supabase database."""
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
 
@@ -348,12 +352,12 @@ def authentication_ui():
             email = st.text_input("Email Address")
             password = st.text_input("Password", type="password")
             if st.button("Login"):
-                user_db = get_user_db()
-                if email in user_db["email"].values:
+                user_db = get_users_db() # UPDATED to use database function
+                if not user_db.empty and email in user_db["email"].values:
                     user_data = user_db[user_db["email"] == email].iloc[0]
                     if verify_password(user_data["password_hash"], password):
                         st.session_state['logged_in'] = True
-                        st.session_state['username'] = email  # Use email as the session identifier
+                        st.session_state['username'] = email
                         st.rerun()
                     else:
                         st.error("Incorrect password.")
@@ -366,10 +370,9 @@ def authentication_ui():
             new_password = st.text_input("Choose a Password", type="password")
             
             if st.button("Sign Up"):
-                # --- Whitelist and Validation Logic ---
-                whitelist = get_whitelist()
+                whitelist = get_whitelist_db() # UPDATED
                 is_valid_format = re.match(r"[^@]+@[^@]+\.[^@]+", new_email)
-                user_db = get_user_db()
+                user_db = get_users_db() # UPDATED
 
                 if not new_email or not new_password:
                     st.error("Email and password cannot be empty.")
@@ -377,15 +380,11 @@ def authentication_ui():
                     st.error("Please enter a valid email address format.")
                 elif new_email not in whitelist:
                     st.error("This email address is not authorized for registration. Please contact the administrator.")
-                elif new_email in user_db["email"].values:
+                elif not user_db.empty and new_email in user_db["email"].values:
                     st.error("This email is already registered. Please go to the Login tab.")
                 else:
-                    new_user = pd.DataFrame({
-                        "email": [new_email],
-                        "password_hash": [hash_password(new_password)]
-                    })
-                    updated_db = pd.concat([user_db, new_user], ignore_index=True)
-                    save_user_db(updated_db)
+                    # UPDATED: Replaced pandas logic with a single call to the database function
+                    add_user_db(new_email, hash_password(new_password))
                     st.success("Account created successfully! You can now log in.")
                     st.info("Please switch to the Login tab to sign in.")
     
@@ -393,14 +392,14 @@ def authentication_ui():
 
 # --- Whitelist Management UI (for Admins) ---
 def whitelist_manager_ui():
-    """Renders a UI in the sidebar for admins to manage the email whitelist."""
+    """Renders a UI in the sidebar for admins to manage the email whitelist in Supabase."""
     try:
         admin_password = st.secrets.get("app", {}).get("admin_password")
     except (KeyError, FileNotFoundError):
-        admin_password = None # No admin access if secrets file is missing
+        admin_password = None
 
     if not admin_password:
-        return # Do not show the expander if admin password is not set
+        return
 
     with st.expander("👑 Admin Panel"):
         entered_pass = st.text_input("Enter Admin Password", type="password", key="admin_pass")
@@ -408,7 +407,7 @@ def whitelist_manager_ui():
             st.info("Access Granted. You can now manage the email whitelist.")
             
             try:
-                current_whitelist = get_whitelist()
+                current_whitelist = get_whitelist_db() # UPDATED
                 st.write("Whitelisted Emails:")
                 st.dataframe(pd.DataFrame({"Authorized Emails": current_whitelist}), use_container_width=True)
 
@@ -418,8 +417,7 @@ def whitelist_manager_ui():
                     if st.form_submit_button("Add Email"):
                         if new_email and re.match(r"[^@]+@[^@]+\.[^@]+", new_email):
                             if new_email not in current_whitelist:
-                                current_whitelist.append(new_email)
-                                save_whitelist(current_whitelist)
+                                add_to_whitelist_db(new_email) # UPDATED
                                 st.success(f"Added '{new_email}' to the whitelist.")
                                 st.rerun()
                             else:
@@ -433,8 +431,7 @@ def whitelist_manager_ui():
                         email_to_remove = st.selectbox("Remove email from whitelist", options=[""] + current_whitelist)
                         if st.form_submit_button("Remove Email"):
                             if email_to_remove:
-                                current_whitelist.remove(email_to_remove)
-                                save_whitelist(current_whitelist)
+                                remove_from_whitelist_db(email_to_remove) # UPDATED
                                 st.success(f"Removed '{email_to_remove}' from the whitelist.")
                                 st.rerun()
                             else:
