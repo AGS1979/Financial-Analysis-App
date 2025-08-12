@@ -1,0 +1,17 @@
+streamlit
+pandas
+numpy
+requests
+openai
+PyMuPDF
+python-docx
+sentence-transformers
+faiss-cpu
+pdfplumber
+yfinance
+beautifulsoup4
+Pillow
+Jinja2
+pinecone-client
+PyPDF2
+markdown
