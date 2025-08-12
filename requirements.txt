@@ -12,6 +12,6 @@ yfinance
 beautifulsoup4
 Pillow
 Jinja2
-pinecone-client
+pinecone
 PyPDF2
 markdown
