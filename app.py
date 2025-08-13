@@ -251,7 +251,7 @@ h1 {
 }
 
 .aranca-title {
-    font-size: 2.3rem;
+    font-size: 2.0rem;
     font-weight: 700;
     color: #1e1e1e;
     margin: 0;
