@@ -261,10 +261,10 @@ h1 {
 
 .aranca-logo {
     padding-top: 0rem;
-    height: 44px;
+    height: 40px;
 }
 .aranca-logo img {
-    height: 42px;
+    height: 38px;
     object-fit: contain;
 }
 
