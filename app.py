@@ -766,7 +766,7 @@ def investment_memo_app():
         st.session_state.pdf_path = None
     
     # --- Main App Flow ---
-    st.markdown("## 📝 Pre-IPO Investment Memo Generator")
+    st.markdown("### 📝 Pre-IPO Investment Memo Generator")
     st.markdown("Upload a DRHP or IPO prospectus to automatically generate a detailed investment memo, an infographic, and perform Q&A.")
     st.subheader("📤 1. Upload DRHP or IPO PDF")
     pdf_file = st.file_uploader("Upload your PDF file", type=["pdf"], key="memo_pdf")
@@ -1136,7 +1136,7 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
 
 
     # ========== STREAMLIT UI LOGIC ==========
-    st.markdown("## 📊 DCF Ginny")
+    st.markdown("### 📊 DCF Ginny")
     st.markdown("Generate a document-driven DCF analysis by providing a company name and prioritized guidance documents.")
 
     if 'dcf_step' not in st.session_state:
@@ -1801,7 +1801,7 @@ Section:
     # ==========================
     # STREAMLIT UI & APP LOGIC
     # ==========================
-    st.markdown("## 🔀 Special Situation Memo & Infographic Generator")
+    st.markdown("### 🔀 Special Situation Memo & Infographic Generator")
     # --- Step 1: Memo Generation ---
     st.header("Step 1: Generate Investment Memo")
 
@@ -1911,7 +1911,7 @@ def esg_analyzer_app():
     Encapsulates the ESG Analyzer functionality with robust JSON parsing,
     benchmark-driven scoring, categorized insights, and a smarter comparison report.
     """
-    st.markdown("## ✨ Advanced ESG Analyzer")
+    st.markdown("### ✨ Advanced ESG Analyzer")
     st.markdown("Generate benchmarked ESG insights from sustainability reports and perform true category-based comparisons.")
 
     # --- Configuration & Helper Functions ---
@@ -2272,7 +2272,7 @@ def portfolio_agent_app(user_id: str):
     A persistent agent to index and query company documents using Pinecone,
     with added capabilities for pre-defined, structured analysis.
     """
-    st.markdown("## 🗂️ Portfolio Agent")
+    st.markdown("### 🗂️ Portfolio Agent")
     st.markdown("Upload company-specific documents for indexation.")
 
     # --- HELPER FUNCTIONS ---
