@@ -3150,7 +3150,7 @@ def main():
         tariff_impact_tracker_app(DEEPSEEK_API_KEY=DEEPSEEK_API_KEY, FMP_API_KEY=FMP_API_KEY, logo_base64_string=logo_base64)
     else: 
         st.markdown('<p class="welcome-subtitle">A unified platform for advanced financial analysis.</p>', unsafe_allow_html=True)
-        st.info("👈 **Select a tool from the sidebar to begin.**")
+        st.info("👈 **Select an agent from the sidebar to begin.**")
 
         st.subheader("Available Agents")
         c1, c2, c3 = st.columns(3)
