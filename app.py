@@ -3152,7 +3152,7 @@ def main():
         st.markdown('<p class="welcome-subtitle">A unified platform for advanced financial analysis.</p>', unsafe_allow_html=True)
         st.info("👈 **Select a tool from the sidebar to begin.**")
 
-        st.subheader("Available Tools")
+        st.subheader("Available Agents")
         c1, c2, c3 = st.columns(3)
         with c1:
             st.markdown("##### 📝 Pre-IPO Investment Memo")
