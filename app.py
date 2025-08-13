@@ -268,7 +268,10 @@ h1 {
     object-fit: contain;
 }
 
-
+/* ADD THIS CODE */
+[data-testid="stSidebarCollapseButton"] {
+    display: none;
+}
 
 </style>
 """, unsafe_allow_html=True)
@@ -391,6 +394,7 @@ def authentication_ui():
     return st.session_state.get('logged_in', False)
 
 # --- Whitelist Management UI (for Admins) ---
+# --- Whitelist Management UI (for Admins) ---
 def whitelist_manager_ui():
     """Renders a UI in the sidebar for admins to manage the email whitelist in Supabase."""
     try:
@@ -401,47 +405,50 @@ def whitelist_manager_ui():
     if not admin_password:
         return
 
-    with st.expander("👑 Admin Panel"):
-        entered_pass = st.text_input("Enter Admin Password", type="password", key="admin_pass")
-        if entered_pass == admin_password:
-            st.info("Access Granted. You can now manage the email whitelist.")
-            
-            try:
-                current_whitelist = get_whitelist_db() # UPDATED
-                st.write("Whitelisted Emails:")
-                st.dataframe(pd.DataFrame({"Authorized Emails": current_whitelist}), use_container_width=True)
+    # REMOVED: The st.expander to fix the icon text issue.
+    # The content is now always visible.
+    st.subheader("👑 Admin Panel") # Added a subheader for clarity
+    entered_pass = st.text_input("Enter Admin Password", type="password", key="admin_pass")
+    
+    if entered_pass == admin_password:
+        st.info("Access Granted. You can now manage the email whitelist.")
+        
+        try:
+            current_whitelist = get_whitelist_db()
+            st.write("Whitelisted Emails:")
+            st.dataframe(pd.DataFrame({"Authorized Emails": current_whitelist}), use_container_width=True)
 
-                # Add Email Form
-                with st.form("add_email_form", clear_on_submit=True):
-                    new_email = st.text_input("Add new email to whitelist")
-                    if st.form_submit_button("Add Email"):
-                        if new_email and re.match(r"[^@]+@[^@]+\.[^@]+", new_email):
-                            if new_email not in current_whitelist:
-                                add_to_whitelist_db(new_email) # UPDATED
-                                st.success(f"Added '{new_email}' to the whitelist.")
-                                st.rerun()
-                            else:
-                                st.warning("Email already exists in the whitelist.")
+            # Add Email Form
+            with st.form("add_email_form", clear_on_submit=True):
+                new_email = st.text_input("Add new email to whitelist")
+                if st.form_submit_button("Add Email"):
+                    if new_email and re.match(r"[^@]+@[^@]+\.[^@]+", new_email):
+                        if new_email not in current_whitelist:
+                            add_to_whitelist_db(new_email)
+                            st.success(f"Added '{new_email}' to the whitelist.")
+                            st.rerun()
                         else:
-                            st.error("Please enter a valid, non-empty email address.")
-                
-                # Remove Email Form
-                if current_whitelist:
-                    with st.form("remove_email_form"):
-                        email_to_remove = st.selectbox("Remove email from whitelist", options=[""] + current_whitelist)
-                        if st.form_submit_button("Remove Email"):
-                            if email_to_remove:
-                                remove_from_whitelist_db(email_to_remove) # UPDATED
-                                st.success(f"Removed '{email_to_remove}' from the whitelist.")
-                                st.rerun()
-                            else:
-                                st.warning("Please select an email to remove.")
+                            st.warning("Email already exists in the whitelist.")
+                    else:
+                        st.error("Please enter a valid, non-empty email address.")
+            
+            # Remove Email Form
+            if current_whitelist:
+                with st.form("remove_email_form"):
+                    email_to_remove = st.selectbox("Remove email from whitelist", options=[""] + current_whitelist)
+                    if st.form_submit_button("Remove Email"):
+                        if email_to_remove:
+                            remove_from_whitelist_db(email_to_remove)
+                            st.success(f"Removed '{email_to_remove}' from the whitelist.")
+                            st.rerun()
+                        else:
+                            st.warning("Please select an email to remove.")
 
-            except Exception as e:
-                st.error(f"An error occurred managing the whitelist: {e}")
+        except Exception as e:
+            st.error(f"An error occurred managing the whitelist: {e}")
 
-        elif entered_pass:
-            st.error("Incorrect admin password.")
+    elif entered_pass:
+        st.error("Incorrect admin password.")
 
 
 # ==============================================================================
@@ -2607,7 +2614,6 @@ def portfolio_agent_app(user_id: str):
 
     # --- Streamlit UI for the Portfolio Agent ---
     st.subheader("📁 Index New Company Documents")
-    with st.expander("Upload Form", expanded=True):
         with st.form("indexing_form", clear_on_submit=True):
             new_company = st.text_input("Company Name", placeholder="e.g., RTX Corp.")
             new_docs = st.file_uploader("Upload Documents (PDF, DOCX, TXT)", type=["pdf", "docx", "txt"], accept_multiple_files=True)
