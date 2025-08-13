@@ -305,21 +305,21 @@ conn = st.connection("supabase", type=SupabaseConnection)
 # --- New Database Functions for Whitelist ---
 def get_whitelist_db():
     """Fetches whitelisted emails from the Supabase database."""
-    rows = conn.query("*", table="whitelist", ttl=0).execute()
+    rows = conn.client.table("whitelist").select("email").execute()
     return [row['email'] for row in rows.data]
 
 def add_to_whitelist_db(email: str):
     """Adds a new email to the whitelist table."""
-    conn.insert("whitelist", data=[{"email": email}]).execute()
+    conn.client.table("whitelist").insert([{"email": email}]).execute()
 
 def remove_from_whitelist_db(email: str):
     """Removes an email from the whitelist table."""
-    conn.delete("whitelist").eq("email", email).execute()
+    conn.client.table("whitelist").delete().eq("email", email).execute()
 
 # --- New Database Functions for Users ---
 def get_users_db():
     """Fetches user data from the Supabase database."""
-    rows = conn.query("*", table="users", ttl=0).execute()
+    rows = conn.client.table("users").select("email, password_hash").execute()
     # Return an empty DataFrame with correct columns if there's no data
     if not rows.data:
         return pd.DataFrame(columns=['email', 'password_hash'])
@@ -327,7 +327,7 @@ def get_users_db():
 
 def add_user_db(email: str, hashed_password: str):
     """Adds a new user to the users table."""
-    conn.insert("users", data=[{"email": email, "password_hash": hashed_password}]).execute()
+    conn.client.table("users").insert([{"email": email, "password_hash": hashed_password}]).execute()
 
 # --- Password Hashing ---
 def hash_password(password):
