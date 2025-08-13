@@ -2614,16 +2614,18 @@ def portfolio_agent_app(user_id: str):
 
     # --- Streamlit UI for the Portfolio Agent ---
     st.subheader("📁 Index New Company Documents")
-        with st.form("indexing_form", clear_on_submit=True):
-            new_company = st.text_input("Company Name", placeholder="e.g., RTX Corp.")
-            new_docs = st.file_uploader("Upload Documents (PDF, DOCX, TXT)", type=["pdf", "docx", "txt"], accept_multiple_files=True)
-            if st.form_submit_button("Index Documents", type="primary"):
-                if new_company and new_docs:
-                    agent.add_documents(new_company, new_docs)
-                    st.cache_resource.clear() # Clear cache to force reload of agent state
-                    st.rerun()
-                else:
-                    st.warning("Please provide a company name and at least one document.")
+    
+    # FIXED: This block was incorrectly indented. It has been moved to the correct level.
+    with st.form("indexing_form", clear_on_submit=True):
+        new_company = st.text_input("Company Name", placeholder="e.g., RTX Corp.")
+        new_docs = st.file_uploader("Upload Documents (PDF, DOCX, TXT)", type=["pdf", "docx", "txt"], accept_multiple_files=True)
+        if st.form_submit_button("Index Documents", type="primary"):
+            if new_company and new_docs:
+                agent.add_documents(new_company, new_docs)
+                st.cache_resource.clear() # Clear cache to force reload of agent state
+                st.rerun()
+            else:
+                st.warning("Please provide a company name and at least one document.")
 
     st.markdown("---")
     st.subheader("🔍 Analyze & Manage Companies")
@@ -2703,15 +2705,16 @@ def portfolio_agent_app(user_id: str):
 
         st.markdown("---")
         st.markdown("#### Manage Data")
-        with st.expander("Delete Company Data"):
-            company_to_delete = st.selectbox("Select Company to Delete", options=[""] + indexed_companies, key="delete_select")
-            if st.button("🗑️ Delete All Data for This Company", type="secondary"):
-                if company_to_delete:
-                    agent.delete_company_data(company_to_delete)
-                    st.cache_resource.clear()
-                    st.rerun()
-                else:
-                    st.warning("Please select a company to delete.")
+        
+        # CHANGED: Removed st.expander to prevent icon text issue
+        company_to_delete = st.selectbox("Select Company to Delete", options=[""] + indexed_companies, key="delete_select")
+        if st.button("🗑️ Delete All Data for This Company", type="secondary"):
+            if company_to_delete:
+                agent.delete_company_data(company_to_delete)
+                st.cache_resource.clear()
+                st.rerun()
+            else:
+                st.warning("Please select a company to delete.")
 
     
 
