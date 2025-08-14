@@ -846,11 +846,9 @@ def investment_memo_app():
                         # The infographic likely has a fixed width in its CSS. We can force the 
                         # component to render in a wider frame by setting the `width` parameter.
                         # This should allow the content to display as intended.
-                        st.components.v1.html(infographic_html, width=900, height=1000, scrolling=True)
+                        st.components.v1.html(infographic_html, width=950, height=1000, scrolling=True)
                         # --- END FIX ---
-                        
-                        st.components.v1.html(infographic_html, height=1000, scrolling=True)
-                        
+                                            
                         st.download_button(
                             label="📥 Download Infographic (.html)",
                             data=infographic_html,
