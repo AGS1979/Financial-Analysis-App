@@ -2756,13 +2756,51 @@ def portfolio_agent_app(user_id: str):
 
 def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base64_string: str):
     """
-    Encapsulates the updated Tariff Impact Tracker functionality.
+    Encapsulates the updated Tariff Impact Tracker functionality with revised UI and restored downloads.
     """
     st.markdown("### 📈 Tariff Impact Tracker")
     st.markdown("Analyze earnings call transcripts or public filings to extract and summarize mentions of tariffs and their financial impact.")
 
-    # --- CORE APPLICATION LOGIC ---
+    # --- HELPER FUNCTIONS TO PREPARE DATA ---
+    def prepare_table_data(all_analyses):
+        """Prepares dataframes for display and download to ensure consistency."""
+        if not all_analyses:
+            return None, None, None
 
+        table1_data, table2_data, table3_data = [], [], []
+
+        for company_key, analysis in all_analyses.items():
+            if not analysis or not isinstance(analysis, dict):
+                continue
+
+            company_display = f"{analysis.get('company_name', 'N/A')} ({analysis.get('ticker', company_key.upper())})"
+            
+            table1_data.append({
+                "Company": company_display,
+                "Overall Tariff Commentary": analysis.get('overall_tariff_commentary', 'No discussion'),
+                "Tariff Exposure": analysis.get('tariff_exposure', 'No discussion'),
+                "Cost/Margin Impact": analysis.get('cost_margin_impact', 'No discussion'),
+                "Pricing Impact": analysis.get('pricing_impact', 'No discussion'),
+            })
+            table2_data.append({
+                "Company": company_display,
+                "Demand Impact": analysis.get('demand_impact', 'No discussion'),
+                "Guidance Impact": analysis.get('guidance_impact', 'No discussion'),
+                "Mitigation Strategies": analysis.get('mitigation_strategies', 'No discussion'),
+            })
+            table3_data.append({
+                "Company": company_display,
+                "Future Tariff Concerns": analysis.get('future_tariff_concerns', 'No discussion'),
+                "Competitor Dynamics": analysis.get('competitor_dynamics', 'No discussion'),
+            })
+
+        df1 = pd.DataFrame(table1_data) if table1_data else pd.DataFrame()
+        df2 = pd.DataFrame(table2_data) if table2_data else pd.DataFrame()
+        df3 = pd.DataFrame(table3_data) if table3_data else pd.DataFrame()
+        
+        return df1, df2, df3
+
+    # --- CORE ANALYSIS LOGIC ---
     @st.cache_data(ttl=3600)
     def get_transcript_from_fmp(ticker, year, quarter):
         # This function remains unchanged.
@@ -2772,15 +2810,12 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
         url = f"https://financialmodelingprep.com/api/v3/earning_call_transcript/{ticker}?quarter={quarter}&year={year}&apikey={FMP_API_KEY}"
         company_profile_url = f"https://financialmodelingprep.com/api/v3/profile/{ticker}?apikey={FMP_API_KEY}"
         try:
-            # Fetch company name
             company_name = "N/A"
             profile_response = requests.get(company_profile_url)
             profile_response.raise_for_status()
             profile_data = profile_response.json()
             if profile_data and "companyName" in profile_data[0]:
                 company_name = profile_data[0]['companyName']
-
-            # Fetch transcript
             response = requests.get(url)
             response.raise_for_status()
             data = response.json()
@@ -2810,7 +2845,7 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
 
     @st.cache_data(ttl=3600)
     def analyze_text_with_deepseek(_text_content, company_name, ticker):
-        # MODIFICATION 1: Updated prompt to extract all new fields for the three tables.
+        # MODIFICATION 3: Enhanced prompt for better data capture.
         if not DEEPSEEK_API_KEY:
             st.error("Error: DEEPSEEK_API_KEY not found.")
             return None
@@ -2819,23 +2854,23 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
             return None
 
         prompt = f"""
-        Analyze the following corporate document for {company_name} ({ticker}). Focus exclusively on comments related to tariffs, trade duties, and import taxes.
-        If a specific piece of information is not mentioned, use "No discussion".
+        As a specialist financial analyst, your task is to meticulously analyze the following corporate document for {company_name} ({ticker}).
+        Your entire focus must be on comments related to **tariffs, trade duties, and import taxes**.
 
-        Based on the text, extract the following information and structure it as a valid JSON object.
+        **CRITICAL RULE:** You must extract all specific quantitative data mentioned, such as dollar amounts ($40 million), basis points (170 bps), or percentages (10% to 50%). If specific numbers are mentioned, include them directly in your summary. Do not generalize if specifics are provided. For qualitative points, summarize them concisely. If a topic is not discussed, you MUST return "No discussion".
 
-        JSON SPECIFICATION:
+        Return a single valid JSON object with the following fields:
         - "company_name": "{company_name}"
         - "ticker": "{ticker}"
         - "overall_tariff_commentary": "A concise summary of the company's overall stance and key messages regarding tariffs."
-        - "tariff_exposure": "Analysis of the company's total financial and operational exposure to tariffs. What is the company's total financial exposure to tariffs or trade-related risks in the current business environment?"
-        - "cost_margin_impact": "Detailed analysis of how tariffs affect the company's costs, profit margins, and financial performance. Extract specific numbers if available."
-        - "pricing_impact": "Detailed analysis of how the company is adjusting its pricing in response to tariffs and the effect on revenue and market strategy."
-        - "demand_impact": "Description of how tariffs are expected to impact demand for the company's products or services."
-        - "guidance_impact": "Description of how tariffs have impacted the company's financial guidance or outlook."
-        - "mitigation_strategies": "Key risk mitigation strategies the company is employing to counter tariff impacts (e.g., supply chain adjustments, negotiations, price increases)."
-        - "future_tariff_concerns": "Potential future tariff concerns, risks, or challenges mentioned by the company."
-        - "competitor_dynamics": "Description of the competitive landscape in relation to tariffs. Does the company view tariffs as creating an advantage or disadvantage versus competitors?"
+        - "tariff_exposure": "Identify the company's financial/operational exposure. Name the specific tariffs (e.g., Section 232), products, and countries involved."
+        - "cost_margin_impact": "How do tariffs affect costs and margins? **Capture all specific financial impacts** (e.g., '$90 million annually', 'reduce operating margins by 170 basis points')."
+        - "pricing_impact": "How is the company changing prices due to tariffs? Mention any selective or broad-based price increases."
+        - "demand_impact": "How are tariffs expected to impact demand for the company's products? Is the effect positive or negative?"
+        - "guidance_impact": "How have tariffs specifically impacted the company's financial guidance or outlook? Mention any quantified impacts (e.g., 'incorporated a 170 basis point tariff impact into Q3 guidance')."
+        - "mitigation_strategies": "List the key strategies the company is using to handle tariffs (e.g., supply chain changes, cost savings, negotiations, vertical integration)."
+        - "future_tariff_concerns": "What are the potential future tariff concerns, risks, or policy uncertainties mentioned?"
+        - "competitor_dynamics": "How do tariffs affect the company's competitive position? Do they see it as an advantage or disadvantage?"
 
         Document Text:
         ---
@@ -2856,83 +2891,93 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
             st.error(f"Error parsing DeepSeek API JSON response: {e}\nResponse: {content_str}")
             return None
 
-    def display_tariff_tables(all_analyses):
-        # MODIFICATION 2: New function to create and display the three requested HTML tables.
-        # This function replaces `display_tariff_report` and `create_comparison_table`.
+    # --- DISPLAY & DOWNLOAD FUNCTIONS ---
+    def display_tariff_tables(df1, df2, df3):
         st.markdown("---")
         st.header("Tariff Impact Analysis")
 
-        if not all_analyses:
-            st.warning("No analysis data available to display.")
-            return
-
-        # Prepare data for each table
-        table1_data = []
-        table2_data = []
-        table3_data = []
-
-        for company_key, analysis in all_analyses.items():
-            if not analysis or not isinstance(analysis, dict):
-                st.warning(f"Skipping invalid analysis result for {company_key}.")
-                continue
-
-            company_display = f"<b>{analysis.get('company_name', 'N/A')}</b> ({analysis.get('ticker', company_key.upper())})"
-
-            # Table 1 Data
-            table1_data.append({
-                "Company": company_display,
-                "Overall Tariff Commentary": analysis.get('overall_tariff_commentary', 'No discussion'),
-                "Tariff Exposure": analysis.get('tariff_exposure', 'No discussion'),
-                "Cost/Margin Impact": analysis.get('cost_margin_impact', 'No discussion'),
-                "Pricing Impact": analysis.get('pricing_impact', 'No discussion'),
-            })
-
-            # Table 2 Data
-            table2_data.append({
-                "Company": company_display,
-                "Demand Impact": analysis.get('demand_impact', 'No discussion'),
-                "Guidance Impact": analysis.get('guidance_impact', 'No discussion'),
-                "Mitigation Strategies": analysis.get('mitigation_strategies', 'No discussion'),
-            })
-
-            # Table 3 Data
-            table3_data.append({
-                "Company": company_display,
-                "Future Tariff Concerns": analysis.get('future_tariff_concerns', 'No discussion'),
-                "Competitor Dynamics": analysis.get('competitor_dynamics', 'No discussion'),
-            })
-
         # Display Table 1
         st.subheader("Table 1: Overall Impact & Exposure")
-        if table1_data:
-            df1 = pd.DataFrame(table1_data)
+        if not df1.empty:
             st.markdown(df1.to_html(escape=False, index=False, justify='left'), unsafe_allow_html=True)
         else:
-            st.info("No data available for Table 1.")
+            st.info("No data available to display.")
 
-        st.markdown("<br>", unsafe_allow_html=True) # Add space
+        st.markdown("<br>", unsafe_allow_html=True) 
 
         # Display Table 2
         st.subheader("Table 2: Business & Strategy Impact")
-        if table2_data:
-            df2 = pd.DataFrame(table2_data)
+        if not df2.empty:
             st.markdown(df2.to_html(escape=False, index=False, justify='left'), unsafe_allow_html=True)
-        else:
-            st.info("No data available for Table 2.")
-
-        st.markdown("<br>", unsafe_allow_html=True) # Add space
+        
+        st.markdown("<br>", unsafe_allow_html=True)
 
         # Display Table 3
         st.subheader("Table 3: Future Outlook")
-        if table3_data:
-            df3 = pd.DataFrame(table3_data)
+        if not df3.empty:
             st.markdown(df3.to_html(escape=False, index=False, justify='left'), unsafe_allow_html=True)
-        else:
-            st.info("No data available for Table 3.")
 
+    def generate_html_report(df1, df2, df3, logo_b64):
+        # MODIFICATION 2: New HTML report function for the three-table format.
+        styles = """<style>
+            body { font-family: 'Poppins', sans-serif; background-color: #f9fafb; padding: 20px; color: #333; }
+            h1, h2, h3 { color: #1e1e1e; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
+            th, td { padding: 12px 15px; text-align: left; border: 1px solid #e0e0e0; vertical-align: top; font-size: 14px; }
+            th { background-color: #00416A; color: #ffffff; }
+            tr:nth-child(even) { background-color: #f9f9f9; }
+            .header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 1rem; border-bottom: 3px solid #00416A; margin-bottom: 2rem; }
+            .title { font-size: 2.5rem; font-weight: 700; }
+            .logo img { height: 40px; }
+            </style>"""
+        
+        header_html = f"""
+            <div class="header">
+                <div class="title">Tariff Impact Tracker Report</div>
+                <div class="logo"><img src="data:image/png;base64,{logo_b64}" alt="Logo"></div>
+            </div>"""
 
-    # --- STREAMLIT UI LAYOUT (Main Application) ---
+        def df_to_html_bold_company(df):
+            df_copy = df.copy()
+            df_copy['Company'] = df_copy['Company'].apply(lambda x: f"<b>{x}</b>")
+            return df_copy.to_html(escape=False, index=False)
 
+        table1_html = f"<h2>Table 1: Overall Impact & Exposure</h2>" + (df_to_html_bold_company(df1) if not df1.empty else "<p>No data.</p>")
+        table2_html = f"<h2>Table 2: Business & Strategy Impact</h2>" + (df_to_html_bold_company(df2) if not df2.empty else "<p>No data.</p>")
+        table3_html = f"<h2>Table 3: Future Outlook</h2>" + (df_to_html_bold_company(df3) if not df3.empty else "<p>No data.</p>")
+        
+        full_html_content = f"<html><head><title>Tariff Impact Report</title>{styles}</head><body>{header_html}{table1_html}{table2_html}{table3_html}</body></html>"
+        return full_html_content
+
+    def generate_word_report(df1, df2, df3):
+        # MODIFICATION 2: New Word report function for the three-table format.
+        doc = Document()
+        doc.add_heading('Tariff Impact Report', level=0)
+        
+        for i, df in enumerate([df1, df2, df3]):
+            if df.empty: continue
+            
+            table_titles = ["Table 1: Overall Impact & Exposure", "Table 2: Business & Strategy Impact", "Table 3: Future Outlook"]
+            doc.add_heading(table_titles[i], level=1)
+            
+            table = doc.add_table(rows=1, cols=len(df.columns))
+            table.style = 'Table Grid'
+            hdr_cells = table.rows[0].cells
+            for j, col_name in enumerate(df.columns):
+                hdr_cells[j].text = col_name
+
+            for index, row in df.iterrows():
+                row_cells = table.add_row().cells
+                for j, cell_value in enumerate(row):
+                    row_cells[j].text = str(cell_value)
+            doc.add_paragraph() # Add space between tables
+
+        buffer = BytesIO()
+        doc.save(buffer)
+        buffer.seek(0)
+        return buffer
+
+    # --- STREAMLIT UI LAYOUT ---
     st.subheader("Data Source")
     data_source = st.radio(
         "Choose where to get the transcript from:",
@@ -2954,18 +2999,14 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
             tickers = [ticker.strip().upper() for ticker in tickers_input.split(',') if ticker.strip()]
             if tickers:
                 st.session_state.tariff_all_analysis_results = {}
-                with st.spinner("Fetching transcripts and generating analysis..."):
+                # MODIFICATION 1: Simplified loading message.
+                with st.spinner("Generating analysis... This may take a moment."):
+                    results = {}
                     for ticker in tickers:
-                        with st.status(f"Analyzing {ticker}...", expanded=True) as status:
-                            text_to_analyze, company_name = get_transcript_from_fmp(ticker, year, quarter)
-                            if text_to_analyze:
-                                st.write(f"Transcript found for {company_name}. Analyzing for tariff impacts...")
-                                st.session_state.tariff_all_analysis_results[ticker] = analyze_text_with_deepseek(text_to_analyze, company_name, ticker)
-                                status.update(label=f"Analysis for {ticker} complete!", state="complete")
-                            else:
-                                st.warning(f"Could not retrieve transcript for {ticker}.")
-                                status.update(label=f"Failed to get transcript for {ticker}", state="error")
-
+                        text_to_analyze, company_name = get_transcript_from_fmp(ticker, year, quarter)
+                        if text_to_analyze:
+                            results[ticker] = analyze_text_with_deepseek(text_to_analyze, company_name, ticker)
+                    st.session_state.tariff_all_analysis_results = results
 
     elif data_source == "Upload PDF Transcript(s)":
         uploaded_files = st.file_uploader("Upload one or more PDF files", type="pdf", accept_multiple_files=True)
@@ -2973,35 +3014,47 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
         if st.button("Upload & Analyze PDFs", type="primary"):
             if uploaded_files:
                 st.session_state.tariff_all_analysis_results = {}
-                with st.spinner("Uploading and analyzing PDFs..."):
-                     for uploaded_file in uploaded_files:
+                # MODIFICATION 1: Simplified loading message.
+                with st.spinner("Generating analysis... This may take a moment."):
+                    results = {}
+                    for uploaded_file in uploaded_files:
                         company_key = os.path.splitext(uploaded_file.name)[0]
-                        with st.status(f"Analyzing {company_key}...", expanded=True) as status:
-                            text_to_analyze = extract_text_from_pdf(uploaded_file)
-                            if text_to_analyze:
-                                st.write(f"PDF content extracted. Analyzing for tariff impacts...")
-                                # For PDFs, we assume file name is the company name and ticker is not available
-                                st.session_state.tariff_all_analysis_results[company_key] = analyze_text_with_deepseek(text_to_analyze, company_key, "N/A")
-                                status.update(label=f"Analysis for {company_key} complete!", state="complete")
-                            else:
-                                st.warning(f"Could not read text from {uploaded_file.name}")
-                                status.update(label=f"Failed to read {uploaded_file.name}", state="error")
-
+                        text_to_analyze = extract_text_from_pdf(uploaded_file)
+                        if text_to_analyze:
+                            results[company_key] = analyze_text_with_deepseek(text_to_analyze, company_key, "N/A")
+                    st.session_state.tariff_all_analysis_results = results
             else:
                 st.warning("Please upload at least one PDF file.")
 
-    # MODIFICATION 3: Updated display logic to call the new function.
+    # --- DISPLAY RESULTS AND DOWNLOADS ---
     if st.session_state.get('tariff_all_analysis_results'):
-        display_tariff_tables(st.session_state.tariff_all_analysis_results)
+        all_results = st.session_state.tariff_all_analysis_results
+        df1, df2, df3 = prepare_table_data(all_results)
+        
+        display_tariff_tables(df1, df2, df3)
 
-        # Download buttons can be kept, but note they will need to be updated
-        # to reflect the new three-table format if desired.
+        # MODIFICATION 2: Re-enabled download buttons with updated functions.
         st.markdown("---")
-        st.header("Download Report (Legacy Format)")
-        st.info("ℹ️ Note: Download functionality has not yet been updated to the new three-table format.")
-        # html_content = generate_html_report(...)
-        # word_buffer = generate_word_report(...)
-        # st.download_button(...)
+        st.header("Download Report")
+        
+        col1, col2 = st.columns(2)
+        if not df1.empty or not df2.empty or not df3.empty:
+            with col1:
+                html_content = generate_html_report(df1, df2, df3, logo_base64_string)
+                st.download_button(
+                    label="📥 Download as HTML",
+                    data=html_content,
+                    file_name="tariff_impact_report.html",
+                    mime="text/html"
+                )
+            with col2:
+                word_buffer = generate_word_report(df1, df2, df3)
+                st.download_button(
+                    label="📥 Download as Word",
+                    data=word_buffer,
+                    file_name="tariff_impact_report.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
 
 # ==============================================================================
 # 8. MAIN APP ROUTER (CORRECTED AND COMPLETE)
