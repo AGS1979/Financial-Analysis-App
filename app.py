@@ -2777,21 +2777,21 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
             
             table1_data.append({
                 "Company": company_display,
-                "Overall Tariff Commentary": analysis.get('overall_tariff_commentary', 'No discussion'),
-                "Tariff Exposure": analysis.get('tariff_exposure', 'No discussion'),
-                "Cost/Margin Impact": analysis.get('cost_margin_impact', 'No discussion'),
-                "Pricing Impact": analysis.get('pricing_impact', 'No discussion'),
+                "Management Commentary": analysis.get('management_commentary', 'No discussion'),
+                "Vulnerability": analysis.get('vulnerability', 'No discussion'),
+                "Profitability Impact": analysis.get('profitability_impact', 'No discussion'),
+                "Pricing Implication": analysis.get('pricing_implication', 'No discussion'),
             })
             table2_data.append({
                 "Company": company_display,
-                "Demand Impact": analysis.get('demand_impact', 'No discussion'),
-                "Guidance Impact": analysis.get('guidance_impact', 'No discussion'),
+                "Demand Sensitivity": analysis.get('demand_sensitivity', 'No discussion'),
+                "Guidance Implications": analysis.get('guidance_implications', 'No discussion'),
                 "Mitigation Strategies": analysis.get('mitigation_strategies', 'No discussion'),
             })
             table3_data.append({
                 "Company": company_display,
-                "Future Tariff Concerns": analysis.get('future_tariff_concerns', 'No discussion'),
-                "Competitor Dynamics": analysis.get('competitor_dynamics', 'No discussion'),
+                "The Known Unknowns": analysis.get('the_known_unknowns', 'No discussion'),
+                "Competitive Positioning": analysis.get('competitive_positioning', 'No discussion'),
             })
 
         df1 = pd.DataFrame(table1_data) if table1_data else pd.DataFrame()
@@ -2862,15 +2862,15 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
         Return a single valid JSON object with the following fields:
         - "company_name": "{company_name}"
         - "ticker": "{ticker}"
-        - "overall_tariff_commentary": "A concise summary of the company's overall stance and key messages regarding tariffs."
-        - "tariff_exposure": "Identify the company's financial/operational exposure. Name the specific tariffs (e.g., Section 232), products, and countries involved."
-        - "cost_margin_impact": "How do tariffs affect costs and margins? **Capture all specific financial impacts** (e.g., '$90 million annually', 'reduce operating margins by 170 basis points')."
-        - "pricing_impact": "How is the company changing prices due to tariffs? Mention any selective or broad-based price increases."
-        - "demand_impact": "How are tariffs expected to impact demand for the company's products? Is the effect positive or negative?"
-        - "guidance_impact": "How have tariffs specifically impacted the company's financial guidance or outlook? Mention any quantified impacts (e.g., 'incorporated a 170 basis point tariff impact into Q3 guidance')."
+        - "management_commentary": "A concise summary of the company's overall stance and key messages regarding tariffs."
+        - "vulnerability": "Identify the company's financial/operational exposure. Name the specific tariffs (e.g., Section 232), products, and countries involved."
+        - "profitability_impact": "How do tariffs affect costs and margins? **Capture all specific financial impacts** (e.g., '$90 million annually', 'reduce operating margins by 170 basis points')."
+        - "pricing_implication": "How is the company changing prices due to tariffs? Mention any selective or broad-based price increases."
+        - "demand_sensitivity": "How are tariffs expected to impact demand for the company's products? Is the effect positive or negative?"
+        - "guidance_implications": "How have tariffs specifically impacted the company's financial guidance or outlook? Mention any quantified impacts (e.g., 'incorporated a 170 basis point tariff impact into Q3 guidance')."
         - "mitigation_strategies": "List the key strategies the company is using to handle tariffs (e.g., supply chain changes, cost savings, negotiations, vertical integration)."
-        - "future_tariff_concerns": "What are the potential future tariff concerns, risks, or policy uncertainties mentioned?"
-        - "competitor_dynamics": "How do tariffs affect the company's competitive position? Do they see it as an advantage or disadvantage?"
+        - "the_known_unknowns": "What are the potential The Known Unknowns, risks, or policy uncertainties mentioned?"
+        - "competitive_positioning": "How do tariffs affect the company's competitive position? Do they see it as an advantage or disadvantage?"
 
         Document Text:
         ---
