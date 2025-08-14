@@ -1177,7 +1177,7 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
     # --- Block 1: Initial user inputs ---
     if st.session_state.dcf_step == "initial":
         st.subheader("⚙️ Valuation Inputs")
-        st.radio("Financial Data Source", ("Fetch Transcript", "Upload Financials (CSV/Excel)"), horizontal=True, key="dcf_data_source")
+        st.radio("Financial Data Source", ("Fetch from FMP API", "Upload Financials (CSV/Excel)"), horizontal=True, key="dcf_data_source")
         c1, c2 = st.columns(2)
         c1.text_input("Company Name", "NVIDIA", key="dcf_company", help="Enter the full name of the company.")
         # Corrected key to dcf_ticker_input for consistency
@@ -2981,7 +2981,7 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
     st.subheader("Data Source")
     data_source = st.radio(
         "Choose where to get the transcript from:",
-        ("Fetch Transcript", "Upload PDF Transcript(s)"),
+        ("Fetch from FMP API", "Upload PDF Transcript(s)"),
         horizontal=True,
         label_visibility="collapsed"
     )
@@ -2989,7 +2989,7 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
     if 'tariff_all_analysis_results' not in st.session_state:
         st.session_state.tariff_all_analysis_results = {}
 
-    if data_source == "Fetch Transcript":
+    if data_source == "Fetch from FMP API":
         tickers_input = st.text_input("Company Ticker(s)", "CROX, STLD, CLF", help="Enter one or more tickers, separated by commas.")
         c2, c3 = st.columns(2)
         with c2: year = st.number_input("Year", min_value=2010, max_value=datetime.now().year + 1, value=2025)
