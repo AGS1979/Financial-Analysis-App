@@ -841,6 +841,20 @@ def investment_memo_app():
                     try:
                         company_name = Path(st.session_state.memo_path).stem.split('_PreIPO_Memo_')[0].replace('_', ' ')
                         infographic_html = generate_infographic_html(st.session_state.memo_path, company_name)
+                        
+                        # --- FIX START ---
+                        # Inject a viewport meta tag for responsiveness within the Streamlit iframe.
+                        # This ensures the HTML content scales correctly to the container's width.
+                        viewport_tag = '<meta name="viewport" content="width=device-width, initial-scale=1.0">'
+                        
+                        # Use a case-insensitive regex to add the tag right after the <head> tag.
+                        if re.search(r'<head>', infographic_html, re.IGNORECASE):
+                            infographic_html = re.sub(r'(<head.*?>)', rf'\1{viewport_tag}', infographic_html, count=1, flags=re.IGNORECASE)
+                        else:
+                            # Fallback if the HTML template unexpectedly lacks a <head> tag.
+                            infographic_html = f'<html><head>{viewport_tag}</head><body>{infographic_html}</body></html>'
+                        # --- FIX END ---
+                        
                         st.components.v1.html(infographic_html, height=1000, scrolling=True)
                         
                         st.download_button(
