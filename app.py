@@ -905,7 +905,7 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
             st.error(f"🚨 Error processing uploaded file: {e}")
             return pd.DataFrame()
 
-    @st.cache_data(ttl=3600)
+    @st.cache_data(ttl=3600, show_spinner=False)
     def get_fmp_data(ticker):
         def fetch(endpoint):
             url = f"https://financialmodelingprep.com/api/v3/{endpoint}/{ticker}?period=annual&limit=5&apikey={FMP_API_KEY}"
@@ -927,7 +927,7 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
             })
         return pd.DataFrame(data)
 
-    @st.cache_data(ttl=3600)
+    @st.cache_data(ttl=3600, show_spinner=False)
     def get_fmp_ticker(company_name):
         prompt = f'What is the exact stock ticker for the company "{company_name}"? Return only the raw ticker symbol.'
         try:
@@ -936,7 +936,7 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
         except Exception as e:
             st.error(f"Could not retrieve ticker: {e}"); return None
 
-    @st.cache_data(ttl=900)
+    @st.cache_data(ttl=900, show_spinner=False)
     def get_current_price(ticker):
         url = f"https://financialmodelingprep.com/api/v3/quote-short/{ticker}?apikey={FMP_API_KEY}"
         try:
@@ -951,7 +951,7 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
             st.error(f"Could not fetch price for {ticker}: {e}")
         return None
 
-    @st.cache_data(ttl=600)
+    @st.cache_data(ttl=600, show_spinner=False)
     def get_company_news(ticker, limit=5):
         url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={ticker}&limit={limit}&apikey={FMP_API_KEY}"
         try:
@@ -1494,7 +1494,7 @@ Repurchase pace, valuation support
             return f"[ERROR extracting DOCX: {e}]"
 
     # --- Financial Data Fetchers ---
-    @st.cache_data(ttl=3600)
+    @st.cache_data(ttl=3600, show_spinner=False)
     def resolve_company_to_ticker(company_name: str) -> str:
         prompt = f"What is the stock ticker (FMP-compatible) for the public company '{company_name}'?"
         headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}
@@ -1507,7 +1507,7 @@ Repurchase pace, valuation support
         except:
             return None
 
-    @st.cache_data(ttl=3600)
+    @st.cache_data(ttl=3600, show_spinner=False)
     def get_ev_ebitda_multiple(ticker: str, fmp_key: str) -> float:
         url = f"https://financialmodelingprep.com/api/v3/key-metrics-ttm/{ticker}?apikey={fmp_key}"
         try:
@@ -1518,7 +1518,7 @@ Repurchase pace, valuation support
         except:
             return 0.0
 
-    @st.cache_data(ttl=3600)
+    @st.cache_data(ttl=3600, show_spinner=False)
     def fetch_fundamentals_yf(ticker: str) -> Tuple[float, float, float]:
         """Returns (market_cap, net_debt, ttm_ebitda) via Yahoo Finance."""
         try:
@@ -2801,7 +2801,7 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
         return df1, df2, df3
 
     # --- CORE ANALYSIS LOGIC ---
-    @st.cache_data(ttl=3600)
+    @st.cache_data(ttl=3600, show_spinner=False)
     def get_transcript_from_fmp(ticker, year, quarter):
         # This function remains unchanged.
         if not FMP_API_KEY:
@@ -2843,7 +2843,7 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
             st.error(f"An error occurred while reading '{uploaded_file.name}': {e}")
         return full_text
 
-    @st.cache_data(ttl=3600)
+    @st.cache_data(ttl=3600, show_spinner=False)
     def analyze_text_with_deepseek(_text_content, company_name, ticker):
         # MODIFICATION 3: Enhanced prompt for better data capture.
         if not DEEPSEEK_API_KEY:
