@@ -2597,10 +2597,11 @@ def portfolio_agent_app(user_id: str):
                 return answer, ", ".join(sorted(list(source_docs)))
 
             def get_predefined_analysis(self, analysis_type: str, companies: List[str], k: int = 40) -> Tuple[str, str]:
+                # --- CHANGE 1: ADD "Cap Structure" TO ANALYSIS_CONFIG ---
                 ANALYSIS_CONFIG = {
-                "Quick Company Note": {
-                    "search_query": "Comprehensive company profile including business overview, products, services, market position, key financial data like revenue, profit, debt, cash, market cap, industry trends, competitive landscape, investment highlights, strengths, weaknesses, opportunities, threats, risk factors, governance issues, and any legal or regulatory challenges like litigations or claims.",
-                    "system_prompt": """You are a top-tier equity research analyst. Your task is to generate a professional and highly detailed 'Quick Company Note' based ONLY on the provided document excerpts. The analysis must be thorough, well-written, and adhere strictly to the formatting instructions below. Crucially, do not use any markdown formatting (like asterisks for italics or bold) within the financial data line or within the bullet points themselves. Ensure metric names have spaces (e.g., 'Net Income' not 'NetIncome').
+                    "Quick Company Note": {
+                        "search_query": "Comprehensive company profile including business overview, products, services, market position, key financial data like revenue, profit, debt, cash, market cap, industry trends, competitive landscape, investment highlights, strengths, weaknesses, opportunities, threats, risk factors, governance issues, and any legal or regulatory challenges like litigations or claims.",
+                        "system_prompt": """You are a top-tier equity research analyst. Your task is to generate a professional and highly detailed 'Quick Company Note' based ONLY on the provided document excerpts. The analysis must be thorough, well-written, and adhere strictly to the formatting instructions below. Crucially, do not use any markdown formatting (like asterisks for italics or bold) within the financial data line or within the bullet points themselves. Ensure metric names have spaces (e.g., 'Net Income' not 'NetIncome').
 
 # 1. Company Overview
 (Provide a comprehensive and in-depth summary of the company. This section MUST be at least 500 words long. Cover its history, business model, core products and services, key operational segments, geographic footprint, and overall strategic mission.)
@@ -2619,25 +2620,40 @@ def portfolio_agent_app(user_id: str):
 
 # 6. Red Flags
 (Provide detailed bullet points identifying any potential red flags mentioned in the documents. Each bullet point MUST be a complete, well-reasoned sentence. This includes any mention of governance issues, ongoing lawsuits, regulatory probes, or questionable accounting practices.)"""
-                },
-                # Other analysis types remain unchanged
-                "Debt Details": {
-                    "search_query": "Detailed information about the company's short-term and long-term debt, credit facilities, loans, bonds, debentures, financing arrangements, and key debt covenants.",
-                    "system_prompt": "You are a senior credit analyst. Based on the provided text, extract and synthesize all available information about the company's debt structure. Format the output in Markdown. Use a table for debt instruments and their amounts. Use bullet points for key covenants and maturity profiles."
-                },
-                "Litigations and Court Cases/Claims": {
-                    "search_query": "Details on litigations, legal proceedings, lawsuits, court cases, regulatory investigations, and contingent liabilities.",
-                    "system_prompt": "You are a legal analyst. From the context provided, compile a report on all legal and regulatory matters. For each distinct case, create a section with a heading and detail the nature of the claim, its current status, and any mentioned potential financial impact."
-                },
-                "Investment Story (Positives & Risks)": {
-                    "search_query": "Company strengths, competitive advantages, growth drivers, market opportunities, risk factors, challenges, and competitive threats.",
-                    "system_prompt": "You are an equity research analyst. Based on the documents, construct a balanced investment story. Create two main sections in Markdown: 'Investment Positives / Strengths' and 'Key Risks & Concerns'. Under each, list 5-7 detailed bullet points with brief explanations."
-                },
-                "Company Strategy": {
-                    "search_query": "Information on corporate strategy, business objectives, future plans, growth initiatives, market expansion, product development, and strategic priorities.",
-                    "system_prompt": "You are a strategy consultant. From the provided documents, outline the company's core strategy. Structure your response in Markdown with sections for 'Vision & Mission', 'Key Strategic Pillars', and 'Growth Initiatives'. Use bullet points to detail the specifics under each section."
+                    },
+                    "Cap Structure": {
+                        "search_query": "Detailed information about the company's capital structure, including short-term and long-term debt instruments like notes, bonds, and debentures. Specific details on maturity dates, coupon rates or yields, whether instruments are secured or unsecured, financial leases, and bank overdrafts. Also, information on total shareholders' equity, cash and cash equivalents, and debt covenants.",
+                        "system_prompt": """You are a senior credit analyst. Based on the provided text, extract and synthesize all available information about the company's capital structure. Format the output STRICTLY in Markdown as follows:
+
+# Capital Structure Analysis
+
+## Debt Instruments
+Create a markdown table with the following columns: 'Instrument', 'Principal Amount', 'Maturity Date', 'Yield/Coupon', 'Secured/Unsecured'. Populate this table with all specific debt instruments found.
+
+## Key Ratios
+Create a markdown table with two columns: 'Ratio' and 'Value'. Calculate and include the following ratios if possible from the text: 'Total Debt to Equity', 'Net Debt to EBITDA', and 'Interest Coverage Ratio'. If you cannot calculate a value, state 'Data not available'.
+
+## Covenants
+Create a markdown table with two columns: 'Covenant Type' and 'Requirement'. List any financial or operational covenants mentioned, such as maximum leverage ratios or minimum interest coverage.
+"""
+                    },
+                    "Debt Details": {
+                        "search_query": "Detailed information about the company's short-term and long-term debt, credit facilities, loans, bonds, debentures, financing arrangements, and key debt covenants.",
+                        "system_prompt": "You are a senior credit analyst. Based on the provided text, extract and synthesize all available information about the company's debt structure. Format the output in Markdown. Use a table for debt instruments and their amounts. Use bullet points for key covenants and maturity profiles."
+                    },
+                    "Litigations and Court Cases/Claims": {
+                        "search_query": "Details on litigations, legal proceedings, lawsuits, court cases, regulatory investigations, and contingent liabilities.",
+                        "system_prompt": "You are a legal analyst. From the context provided, compile a report on all legal and regulatory matters. For each distinct case, create a section with a heading and detail the nature of the claim, its current status, and any mentioned potential financial impact."
+                    },
+                    "Investment Story (Positives & Risks)": {
+                        "search_query": "Company strengths, competitive advantages, growth drivers, market opportunities, risk factors, challenges, and competitive threats.",
+                        "system_prompt": "You are an equity research analyst. Based on the documents, construct a balanced investment story. Create two main sections in Markdown: 'Investment Positives / Strengths' and 'Key Risks & Concerns'. Under each, list 5-7 detailed bullet points with brief explanations."
+                    },
+                    "Company Strategy": {
+                        "search_query": "Information on corporate strategy, business objectives, future plans, growth initiatives, market expansion, product development, and strategic priorities.",
+                        "system_prompt": "You are a strategy consultant. From the provided documents, outline the company's core strategy. Structure your response in Markdown with sections for 'Vision & Mission', 'Key Strategic Pillars', and 'Growth Initiatives'. Use bullet points to detail the specifics under each section."
+                    }
                 }
-            }
                 config = ANALYSIS_CONFIG.get(analysis_type)
                 if not config: return "Invalid analysis type selected.", ""
                 query_vector = self.embedding_model.encode(config["search_query"]).tolist()
@@ -2708,9 +2724,11 @@ def portfolio_agent_app(user_id: str):
         st.markdown("#### Run Analysis")
         selected_companies = st.multiselect("Select Company/Companies to Analyze", options=indexed_companies, default=indexed_companies[0] if indexed_companies else [])
         
+        # --- CHANGE 2: ADD "Cap Structure" TO THE UI OPTIONS ---
         analysis_options = [
             "Quick Company Note",
             "Investment Story (Positives & Risks)",
+            "Cap Structure",
             "Debt Details",
             "Litigations and Court Cases/Claims",
             "Company Strategy",
