@@ -2426,6 +2426,8 @@ def portfolio_agent_app(user_id: str):
             if i == 0 and title.lower() in cleaned_heading.lower():
                 continue
             html_body += f"<h3>{cleaned_heading}</h3>"
+
+            # Case 1: Handle horizontal financial data table
             if "Financial Data" in heading:
                 metrics, values = [], []
                 pairs = [p.strip() for p in content.split(';') if p.strip()]
@@ -2440,25 +2442,56 @@ def portfolio_agent_app(user_id: str):
                 for value in values: table_html += f"<td>{value}</td>"
                 table_html += "</tr></tbody></table></div>"
                 html_body += table_html
+            
+            # Case 2: Handle all other content, checking for markdown tables
             else:
-                cleaned_content = add_spacing_to_run_on_text(content)
-                paragraphs = cleaned_content.strip().split('\n')
-                for para in paragraphs:
-                    p = para.strip()
-                    if not p:
-                        continue
-                    if re.match(r'^\s*([*-]|\d+\.)\s+', p):
-                        list_item_text = re.sub(r'^\s*([*-]|\d+\.)\s+', '', p)
-                        html_body += f'<p style="padding-left: 1.5em; text-indent: -1.5em;">• {list_item_text}</p>'
-                    else:
-                        html_body += f"<p>{p}</p>"
+                md_table_html = None
+                lines = [line.strip() for line in content.strip().split('\n') if line.strip()]
+
+                # Heuristic to detect a markdown table (header row + separator row)
+                if len(lines) >= 2 and lines[0].count('|') > 1 and re.match(r'^[|: -]+$', lines[1]) and lines[1].count('-') > 2:
+                    try:
+                        headers = [h.strip() for h in lines[0].strip('|').split('|')]
+                        table_html = "<div style='overflow-x:auto;'><table class='custom-table'><thead><tr>"
+                        for header in headers:
+                            table_html += f"<th>{header}</th>"
+                        table_html += "</tr></thead><tbody>"
+                        
+                        for row_line in lines[2:]:
+                            table_html += "<tr>"
+                            cells = [c.strip() for c in row_line.strip('|').split('|')]
+                            for i in range(len(headers)):
+                                cell_text = cells[i] if i < len(cells) else ""
+                                table_html += f"<td>{cell_text}</td>"
+                            table_html += "</tr>"
+                        table_html += "</tbody></table></div>"
+                        md_table_html = table_html
+                    except Exception:
+                        md_table_html = None # Fallback to plain text if parsing fails
+
+                if md_table_html:
+                    html_body += md_table_html
+                else:
+                    # Fallback for regular paragraphs and bullet points
+                    cleaned_content = add_spacing_to_run_on_text(content)
+                    paragraphs = cleaned_content.strip().split('\n')
+                    for para in paragraphs:
+                        p = para.strip()
+                        if not p:
+                            continue
+                        if re.match(r'^\s*([*-]|\d+\.)\s+', p):
+                            list_item_text = re.sub(r'^\s*([*-]|\d+\.)\s+', '', p)
+                            html_body += f'<p style="padding-left: 1.5em; text-indent: -1.5em;">• {list_item_text}</p>'
+                        else:
+                            html_body += f"<p>{p}</p>"
+
         html_style = """
         <style>
             .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9f9f9; margin-top: 20px; }
             .analysis-container h2 {font-size: 1.5em; color: #00416A; border-bottom: 2px solid #00416A; padding-bottom: 10px; margin-top: 0;}
             .analysis-container h3 {font-size: 1.2em; color: #00416A; padding-bottom: 5px; margin-top: 25px; border-bottom: 1px solid #e6f1f6;}
             .analysis-container .custom-table { width: 100%; border-collapse: collapse; margin: 15px 0; }
-            .analysis-container .custom-table th, .analysis-container .custom-table td { border: 1px solid #ddd; padding: 10px 14px; text-align: center; white-space: nowrap; }
+            .analysis-container .custom-table th, .analysis-container .custom-table td { border: 1px solid #ddd; padding: 10px 14px; text-align: left; }
             .analysis-container .custom-table th { background-color: #e6f1f6; font-weight: 600; }
             .analysis-container p { margin-bottom: 1em; line-height: 1.6; }
             .analysis-container .sources { font-size: 0.85em; color: #555; margin-top: 25px; text-align: right; }
