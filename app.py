@@ -2563,20 +2563,46 @@ def portfolio_agent_app(user_id: str):
                 if current_chunk: chunks.append(current_chunk.strip())
                 return chunks
 
+            
+            def _get_year_from_filename(self, filename: str) -> int:
+                """Extracts the latest 4-digit year from a filename."""
+                matches = re.findall(r'\b(20\d{2})\b', filename)
+                if matches:
+                    return int(max(matches)) # Return the most recent year found
+                return 0 # Return a default value if no year is found
+
+
             def add_documents(self, company: str, uploaded_files: list):
                 safe_company_name = self.sanitize_filename(company)
                 with st.status(f"Processing documents for {safe_company_name}...", expanded=True) as status:
                     vectors_to_upsert = []
                     for file in uploaded_files:
-                        status.write(f"Extracting text from {file.name}...")
+                        # --- MODIFICATION START ---
+                        file_year = self._get_year_from_filename(file.name)
+                        if file_year == 0:
+                            st.warning(f"Could not extract year from filename '{file.name}'. Data will be indexed without a year.")
+                        
+                        status.write(f"Extracting text from {file.name} (Year: {file_year or 'N/A'})...")
+                        # --- MODIFICATION END ---
+                        
                         text = self._extract_text(file.getvalue(), file.name)
                         if not text: continue
+                        
                         status.write(f"Chunking and embedding text from {file.name}...")
                         chunks = self._chunk_text(text)
                         vectors = self.embedding_model.encode(chunks).tolist()
                         for i, chunk in enumerate(chunks):
                             chunk_id = f"{safe_company_name}-{self.sanitize_filename(file.name)}-{i}"
-                            metadata = {"company": safe_company_name, "source_file": file.name, "original_text": chunk}
+                            
+                            # --- MODIFICATION START: Add 'year' to metadata ---
+                            metadata = {
+                                "company": safe_company_name, 
+                                "source_file": file.name, 
+                                "original_text": chunk,
+                                "year": file_year 
+                            }
+                            # --- MODIFICATION END ---
+                            
                             vectors_to_upsert.append({"id": chunk_id, "values": vectors[i], "metadata": metadata})
                     if not vectors_to_upsert:
                         st.warning("No text could be extracted.")
@@ -2623,7 +2649,11 @@ def portfolio_agent_app(user_id: str):
                     },
                     "Cap Structure": {
                         "search_query": "Detailed information about the company's capital structure, including short-term and long-term debt instruments like notes, bonds, and debentures. Specific details on maturity dates, coupon rates or yields, whether instruments are secured or unsecured, financial leases, and bank overdrafts. Also, information on total shareholders' equity, cash and cash equivalents, and debt covenants.",
-                        "system_prompt": """You are a senior credit analyst. Based on the provided text, extract and synthesize all available information about the company's capital structure. Format the output STRICTLY in Markdown as follows:
+                        "system_prompt": """You are a senior credit analyst. Based on the provided text excerpts, which include the source filename and year, synthesize all available information about the company's capital structure.
+
+**CRITICAL RULE: If you find conflicting data (e.g., debt amounts from different years), you MUST prioritize the information from the document with the most recent year.**
+
+Format the output STRICTLY in Markdown as follows:
 
 # Capital Structure Analysis
 
@@ -2639,19 +2669,19 @@ Create a markdown table with two columns: 'Covenant Type' and 'Requirement'. Lis
                     },
                     "Debt Details": {
                         "search_query": "Detailed information about the company's short-term and long-term debt, credit facilities, loans, bonds, debentures, financing arrangements, and key debt covenants.",
-                        "system_prompt": "You are a senior credit analyst. Based on the provided text, extract and synthesize all available information about the company's debt structure. Format the output in Markdown. Use a table for debt instruments and their amounts. Use bullet points for key covenants and maturity profiles."
+                        "system_prompt": "You are a senior credit analyst. Based on the provided text, extract and synthesize all available information about the company's debt structure. Format the output in Markdown. Use a table for debt instruments and their amounts. Use bullet points for key covenants and maturity profiles. **CRITICAL RULE: If you find conflicting data (e.g., debt amounts from different years), you MUST prioritize the information from the document with the most recent year.**"
                     },
                     "Litigations and Court Cases/Claims": {
                         "search_query": "Details on litigations, legal proceedings, lawsuits, court cases, regulatory investigations, and contingent liabilities.",
-                        "system_prompt": "You are a legal analyst. From the context provided, compile a report on all legal and regulatory matters. For each distinct case, create a section with a heading and detail the nature of the claim, its current status, and any mentioned potential financial impact."
+                        "system_prompt": "You are a legal analyst. From the context provided, compile a report on all legal and regulatory matters. For each distinct case, create a section with a heading and detail the nature of the claim, its current status, and any mentioned potential financial impact. **CRITICAL RULE: If you find conflicting data (e.g., debt amounts from different years), you MUST prioritize the information from the document with the most recent year.**"
                     },
                     "Investment Story (Positives & Risks)": {
                         "search_query": "Company strengths, competitive advantages, growth drivers, market opportunities, risk factors, challenges, and competitive threats.",
-                        "system_prompt": "You are an equity research analyst. Based on the documents, construct a balanced investment story. Create two main sections in Markdown: 'Investment Positives / Strengths' and 'Key Risks & Concerns'. Under each, list 5-7 detailed bullet points with brief explanations."
+                        "system_prompt": "You are an equity research analyst. Based on the documents, construct a balanced investment story. Create two main sections in Markdown: 'Investment Positives / Strengths' and 'Key Risks & Concerns'. Under each, list 5-7 detailed bullet points with brief explanations. **CRITICAL RULE: If you find conflicting data (e.g., debt amounts from different years), you MUST prioritize the information from the document with the most recent year.**"
                     },
                     "Company Strategy": {
                         "search_query": "Information on corporate strategy, business objectives, future plans, growth initiatives, market expansion, product development, and strategic priorities.",
-                        "system_prompt": "You are a strategy consultant. From the provided documents, outline the company's core strategy. Structure your response in Markdown with sections for 'Vision & Mission', 'Key Strategic Pillars', and 'Growth Initiatives'. Use bullet points to detail the specifics under each section."
+                        "system_prompt": "You are a strategy consultant. From the provided documents, outline the company's core strategy. Structure your response in Markdown with sections for 'Vision & Mission', 'Key Strategic Pillars', and 'Growth Initiatives'. Use bullet points to detail the specifics under each section. **CRITICAL RULE: If you find conflicting data (e.g., debt amounts from different years), you MUST prioritize the information from the document with the most recent year.**"
                     }
                 }
                 config = ANALYSIS_CONFIG.get(analysis_type)
