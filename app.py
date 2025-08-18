@@ -2449,59 +2449,77 @@ def portfolio_agent_app(user_id: str):
                 continue
             html_body += f"<h3>{cleaned_heading}</h3>"
 
-            if "Financial Data" in heading:
-                metrics, values = [], []
-                pairs = [p.strip() for p in content.split(';') if p.strip()]
-                for pair in pairs:
-                    if ':' in pair:
-                        metric, value = pair.split(':', 1)
-                        metrics.append(clean_metric_name(metric))
-                        values.append(value.strip())
-                table_html = "<div style='overflow-x:auto;'><table class='custom-table'><thead><tr>"
-                for metric in metrics: table_html += f"<th>{metric}</th>"
-                table_html += "</tr></thead><tbody><tr>"
-                for value in values: table_html += f"<td>{value}</td>"
-                table_html += "</tr></tbody></table></div>"
-                html_body += table_html
+            # --- NEW ROBUST TABLE PARSING LOGIC ---
+            lines = content.strip().split('\n')
+            table_start_index = -1
+
+            # Find the start of a markdown table (header + separator)
+            for j in range(len(lines) - 1):
+                line1 = lines[j].strip()
+                line2 = lines[j+1].strip()
+                is_header = line1.count('|') > 1 and line1.startswith('|') and line1.endswith('|')
+                is_separator = re.match(r'^[|: -]+$', line2) and line2.count('-') > 2
+                if is_header and is_separator:
+                    table_start_index = j
+                    break
             
+            # If no table is found, process as plain paragraphs
+            if table_start_index == -1:
+                cleaned_content = add_spacing_to_run_on_text(content)
+                paragraphs = cleaned_content.strip().split('\n')
+                for para in paragraphs:
+                    p = para.strip()
+                    if not p: continue
+                    if re.match(r'^\s*([*-]|\d+\.)\s+', p):
+                        list_item_text = re.sub(r'^\s*([*-]|\d+\.)\s+', '', p)
+                        html_body += f'<p style="padding-left: 1.5em; text-indent: -1.5em;">• {list_item_text}</p>'
+                    else:
+                        html_body += f"<p>{p}</p>"
             else:
-                md_table_html = None
-                lines = [line.strip() for line in content.strip().split('\n') if line.strip()]
+                # 1. Process text before the table
+                before_table_content = '\n'.join(lines[:table_start_index])
+                if before_table_content.strip():
+                    for para in before_table_content.strip().split('\n'):
+                        if para.strip(): html_body += f"<p>{para.strip()}</p>"
 
-                if len(lines) >= 2 and lines[0].count('|') > 1 and re.match(r'^[|: -]+$', lines[1]) and lines[1].count('-') > 2:
-                    try:
-                        headers = [h.strip() for h in lines[0].strip('|').split('|')]
-                        table_html = "<div style='overflow-x:auto;'><table class='custom-table'><thead><tr>"
-                        for header in headers:
-                            table_html += f"<th>{header}</th>"
-                        table_html += "</tr></thead><tbody>"
-                        
-                        for row_line in lines[2:]:
-                            table_html += "<tr>"
-                            cells = [c.strip() for c in row_line.strip('|').split('|')]
-                            for i in range(len(headers)):
-                                cell_text = cells[i] if i < len(cells) else ""
-                                table_html += f"<td>{cell_text}</td>"
-                            table_html += "</tr>"
-                        table_html += "</tbody></table></div>"
-                        md_table_html = table_html
-                    except Exception:
-                        md_table_html = None
-
-                if md_table_html:
-                    html_body += md_table_html
+                # 2. Find the end of the table
+                table_end_index = table_start_index + 2
+                for j in range(table_start_index + 2, len(lines)):
+                    if not lines[j].strip().startswith('|'):
+                        table_end_index = j
+                        break
                 else:
-                    cleaned_content = add_spacing_to_run_on_text(content)
-                    paragraphs = cleaned_content.strip().split('\n')
-                    for para in paragraphs:
-                        p = para.strip()
-                        if not p:
-                            continue
-                        if re.match(r'^\s*([*-]|\d+\.)\s+', p):
-                            list_item_text = re.sub(r'^\s*([*-]|\d+\.)\s+', '', p)
-                            html_body += f'<p style="padding-left: 1.5em; text-indent: -1.5em;">• {list_item_text}</p>'
-                        else:
-                            html_body += f"<p>{p}</p>"
+                    table_end_index = len(lines)
+                
+                table_lines = [line.strip() for line in lines[table_start_index:table_end_index]]
+
+                # 3. Convert the found table to HTML
+                try:
+                    headers = [h.strip() for h in table_lines[0].strip('|').split('|')]
+                    table_html = "<div style='overflow-x:auto;'><table class='custom-table'><thead><tr>"
+                    for header in headers:
+                        table_html += f"<th>{header}</th>"
+                    table_html += "</tr></thead><tbody>"
+                    
+                    for row_line in table_lines[2:]:
+                        table_html += "<tr>"
+                        cells = [c.strip() for c in row_line.strip('|').split('|')]
+                        for k in range(len(headers)):
+                            cell_text = cells[k] if k < len(cells) else "&nbsp;"
+                            table_html += f"<td>{cell_text}</td>"
+                        table_html += "</tr>"
+                    table_html += "</tbody></table></div>"
+                    html_body += table_html
+                except Exception:
+                    # Fallback if conversion fails
+                    for line in table_lines:
+                         html_body += f"<p>{line}</p>"
+                
+                # 4. Process text after the table
+                after_table_content = '\n'.join(lines[table_end_index:])
+                if after_table_content.strip():
+                    for para in after_table_content.strip().split('\n'):
+                        if para.strip(): html_body += f"<p>{para.strip()}</p>"
 
         html_style = """
         <style>
