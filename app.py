@@ -2322,7 +2322,7 @@ def portfolio_agent_app(user_id: str):
         full_context = ""
         for excerpt in excerpts:
             if len(full_context) + len(excerpt) > max_chars:
-                st.warning(f"Context truncated to ~{max_chars} characters to fit within the model's limit.")
+                # The user-facing warning message has been removed from here.
                 break
             full_context += excerpt
         return full_context
@@ -2619,14 +2619,12 @@ def portfolio_agent_app(user_id: str):
                 return answer, ", ".join(sorted(list(source_docs)))
 
             def get_predefined_analysis(self, analysis_type: str, companies: List[str], k: int = 40) -> Tuple[str, str]:
-                # --- THIS IS THE CORRECTED AND COMPLETE CONFIGURATION ---
                 ANALYSIS_CONFIG = {
                     "Quick Company Note": {
                         "search_query": "Comprehensive company profile including business overview, products, services, market position, key financial data like revenue, profit, debt, cash, market cap, industry trends, competitive landscape, investment highlights, strengths, weaknesses, opportunities, threats, risk factors, governance issues, and any legal or regulatory challenges like litigations or claims.",
                         "system_prompt": """You are a top-tier equity research analyst. Your task is to generate a professional 'Quick Company Note' as plain, narrative text based ONLY on the provided document excerpts.
 **CRITICAL INSTRUCTION: The entire output must be in plain text. Do NOT use any markdown formatting such as asterisks for bolding or italics, or hyphens/asterisks for bullet points.**
 Structure your response with the following headings, but write the content for each section as continuous prose paragraphs.
-
 # 1. Company Overview
 (Provide a comprehensive summary of the company as a narrative text, covering its history, business model, products, and strategy.)
 # 2. Financial Data
@@ -2655,7 +2653,18 @@ Do NOT use markdown tables. Format the output with clear headings and narrative 
                     },
                     "Debt Details": {
                         "search_query": "Detailed information about the company's short-term and long-term debt, credit facilities, loans, bonds, debentures, financing arrangements, and key debt covenants.",
-                        "system_prompt": "You are a senior credit analyst. Based on the provided text, describe the company's debt structure in plain text. Do NOT use markdown. Use paragraphs and simple lists (starting with a hyphen) to detail debt instruments, key covenants, and maturity profiles. **CRITICAL RULE: Prioritize information from documents with the most recent year if there are conflicts.**"
+                        "system_prompt": """You are a senior credit analyst. Based on the provided text, synthesize all available information about the company's debt structure.
+**CRITICAL INSTRUCTIONS:**
+1. Do NOT use any asterisks (`*`) for formatting in your entire response.
+2. Prioritize information from documents with the most recent year if there are conflicts.
+Format the output as follows:
+# Debt Details Analysis
+## Debt Instruments
+Create a markdown table with the following columns: Instrument, Principal Amount, Maturity Date, Coupon/Rate. Populate this table with all specific debt instruments found (bonds, commercial paper, loans, etc.).
+## Key Covenants
+Under this heading, write a plain text paragraph describing any financial or operational covenants mentioned.
+## Maturity Profile
+Under this heading, write a plain text paragraph summarizing the debt maturity profile (e.g., amounts due in <1 year, 1-5 years, >5 years)."""
                     },
                     "Litigations and Court Cases/Claims": {
                         "search_query": "Details on litigations, legal proceedings, lawsuits, court cases, regulatory investigations, and contingent liabilities.",
