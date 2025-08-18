@@ -2322,10 +2322,18 @@ def portfolio_agent_app(user_id: str):
         full_context = ""
         for excerpt in excerpts:
             if len(full_context) + len(excerpt) > max_chars:
-                # The user-facing warning message has been removed from here.
                 break
             full_context += excerpt
         return full_context
+
+    def sanitize_ai_output(text: str) -> str:
+        """
+        Forcefully removes any remaining markdown asterisks for bold/italics
+        to ensure clean, professional output.
+        """
+        # Removes bolding (**) and italics (*)
+        text = re.sub(r'\*(\*?)(.*?)\1\*', r'\2', text)
+        return text
 
     def call_deepseek_model(prompt: str) -> str:
         try:
@@ -2336,7 +2344,9 @@ def portfolio_agent_app(user_id: str):
             payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.2, "max_tokens": 8192}
             response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=240)
             response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
+            # Sanitize the output immediately after receiving it
+            raw_content = response.json()["choices"][0]["message"]["content"]
+            return sanitize_ai_output(raw_content)
         except Exception as e:
             st.error(f"An unexpected error occurred: {e}")
             return f"Error: {e}"
@@ -2622,61 +2632,68 @@ def portfolio_agent_app(user_id: str):
                 ANALYSIS_CONFIG = {
                     "Quick Company Note": {
                         "search_query": "Comprehensive company profile including business overview, products, services, market position, key financial data like revenue, profit, debt, cash, market cap, industry trends, competitive landscape, investment highlights, strengths, weaknesses, opportunities, threats, risk factors, governance issues, and any legal or regulatory challenges like litigations or claims.",
-                        "system_prompt": """You are a top-tier equity research analyst. Your task is to generate a professional 'Quick Company Note' as plain, narrative text based ONLY on the provided document excerpts.
-**CRITICAL INSTRUCTION: The entire output must be in plain text. Do NOT use any markdown formatting such as asterisks for bolding or italics, or hyphens/asterisks for bullet points.**
+                        "system_prompt": """You are a top-tier equity research analyst.
+**CRITICAL INSTRUCTION: The entire output must be plain text. Do NOT use any asterisks (`*`) for formatting.**
+Your task is to generate a professional 'Quick Company Note' as plain, narrative text based ONLY on the provided document excerpts.
 Structure your response with the following headings, but write the content for each section as continuous prose paragraphs.
 # 1. Company Overview
-(Provide a comprehensive summary of the company as a narrative text, covering its history, business model, products, and strategy.)
+(Provide a comprehensive summary of the company as a narrative text.)
 # 2. Financial Data
-(Provide key financial metrics on a single line, separated by semicolons, without any markdown. Format: "Metric1: Value1; Metric2: Value2; ...")
+(Provide key financial metrics on a single line, separated by semicolons. Format: "Metric1: Value1; Metric2: Value2; ...")
 # 3. Industry Overview
-(Provide an analysis of the industry landscape as a narrative text, discussing market trends, competition, and the company's position.)
+(Provide an analysis of the industry landscape as a narrative text.)
 # 4. Key Investment Highlights
 (Write a detailed paragraph explaining the company's key strengths and investment thesis points. Do not use a list.)
 # 5. Key Risks
-(Write a detailed paragraph explaining the most significant risks facing the company. Do not use a list.)
+(Write a detailed paragraph explaining the most significant risks. Do not use a list.)
 # 6. Red Flags
-(Write a detailed paragraph identifying any potential red flags like governance issues or lawsuits. Do not use a list.)"""
+(Write a detailed paragraph identifying any potential red flags. Do not use a list.)"""
                     },
                     "Cap Structure": {
                         "search_query": "Detailed information about the company's capital structure, including short-term and long-term debt instruments, maturity dates, coupon rates, leases, equity, and debt covenants.",
-                        "system_prompt": """You are a senior credit analyst. Based on the provided text, synthesize all information about the company's capital structure in plain text.
-**CRITICAL RULE: Prioritize information from documents with the most recent year if there are conflicts.**
-Do NOT use markdown tables. Format the output with clear headings and narrative descriptions.
+                        "system_prompt": """You are a senior credit analyst.
+**CRITICAL INSTRUCTION: The entire output must be plain text. Do NOT use any asterisks (`*`) for formatting.**
+Based on the provided text, synthesize all information about the company's capital structure. Prioritize information from documents with the most recent year if there are conflicts.
+Format the output with clear headings and narrative descriptions. Do NOT use markdown tables.
 # Capital Structure Analysis
 ## Debt Instruments
 (For each debt instrument, describe it in a sentence. e.g., "The company has 5.0% senior notes due 2028 with a principal of $500 million.")
 ## Key Ratios
-(Describe any relevant ratios found in the text, such as Total Debt to Equity or Net Debt to EBITDA, in a paragraph.)
+(Describe any relevant ratios found in the text in a paragraph.)
 ## Covenants
 (Describe any mentioned financial or operational covenants in a paragraph.)"""
                     },
                     "Debt Details": {
                         "search_query": "Detailed information about the company's short-term and long-term debt, credit facilities, loans, bonds, debentures, financing arrangements, and key debt covenants.",
-                        "system_prompt": """You are a senior credit analyst. Based on the provided text, synthesize all available information about the company's debt structure.
-**CRITICAL INSTRUCTIONS:**
-1. Do NOT use any asterisks (`*`) for formatting in your entire response.
-2. Prioritize information from documents with the most recent year if there are conflicts.
+                        "system_prompt": """You are a senior credit analyst.
+**CRITICAL INSTRUCTION: The entire output must be plain text. Do NOT use any asterisks (`*`) for formatting.**
+Based on the provided text, synthesize all available information about the company's debt structure. Prioritize information from documents with the most recent year if there are conflicts.
 Format the output as follows:
 # Debt Details Analysis
 ## Debt Instruments
-Create a markdown table with the following columns: Instrument, Principal Amount, Maturity Date, Coupon/Rate. Populate this table with all specific debt instruments found (bonds, commercial paper, loans, etc.).
+Create a markdown table with the following columns: Instrument, Principal Amount, Maturity Date, Coupon/Rate.
 ## Key Covenants
-Under this heading, write a plain text paragraph describing any financial or operational covenants mentioned.
+Under this heading, write a plain text paragraph describing any covenants mentioned.
 ## Maturity Profile
-Under this heading, write a plain text paragraph summarizing the debt maturity profile (e.g., amounts due in <1 year, 1-5 years, >5 years)."""
+Under this heading, write a plain text paragraph summarizing the debt maturity profile."""
                     },
                     "Litigations and Court Cases/Claims": {
                         "search_query": "Details on litigations, legal proceedings, lawsuits, court cases, regulatory investigations, and contingent liabilities.",
-                        "system_prompt": "You are a legal analyst. From the context provided, compile a report on all legal and regulatory matters in plain text. For each distinct case, write a paragraph detailing the nature of the claim, its status, and any potential financial impact. Do NOT use markdown formatting. **CRITICAL RULE: Prioritize information from documents with the most recent year if there are conflicts.**"
+                        "system_prompt": """You are a legal analyst.
+**CRITICAL INSTRUCTION: The entire output must be plain text. Do NOT use any asterisks (`*`) for formatting.**
+From the context provided, compile a report on all legal and regulatory matters. For each distinct case, write a paragraph detailing the nature of the claim, its status, and any potential financial impact. Prioritize information from documents with the most recent year if there are conflicts."""
                     },
                     "Investment Story (Positives & Risks)": {
                         "search_query": "Company strengths, competitive advantages, growth drivers, market opportunities, risk factors, challenges, and competitive threats.",
-                        "system_prompt": "You are an equity research analyst. Construct a balanced investment story in plain text. Create two sections: 'Investment Positives' and 'Key Risks'. Under each, write a detailed paragraph summarizing the key points. Do not use markdown lists. **CRITICAL RULE: Prioritize information from documents with the most recent year if there are conflicts.**"
+                        "system_prompt": """You are an equity research analyst.
+**CRITICAL INSTRUCTION: The entire output must be plain text. Do NOT use any asterisks (`*`) for formatting.**
+Construct a balanced investment story. Create two sections: 'Investment Positives' and 'Key Risks'. Under each, write a detailed paragraph summarizing the key points. Do not use lists. Prioritize information from documents with the most recent year if there are conflicts."""
                     },
                     "Company Strategy": {
                         "search_query": "Information on corporate strategy, business objectives, future plans, growth initiatives, market expansion, product development, and strategic priorities.",
-                        "system_prompt": "You are a strategy consultant. Outline the company's core strategy in plain text. Use paragraphs for sections like 'Vision & Mission', 'Strategic Pillars', and 'Growth Initiatives'. Do not use markdown. **CRITICAL RULE: Prioritize information from documents with the most recent year if there are conflicts.**"
+                        "system_prompt": """You are a strategy consultant.
+**CRITICAL INSTRUCTION: The entire output must be plain text. Do NOT use any asterisks (`*`) for formatting.**
+Outline the company's core strategy. Use paragraphs for sections like 'Vision & Mission', 'Strategic Pillars', and 'Growth Initiatives'. Prioritize information from documents with the most recent year if there are conflicts."""
                     }
                 }
 
