@@ -2694,6 +2694,32 @@ Construct a balanced investment story. Create two sections: 'Investment Positive
                         "system_prompt": """You are a strategy consultant.
 **CRITICAL INSTRUCTION: The entire output must be plain text. Do NOT use any asterisks (`*`) for formatting.**
 Outline the company's core strategy. Use paragraphs for sections like 'Vision & Mission', 'Strategic Pillars', and 'Growth Initiatives'. Prioritize information from documents with the most recent year if there are conflicts."""
+                    },
+                    "Compare Investment Ideas": {
+                        "search_query": "Comprehensive comparison of companies including business overview, financial performance (revenue, profit, margins), balance sheet strength (debt, cash, leverage), strategic initiatives, growth drivers, competitive landscape, market position, investment highlights, risk factors, and management outlook.",
+                        "system_prompt": """You are a senior buy-side investment analyst tasked with producing a comparative analysis of several investment ideas.
+**CRITICAL INSTRUCTION: The entire output must be plain text. Do NOT use any asterisks (`*`) for formatting.**
+Based ONLY on the provided document excerpts for the selected companies, generate a professional investment comparison memo. The analysis should be objective and data-driven, directly referencing facts from the context.
+
+Structure your response with the following headings. Use narrative paragraphs and, where appropriate, markdown tables for direct data comparison.
+
+# Executive Summary
+(Provide a high-level overview of the companies being compared and the key conclusion of your analysis in one concise paragraph.)
+
+# Financial Performance Comparison
+(Compare the companies on key financial metrics like revenue growth, profitability (EBITDA, net margins), and other relevant performance indicators found in the documents. Use a paragraph to summarize and a markdown table for a side-by-side view if possible.)
+
+# Balance Sheet Health
+(Analyze and compare the balance sheet strength of the companies. Focus on debt levels, cash positions, and leverage ratios. Discuss which company appears more financially stable.)
+
+# Strategic Outlook & Growth Drivers
+(Compare the strategic direction and future growth prospects of each company. What are their stated goals, key initiatives, and market opportunities?)
+
+# Risk Profile Comparison
+(Outline and compare the primary risks associated with each company as detailed in the documents. This includes operational, financial, and market-related risks.)
+
+# Analyst Recommendation
+(Based on the comparative analysis above, provide a clear recommendation. State which company presents a more compelling investment opportunity and provide a well-reasoned justification, balancing the potential rewards against the identified risks.)"""
                     }
                 }
 
@@ -2717,6 +2743,8 @@ Outline the company's core strategy. Use paragraphs for sections like 'Vision & 
             def get_indexed_companies(self) -> List[str]:
                 all_companies = set()
                 try:
+                    # A query with a zero vector and a filter for namespace will effectively scan metadata.
+                    # Pinecone's query is efficient; we ask for a high top_k to get a representative sample.
                     response = self.index.query(vector=[0.0]*384, top_k=1000, include_metadata=True, namespace=self.namespace)
                     for match in response['matches']:
                         if 'company' in match['metadata']:
@@ -2752,7 +2780,7 @@ Outline the company's core strategy. Use paragraphs for sections like 'Vision & 
         if st.form_submit_button("Index Documents", type="primary"):
             if new_company and new_docs:
                 agent.add_documents(new_company, new_docs)
-                st.cache_resource.clear()
+                st.cache_resource.clear() # Clear cache to refresh company list
                 st.rerun()
             else:
                 st.warning("Please provide a company name and at least one document.")
@@ -2769,6 +2797,7 @@ Outline the company's core strategy. Use paragraphs for sections like 'Vision & 
         
         analysis_options = [
             "Quick Company Note",
+            "Compare Investment Ideas",
             "Investment Story (Positives & Risks)",
             "Cap Structure",
             "Debt Details",
@@ -2783,26 +2812,32 @@ Outline the company's core strategy. Use paragraphs for sections like 'Vision & 
             user_query = st.text_area("Ask a question about the selected companies' documents")
 
         if st.button("🚀 Run Analysis", use_container_width=True):
+            # Input validation
+            proceed_with_analysis = False
             if not selected_companies:
                 st.warning("Please select at least one company to analyze.")
+            elif analysis_choice == "Compare Investment Ideas" and len(selected_companies) < 2:
+                st.warning("Please select at least two companies to run a comparison.")
+            elif analysis_choice == "Custom Query" and not user_query.strip():
+                st.warning("Please enter a question for the custom query.")
             else:
+                proceed_with_analysis = True
+
+            if proceed_with_analysis:
                 with st.spinner(f"Running '{analysis_choice}' analysis for {', '.join(selected_companies)}... This may take a few minutes for detailed notes."):
                     if analysis_choice == "Custom Query":
-                        if not user_query.strip():
-                            st.warning("Please enter a question for the custom query.")
-                        else:
-                            answer, sources = agent.query(user_query, selected_companies)
-                            st.markdown(f"### Answer\n{answer}")
-                            st.caption(f"Sources: {sources}")
-                            structured_answer = [("Custom Query Response", answer)]
-                            word_bytes = markdown_to_word_bytes(structured_answer, "Custom Query")
-                            st.download_button(
-                                label="📥 Download as Word (.docx)",
-                                data=word_bytes,
-                                file_name="Custom_Query_Analysis.docx",
-                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                            )
-                    else:
+                        answer, sources = agent.query(user_query, selected_companies)
+                        st.markdown(f"### Answer\n{answer}")
+                        st.caption(f"Sources: {sources}")
+                        structured_answer = [("Custom Query Response", answer)]
+                        word_bytes = markdown_to_word_bytes(structured_answer, "Custom Query")
+                        st.download_button(
+                            label="📥 Download as Word (.docx)",
+                            data=word_bytes,
+                            file_name="Custom_Query_Analysis.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        )
+                    else: # Handles all predefined analysis types
                         analysis_md, sources = agent.get_predefined_analysis(analysis_choice, selected_companies)
                         if "Error:" in analysis_md or "Could not find" in analysis_md:
                             st.error(analysis_md)
@@ -2841,7 +2876,7 @@ Outline the company's core strategy. Use paragraphs for sections like 'Vision & 
         if st.button("🗑️ Delete All Data for This Company", type="secondary"):
             if company_to_delete:
                 agent.delete_company_data(company_to_delete)
-                st.cache_resource.clear()
+                st.cache_resource.clear() # Clear cache to refresh company list
                 st.rerun()
             else:
                 st.warning("Please select a company to delete.")
