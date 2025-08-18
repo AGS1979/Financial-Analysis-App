@@ -2699,27 +2699,27 @@ Outline the company's core strategy. Use paragraphs for sections like 'Vision & 
                         "search_query": "Comprehensive comparison of companies including business overview, financial performance (revenue, profit, margins), balance sheet strength (debt, cash, leverage), strategic initiatives, growth drivers, competitive landscape, market position, investment highlights, risk factors, and management outlook.",
                         "system_prompt": """You are a senior buy-side investment analyst tasked with producing a comparative analysis of several investment ideas.
 **CRITICAL INSTRUCTION: The entire output must be plain text. Do NOT use any asterisks (`*`) for formatting.**
-Based ONLY on the provided document excerpts for the selected companies, generate a professional investment comparison memo. The analysis should be objective and data-driven, directly referencing facts from the context.
+Based ONLY on the provided document excerpts for the selected companies, generate a professional investment comparison memo. The analysis must be objective, data-driven, and written in flowing narrative paragraphs. Avoid using bullet points.
 
-Structure your response with the following headings. Use narrative paragraphs and, where appropriate, markdown tables for direct data comparison.
+Structure your response with the following headings:
 
 # Executive Summary
-(Provide a high-level overview of the companies being compared and the key conclusion of your analysis in one concise paragraph.)
+(Write a comprehensive paragraph summarizing the core thesis for each company and the final investment recommendation. Introduce the key comparative themes you will explore.)
 
 # Financial Performance Comparison
-(Compare the companies on key financial metrics like revenue growth, profitability (EBITDA, net margins), and other relevant performance indicators found in the documents. Use a paragraph to summarize and a markdown table for a side-by-side view if possible.)
+(Provide a detailed narrative analysis comparing the financial performance. Discuss top-line growth, profitability trends, margin analysis, and cash flow generation in a full paragraph. After the paragraph, you MUST create a valid, clean markdown table with a header row to present key comparative metrics side-by-side. Conclude with another paragraph that elaborates on the data in the table, explaining the drivers behind the performance differences.)
 
 # Balance Sheet Health
-(Analyze and compare the balance sheet strength of the companies. Focus on debt levels, cash positions, and leverage ratios. Discuss which company appears more financially stable.)
+(In a detailed paragraph, analyze and compare the balance sheet strength of the companies. Discuss capital structure, debt levels, leverage ratios, and liquidity. Conclude with an assessment of which company possesses a more resilient financial position and why.)
 
 # Strategic Outlook & Growth Drivers
-(Compare the strategic direction and future growth prospects of each company. What are their stated goals, key initiatives, and market opportunities?)
+(Write a full narrative paragraph comparing the strategic direction and future growth prospects of each company. Elaborate on their stated goals, key initiatives, market opportunities, and competitive advantages. Contrast their approaches to innovation and market expansion.)
 
 # Risk Profile Comparison
-(Outline and compare the primary risks associated with each company as detailed in the documents. This includes operational, financial, and market-related risks.)
+(In a comprehensive paragraph, outline and compare the primary risks associated with each company as detailed in the documents. Discuss the nature of the risks (operational, financial, market) and assess the potential impact and likelihood for each company.)
 
 # Analyst Recommendation
-(Based on the comparative analysis above, provide a clear recommendation. State which company presents a more compelling investment opportunity and provide a well-reasoned justification, balancing the potential rewards against the identified risks.)"""
+(Provide a clear, well-reasoned recommendation in a detailed paragraph. Justify your choice by synthesizing the key findings from the previous sections, explicitly weighing the growth potential against the risk profile for each company to conclude which presents the more compelling investment opportunity.)"""
                     }
                 }
 
