@@ -1541,8 +1541,9 @@ Repurchase pace, valuation support
 
     # --- Text & Document Processors ---
     def clean_markdown(text):
+        # This function is now safe because it's called on section content, not the whole memo.
         text = re.sub(r'^[ \t\-]{3,}$', '', text, flags=re.MULTILINE)
-        text = re.sub(r'#+\s*', '', text)
+        # The line that removed headings is no longer needed here.
         text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
         text = re.sub(r'\*(.*?)\*', r'\1', text)
         text = re.sub(r'`{1,3}(.*?)`{1,3}', r'\1', text)
@@ -1555,34 +1556,39 @@ Repurchase pace, valuation support
     def truncate_safely(text, limit=20000):
         return text[:limit]
 
-    def split_into_sections(text: str, template: str) -> Dict[str, str]:
+    # --- FIXED: Robust section splitting ---
+    def split_into_sections(raw_text: str, template: str) -> Dict[str, str]:
+        """
+        Splits raw AI-generated text into a dictionary of sections based on markdown headings.
+        """
         sections = {}
         titles = [line.split('(')[0].strip() for line in template.strip().split('\n') if line.strip()]
         if not titles:
-            return {"Memo": text.strip()}
+            return {"Investment Memo": raw_text.strip()}
 
-        pattern = re.compile(r'^(' + '|'.join(map(re.escape, titles)) + r')\s*$', re.MULTILINE | re.IGNORECASE)
-        matches = list(pattern.finditer(text))
+        # Pattern to find markdown headings that match our template titles.
+        pattern = re.compile(
+            r"^#+\s*(" + "|".join(map(re.escape, titles)) + r")\s*$",
+            re.MULTILINE | re.IGNORECASE
+        )
+        matches = list(pattern.finditer(raw_text))
 
         if not matches:
-             # Fallback for when the AI doesn't use the exact titles as headings
-            intro_end = matches[0].start() if matches else len(text)
-            first_title_key = titles[0] if titles else "Introduction"
-            sections[first_title_key] = text[:intro_end].strip()
+            st.warning("Could not find structured headings in the AI's response. The infographic may be incomplete.")
+            return {"Investment Memo": raw_text.strip()}
 
         for i, match in enumerate(matches):
-            title = match.group(1).strip()
-            start_of_content = match.end()
-            end_of_content = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-            content = text[start_of_content:end_of_content].strip()
-            # Find the canonical title to handle case differences
-            canonical_title = next((t for t in titles if t.lower() == title.lower()), title)
-            sections[canonical_title] = content
-        
-        # If still no sections, just return the whole memo under a generic key
-        if not sections:
-            return {"Investment Memo": text}
+            title_from_text = match.group(1).strip()
+            # Find the canonical title from our list to handle case differences.
+            canonical_title = next((t for t in titles if t.lower() == title_from_text.lower()), title_from_text)
             
+            start_of_content = match.end()
+            end_of_content = matches[i + 1].start() if i + 1 < len(matches) else len(raw_text)
+            content = raw_text[start_of_content:end_of_content].strip()
+            
+            if content:
+                sections[canonical_title] = content
+                
         return sections
 
 
@@ -1656,14 +1662,14 @@ Repurchase pace, valuation support
                 return names, tickers, mults, avg
 
             if valuation_mode == "Let AI choose peers":
-                prompt = (
+                prompt_peers = (
                     f"List 5 large, publicly-traded companies most comparable to the business segments of {company_name}, "
                     "separated by commas."
                 )
                 resp = requests.post(
                     DEEPSEEK_API_URL,
                     headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"},
-                    json={"model":"deepseek-chat","messages":[{"role":"user","content":prompt}],"temperature":0}
+                    json={"model":"deepseek-chat","messages":[{"role":"user","content":prompt_peers}],"temperature":0}
                 )
                 resp.raise_for_status()
                 body = resp.json().get("choices", [])
@@ -1681,7 +1687,7 @@ Repurchase pace, valuation support
                 upside_pct = ((equity_est / actual_mc) - 1) * 100 if actual_mc else None
 
                 valuation_section = f"""
-# Valuation Analysis (AI-Generated)
+### Valuation Analysis (AI-Generated)
 **AI-Selected Peers**: {', '.join(peer_names)}
 **Peer EV/EBITDA multiples**: {peer_mults}
 **Average EV/EBITDA**: {avg_mult or 'N/A'}
@@ -1696,21 +1702,22 @@ Repurchase pace, valuation support
                 p_names, _, p_mults, p_avg = process_peers(parent_peers)
                 s_names, _, s_mults, s_avg = process_peers(spinco_peers)
                 valuation_section = f"""
-# Valuation Analysis (User-Provided Peers)
+### Valuation Analysis (User-Provided Peers)
 **ParentCo Peers**: {', '.join(p_names)}
 EV/EBITDA multiples: {p_mults} (avg {p_avg or 'N/A'})
 **SpinCo Peers**: {', '.join(s_names)}
 EV/EBITDA multiples: {s_mults} (avg {s_avg or 'N/A'})
 """
         
-        # 4) Assemble prompt
+        # 4) --- FIXED: Assemble a more robust prompt ---
         prompt = f"""You are an institutional investment analyst writing a professional memo on a special situation involving {company_name}.
 The situation is: **{situation_type}**
 
 Below is the internal company information extracted from various files:
 \"\"\"{truncate_safely(combined_text)}\"\"\"
 {valuation_section}
-Using the structure below, generate a well-written investment memo. Be factual, insightful, and clear.
+**CRITICAL INSTRUCTION:** Using the structure below, generate a well-written investment memo. You MUST use the exact section titles from the structure as markdown headings (e.g., "## Transaction Overview", "## ParentCo Post-Spin Outlook"). Do not create your own section titles.
+
 Structure:
 {structure}
 """
@@ -1722,11 +1729,17 @@ Structure:
             json={"model":"deepseek-chat","messages":[{"role":"user","content":prompt}],"temperature":0.3}
         )
         response.raise_for_status()
-        memo_text = clean_markdown(response.json()["choices"][0]["message"]["content"])
+        # --- FIXED: Process raw text first, then clean ---
+        raw_memo_text = response.json()["choices"][0]["message"]["content"]
 
-        # 6) Build and return .docx
-        memo_dict = split_into_sections(memo_text, structure)
-        doc = format_memo_docx(memo_dict, company_name, situation_type)
+        # 6) Split the raw text into sections using markdown headings
+        memo_dict_raw = split_into_sections(raw_memo_text, structure)
+        
+        # 7) Clean the content *within* each section
+        memo_dict_cleaned = {title: clean_markdown(content) for title, content in memo_dict_raw.items()}
+
+        # 8) Build and return .docx from the properly structured and cleaned dictionary
+        doc = format_memo_docx(memo_dict_cleaned, company_name, situation_type)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
             doc.save(tmp.name)
             return tmp.name
