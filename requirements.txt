@@ -7,7 +7,7 @@ markdown
 
 # AI & LLM Services
 openai
-pinecone-client[grpc]
+pinecone
 st-supabase-connection
 gotrue
 tiktoken
