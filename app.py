@@ -2325,25 +2325,6 @@ def esg_analyzer_app():
 # ==============================================================================
 # 6. PORTFOLIO AGENT (FINAL CORRECTED VERSION)
 # ==============================================================================
-import streamlit as st
-import re
-import io
-import os
-import tempfile
-from typing import List, Tuple
-import requests
-import fitz  # PyMuPDF
-import tiktoken
-from pinecone import Pinecone
-from sentence_transformers import SentenceTransformer
-from docx import Document
-from docx.enum.style import WD_STYLE_TYPE
-from docx.shared import Pt
-
-# Assume DEEPSEEK_API_KEY and DEEPSEEK_API_URL are configured in st.secrets
-DEEPSEEK_API_KEY = st.secrets.get("deepseek", {}).get("api_key")
-DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
-
 def portfolio_agent_app(user_id: str):
     """
     A persistent agent to index and query company documents using Pinecone,
