@@ -2647,9 +2647,9 @@ def portfolio_agent_app(user_id: str):
 
             def get_predefined_analysis(self, analysis_type: str, companies: List[str], k: int = 40) -> Tuple[str, str]:
                 ANALYSIS_CONFIG = {
-                    # ❗ MAJOR CHANGE: Rewritten prompt for analyst-grade output.
                     "Quick Company Note": {
                         "search_query": "Comprehensive company profile including business overview, products, services, market position, key financial data like revenue, profit, margins, cash flow, EPS, balance sheet items (debt, cash), industry trends, competitive landscape, investment highlights, strengths, weaknesses, opportunities, threats, risk factors, and any red flags like impairments or governance issues.",
+                        # ❗ CHANGE IS HERE
                         "system_prompt": """You are an expert equity research analyst from a top-tier investment bank. Your task is to generate a professional 'Quick Company Note' based ONLY on the provided document excerpts. The output MUST be in clean markdown format.
 
 Structure your response with the following headings:
@@ -2658,7 +2658,7 @@ Structure your response with the following headings:
 (Provide a comprehensive summary of the company as a narrative text.)
 
 # 2. Financial Performance
-(Create a markdown table with the columns: 'Metric', 'Most Recent Fiscal Year', 'Prior Fiscal Year', and 'YoY Growth / Change'. Include key metrics like Revenue, Operating Profit, and Free Cash Flow. If possible, calculate and include key ratios like **Operating Margin %**.)
+(Create a markdown table with the columns: 'Metric', 'Most Recent Fiscal Year', 'Prior Fiscal Year', and 'YoY Growth / Change'. Include key metrics like Revenue, Operating Profit, and Free Cash Flow. **IMPORTANT: If data for a specific year or metric is not available in the context, clearly mark that cell with 'N/A'**. Do not make up data. Present any financial figures you can find, even if the table is incomplete.)
 
 # 3. Key Investment Highlights
 (Generate a list of concise bullet points, starting each with `*`. For each bullet, **bold the key takeaway** at the beginning. Example: `* **Dominant Market Position:** The company holds the #1 spot...`)
@@ -2673,7 +2673,7 @@ Structure your response with the following headings:
 (Write a short, concluding paragraph that synthesizes the key findings and provides a balanced view on the company's position.)
 """
                     },
-                    # All other analysis configs are included without changes
+                    # ... All your other analysis configs ...
                     "Cap Structure": {
                         "search_query": "Detailed information about the company's capital structure, including short-term and long-term debt instruments, maturity dates, coupon rates, leases, equity, and debt covenants.",
                         "system_prompt": """You are a senior credit analyst.
