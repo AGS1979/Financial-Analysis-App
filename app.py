@@ -2455,82 +2455,92 @@ def portfolio_agent_app(user_id: str):
 
     # ❗ CHANGE: Updated function to correctly render markdown tables and lists.
     def format_analysis_as_html(structured_data: list, title: str, sources: str) -> str:
-        html_body = ""
-        for i, (heading, content) in enumerate(structured_data):
-            cleaned_heading = re.sub(r'^#+\s*(\d+\.\s*)?', '', heading).strip()
-            if i == 0 and title.lower() in cleaned_heading.lower():
-                continue
-            html_body += f"<h3>{cleaned_heading}</h3>"
+    html_body = ""
+    for i, (heading, content) in enumerate(structured_data):
+        cleaned_heading = re.sub(r'^#+\s*(\d+\.\s*)?', '', heading).strip()
+        if i == 0 and title.lower() in cleaned_heading.lower():
+            continue
+        html_body += f"<h3>{cleaned_heading}</h3>"
 
-            content_html = ""
-            lines = content.strip().split('\n')
+        content_html = ""
+        lines = content.strip().split('\n')
+        
+        # --- REVISED LOGIC START ---
+        in_table = False
+        table_headers = []
+        line_idx = 0
+        while line_idx < len(lines):
+            line = lines[line_idx].strip()
             
-            is_table = False
-            if len(lines) > 1 and '|' in lines[0] and re.match(r'^\s*\|?(:?-+:?\|)+(:?-+:?)?\s*$', lines[1]):
-                is_table = True
-                
-            if is_table:
-                 try:
-                     headers = [h.strip() for h in lines[0].strip('|').split('|')]
-                     content_html += "<div style='overflow-x:auto;'><table class='custom-table'><thead><tr>"
-                     for header in headers:
-                         content_html += f"<th>{header}</th>"
-                     content_html += "</tr></thead><tbody>"
-                     for row_line in lines[2:]:
-                         if not row_line.strip().startswith('|'): break
-                         content_html += "<tr>"
-                         cells = [c.strip().replace('**', '') for c in row_line.strip('|').split('|')]
-                         for k in range(len(headers)):
-                             cell_text = cells[k] if k < len(cells) else "&nbsp;"
-                             content_html += f"<td>{cell_text}</td>"
-                         content_html += "</tr>"
-                     content_html += "</tbody></table></div>"
-                 except Exception:
-                     content_html += f"<p>{content}</p>" # Fallback
+            # Check if we've found the start of a table
+            is_header = '|' in line
+            is_separator = (line_idx + 1 < len(lines)) and re.match(r'^\s*\|?(:?-+:?\|)+(:?-+:?)?\s*$', lines[line_idx + 1].strip())
+
+            if is_header and is_separator:
+                # Start of a table found
+                try:
+                    table_headers = [h.strip() for h in line.strip('|').split('|')]
+                    content_html += "<div style='overflow-x:auto;'><table class='custom-table'><thead><tr>"
+                    for header in table_headers:
+                        content_html += f"<th>{header}</th>"
+                    content_html += "</tr></thead><tbody>"
+                    
+                    # Skip the separator line
+                    line_idx += 2 
+                    
+                    # Process table rows
+                    while line_idx < len(lines) and lines[line_idx].strip().startswith('|'):
+                        row_line = lines[line_idx].strip()
+                        content_html += "<tr>"
+                        cells = [c.strip().replace('**', '') for c in row_line.strip('|').split('|')]
+                        for k in range(len(table_headers)):
+                            cell_text = cells[k] if k < len(cells) else "&nbsp;"
+                            content_html += f"<td>{cell_text}</td>"
+                        content_html += "</tr>"
+                        line_idx += 1
+                    
+                    content_html += "</tbody></table></div>"
+                    continue # Move to the next line after the table
+                except Exception:
+                    # Fallback for malformed tables: treat as plain text
+                    content_html += f"<p>{line}</p>"
+
+            # If not a table, process as paragraph or list
             else:
-                in_list = False
-                for line in lines:
-                    line = line.strip()
-                    line = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', line)
+                line = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', line)
+                if line.startswith(('* ', '- ')):
+                    # Simple list handling (can be improved if nested lists are needed)
+                    content_html += f"<ul><li>{line[2:].strip()}</li></ul>"
+                elif line:
+                    content_html += f"<p>{line}</p>"
+            
+            line_idx += 1
+        # --- REVISED LOGIC END ---
+            
+        html_body += content_html
 
-                    is_list_item = line.startswith('* ') or line.startswith('- ')
-                    if is_list_item:
-                        if not in_list:
-                            content_html += "<ul>"
-                            in_list = True
-                        content_html += f"<li>{line[2:].strip()}</li>"
-                    else:
-                        if in_list:
-                            content_html += "</ul>"
-                            in_list = False
-                        if line:
-                            content_html += f"<p>{line}</p>"
-                if in_list:
-                    content_html += "</ul>"
-            html_body += content_html
-
-        html_style = """
-        <style>
-            .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9f9f9; margin-top: 20px; }
-            .analysis-container h2 {font-size: 1.5em; color: #00416A; border-bottom: 2px solid #00416A; padding-bottom: 10px; margin-top: 0;}
-            .analysis-container h3 {font-size: 1.2em; color: #00416A; padding-bottom: 5px; margin-top: 25px; border-bottom: 1px solid #e6f1f6;}
-            .analysis-container .custom-table { width: 100%; border-collapse: collapse; margin: 15px 0; }
-            .analysis-container .custom-table th, .analysis-container .custom-table td { border: 1px solid #ddd; padding: 10px 14px; text-align: left; }
-            .analysis-container .custom-table th { background-color: #e6f1f6; font-weight: 600; }
-            .analysis-container p { margin-bottom: 1em; line-height: 1.6; }
-            .analysis-container ul { margin-left: 0; padding-left: 1.5em; }
-            .analysis-container li { margin-bottom: 0.75em; line-height: 1.6;}
-            .analysis-container .sources { font-size: 0.85em; color: #555; margin-top: 25px; text-align: right; }
-        </style>
-        """
-        return f"""
-        {html_style}
-        <div class="analysis-container">
-            <h2>{title} Analysis</h2>
-            {html_body}
-            <div class="sources"><strong>Sources:</strong> {sources}</div>
-        </div>
-        """
+    html_style = """
+    <style>
+        .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9f9f9; margin-top: 20px; }
+        .analysis-container h2 {font-size: 1.5em; color: #00416A; border-bottom: 2px solid #00416A; padding-bottom: 10px; margin-top: 0;}
+        .analysis-container h3 {font-size: 1.2em; color: #00416A; padding-bottom: 5px; margin-top: 25px; border-bottom: 1px solid #e6f1f6;}
+        .analysis-container .custom-table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+        .analysis-container .custom-table th, .analysis-container .custom-table td { border: 1px solid #ddd; padding: 10px 14px; text-align: left; }
+        .analysis-container .custom-table th { background-color: #e6f1f6; font-weight: 600; }
+        .analysis-container p { margin-bottom: 1em; line-height: 1.6; }
+        .analysis-container ul { margin-left: 0; padding-left: 1.5em; }
+        .analysis-container li { margin-bottom: 0.75em; line-height: 1.6;}
+        .analysis-container .sources { font-size: 0.85em; color: #555; margin-top: 25px; text-align: right; }
+    </style>
+    """
+    return f"""
+    {html_style}
+    <div class="analysis-container">
+        <h2>{title} Analysis</h2>
+        {html_body}
+        <div class="sources"><strong>Sources:</strong> {sources}</div>
+    </div>
+    """
 
     @st.cache_resource
     def load_agent(user_id):
