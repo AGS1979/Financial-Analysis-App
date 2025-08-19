@@ -1,19 +1,33 @@
+# Streamlit & Core
 streamlit
 pandas
 numpy
 requests
+markdown
+
+# AI & LLM Services
 openai
+pinecone-client
+st-supabase-connection
+gotrue
+tiktoken
+
+# Google Cloud Services (for PE Agent)
+google-cloud-aiplatform
+google-cloud-storage
+google-cloud-documentai
+google-cloud-dlp
+
+# Document & Data Processing
 PyMuPDF
 python-docx
 sentence-transformers
 faiss-cpu
 pdfplumber
-yfinance
+PyPDF2
 beautifulsoup4
 Pillow
 Jinja2
-pinecone
-PyPDF2
-markdown
-st-supabase-connection
-gotrue
+
+# Financial Data
+yfinance
