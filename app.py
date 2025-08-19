@@ -2554,16 +2554,26 @@ def portfolio_agent_app(user_id: str):
             def __init__(self, user_id: str, index_name: str = "portfolio-agent"):
                 self.namespace = user_id
                 try:
-                    pinecone_api_key = st.secrets["pinecone"]["api_key"]
-                except (KeyError, FileNotFoundError):
-                    st.error("Pinecone API key not found.")
+                    # 1. Securely gets the API key from Streamlit's secrets.
+                    pinecone_api_key = st.secrets.get("pinecone", {}).get("api_key")
+                    if not pinecone_api_key:
+                        st.error("Your Pinecone API key is not configured in st.secrets.")
+                        raise ValueError("Missing Pinecone API Key")
+
+                    # 2. Initializes the Pinecone client with your key.
+                    self.pc = Pinecone(api_key=pinecone_api_key)
+
+                    # 3. Checks if the index exists using the correct new syntax.
+                    existing_indexes = [idx.name for idx in self.pc.list_indexes()]
+                    if index_name not in existing_indexes:
+                        st.error(f"The Pinecone index '{index_name}' was not found.")
+                        st.info(f"Your available indexes are: {existing_indexes}")
+                        raise NameError(f"Index '{index_name}' not found.")
+
+                except Exception as e:
+                    st.error(f"Failed to connect to Pinecone: {e}")
                     raise
-                self.pc = Pinecone(api_key=pinecone_api_key)
-                
-                # ❗ CHANGE: Use modern, correct method to check for index existence.
-                if index_name not in [idx.name for idx in self.pc.list_indexes()]:
-                    st.error(f"Index '{index_name}' does not exist.")
-                    raise
+
                 self.index = self.pc.Index(index_name)
                 self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
