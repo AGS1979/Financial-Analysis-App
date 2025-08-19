@@ -1339,7 +1339,7 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
 # 4. SPECIAL SITUATIONS ANALYZER
 # (Code from app - SpecialSituations.py)
 # ==============================================================================
-def special_situations_app():
+ddef special_situations_app():
     """
     Encapsulates the complete Special Situations Analyzer functionality,
     including memo generation, a valuation module, and infographic creation.
@@ -1686,8 +1686,9 @@ Repurchase pace, valuation support
                 equity_est = ev_est - debt
                 upside_pct = ((equity_est / actual_mc) - 1) * 100 if actual_mc else None
 
+                # *** CHANGE HERE: Standardized the heading to match the template ***
                 valuation_section = f"""
-### Valuation Analysis (AI-Generated)
+## Valuation Analysis
 **AI-Selected Peers**: {', '.join(peer_names)}
 **Peer EV/EBITDA multiples**: {peer_mults}
 **Average EV/EBITDA**: {avg_mult or 'N/A'}
@@ -1701,8 +1702,9 @@ Repurchase pace, valuation support
             elif valuation_mode == "I'll enter peer company names":
                 p_names, _, p_mults, p_avg = process_peers(parent_peers)
                 s_names, _, s_mults, s_avg = process_peers(spinco_peers)
+                # *** CHANGE HERE: Standardized the heading to match the template ***
                 valuation_section = f"""
-### Valuation Analysis (User-Provided Peers)
+## Valuation Analysis
 **ParentCo Peers**: {', '.join(p_names)}
 EV/EBITDA multiples: {p_mults} (avg {p_avg or 'N/A'})
 **SpinCo Peers**: {', '.join(s_names)}
@@ -1715,8 +1717,10 @@ The situation is: **{situation_type}**
 
 Below is the internal company information extracted from various files:
 \"\"\"{truncate_safely(combined_text)}\"\"\"
+
 {valuation_section}
-**CRITICAL INSTRUCTION:** Using the structure below, generate a well-written investment memo. You MUST use the exact section titles from the structure as markdown headings (e.g., "## Transaction Overview", "## ParentCo Post-Spin Outlook"). Do not create your own section titles.
+
+**CRITICAL INSTRUCTION:** Using the structure below, generate a well-written investment memo. You MUST use the exact section titles from the structure as markdown headings (e.g., "## Transaction Overview", "## ParentCo Post-Spin Outlook"). Do not create your own section titles. **If a 'Valuation Analysis' section is provided above, you MUST use it directly for that part of the memo.**
 
 Structure:
 {structure}
@@ -2321,6 +2325,25 @@ def esg_analyzer_app():
 # ==============================================================================
 # 6. PORTFOLIO AGENT (FINAL CORRECTED VERSION)
 # ==============================================================================
+import streamlit as st
+import re
+import io
+import os
+import tempfile
+from typing import List, Tuple
+import requests
+import fitz  # PyMuPDF
+import tiktoken
+from pinecone import Pinecone
+from sentence_transformers import SentenceTransformer
+from docx import Document
+from docx.enum.style import WD_STYLE_TYPE
+from docx.shared import Pt
+
+# Assume DEEPSEEK_API_KEY and DEEPSEEK_API_URL are configured in st.secrets
+DEEPSEEK_API_KEY = st.secrets.get("deepseek", {}).get("api_key")
+DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
+
 def portfolio_agent_app(user_id: str):
     """
     A persistent agent to index and query company documents using Pinecone,
@@ -2342,14 +2365,8 @@ def portfolio_agent_app(user_id: str):
             full_context += excerpt
         return full_context
 
-    def sanitize_ai_output(text: str) -> str:
-        """
-        Forcefully removes any remaining markdown asterisks for bold/italics
-        to ensure clean, professional output.
-        """
-        # Removes bolding (**) and italics (*)
-        text = re.sub(r'\*(\*?)(.*?)\1\*', r'\2', text)
-        return text
+    # ❗ CHANGE: This function is no longer needed as we want to preserve markdown.
+    # def sanitize_ai_output...
 
     def call_deepseek_model(prompt: str) -> str:
         try:
@@ -2357,12 +2374,12 @@ def portfolio_agent_app(user_id: str):
                 st.error("DeepSeek API Key is not configured in secrets.")
                 return "Error: API Key not available."
             headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
-            payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.2, "max_tokens": 8192}
+            payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 8192}
             response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=240)
             response.raise_for_status()
-            # Sanitize the output immediately after receiving it
+            # ❗ CHANGE: Removed sanitize_ai_output to preserve markdown.
             raw_content = response.json()["choices"][0]["message"]["content"]
-            return sanitize_ai_output(raw_content)
+            return raw_content
         except Exception as e:
             st.error(f"An unexpected error occurred: {e}")
             return f"Error: {e}"
@@ -2420,43 +2437,42 @@ def portfolio_agent_app(user_id: str):
         for heading, content in structured_data:
             cleaned_heading = re.sub(r'^#+\s*', '', heading).strip()
             doc.add_paragraph(cleaned_heading, style=heading_style)
-            if "Financial Data" in heading:
-                metrics, values = [], []
-                pairs = [p.strip() for p in content.split(';') if p.strip()]
-                for pair in pairs:
-                    if ':' in pair:
-                        metric, value = pair.split(':', 1)
-                        metrics.append(clean_metric_name(metric))
-                        values.append(value.strip())
-                if metrics:
-                    table = doc.add_table(rows=2, cols=len(metrics))
-                    table.style = 'Table Grid'
-                    for i, metric_text in enumerate(metrics):
-                        p_header = table.cell(0, i).paragraphs[0]
-                        run_header = p_header.add_run(metric_text)
-                        run_header.font.bold = True
-                        run_header.font.name = 'Aptos Display'
-                        run_header.font.size = Pt(9)
-                        p_value = table.cell(1, i).paragraphs[0]
-                        run_value = p_value.add_run(values[i])
-                        run_value.font.bold = False
-                        run_value.font.name = 'Aptos Display'
-                        run_value.font.size = Pt(9)
+
+            # This can be improved to parse markdown tables into Word tables
+            is_table = False
+            lines = content.strip().split('\n')
+            if len(lines) > 1 and '|' in lines[0] and re.match(r'^\s*\|?(:?-+:?\|)+(:?-+:?)?\s*$', lines[1]):
+                is_table = True
+
+            if is_table:
+                # Basic table handling for Word
+                headers = [h.strip() for h in lines[0].strip('|').split('|')]
+                table = doc.add_table(rows=1, cols=len(headers))
+                table.style = 'Table Grid'
+                hdr_cells = table.rows[0].cells
+                for i, h in enumerate(headers):
+                    hdr_cells[i].text = h
+                for row_line in lines[2:]:
+                    row_cells = table.add_row().cells
+                    cells = [c.strip() for c in row_line.strip('|').split('|')]
+                    for i, c in enumerate(cells):
+                        if i < len(row_cells):
+                            row_cells[i].text = c
             else:
-                content_with_spaces = add_spacing_to_run_on_text(content)
-                cleaned_content = re.sub(r'\*(\*?)(.*?)\1\*', r'\2', content_with_spaces)
-                for para in cleaned_content.split('\n'):
+                for para in content.split('\n'):
                     para = para.strip()
                     if not para: continue
                     if para.startswith(('* ', '- ')):
                         doc.add_paragraph(para[2:], style='List Bullet')
                     else:
+                        para = para.replace('**', '') # Remove bold markdown for Word
                         doc.add_paragraph(para, style=body_style)
         buffer = io.BytesIO()
         doc.save(buffer)
         buffer.seek(0)
         return buffer.getvalue()
 
+    # ❗ CHANGE: Updated function to correctly render markdown tables and lists.
     def format_analysis_as_html(structured_data: list, title: str, sources: str) -> str:
         html_body = ""
         for i, (heading, content) in enumerate(structured_data):
@@ -2465,77 +2481,52 @@ def portfolio_agent_app(user_id: str):
                 continue
             html_body += f"<h3>{cleaned_heading}</h3>"
 
-            # --- NEW ROBUST TABLE PARSING LOGIC ---
+            content_html = ""
             lines = content.strip().split('\n')
-            table_start_index = -1
-
-            # Find the start of a markdown table (header + separator)
-            for j in range(len(lines) - 1):
-                line1 = lines[j].strip()
-                line2 = lines[j+1].strip()
-                is_header = line1.count('|') > 1 and line1.startswith('|') and line1.endswith('|')
-                is_separator = re.match(r'^[|: -]+$', line2) and line2.count('-') > 2
-                if is_header and is_separator:
-                    table_start_index = j
-                    break
             
-            # If no table is found, process as plain paragraphs
-            if table_start_index == -1:
-                cleaned_content = add_spacing_to_run_on_text(content)
-                paragraphs = cleaned_content.strip().split('\n')
-                for para in paragraphs:
-                    p = para.strip()
-                    if not p: continue
-                    if re.match(r'^\s*([*-]|\d+\.)\s+', p):
-                        list_item_text = re.sub(r'^\s*([*-]|\d+\.)\s+', '', p)
-                        html_body += f'<p style="padding-left: 1.5em; text-indent: -1.5em;">• {list_item_text}</p>'
-                    else:
-                        html_body += f"<p>{p}</p>"
+            is_table = False
+            if len(lines) > 1 and '|' in lines[0] and re.match(r'^\s*\|?(:?-+:?\|)+(:?-+:?)?\s*$', lines[1]):
+                is_table = True
+                
+            if is_table:
+                 try:
+                     headers = [h.strip() for h in lines[0].strip('|').split('|')]
+                     content_html += "<div style='overflow-x:auto;'><table class='custom-table'><thead><tr>"
+                     for header in headers:
+                         content_html += f"<th>{header}</th>"
+                     content_html += "</tr></thead><tbody>"
+                     for row_line in lines[2:]:
+                         if not row_line.strip().startswith('|'): break
+                         content_html += "<tr>"
+                         cells = [c.strip().replace('**', '') for c in row_line.strip('|').split('|')]
+                         for k in range(len(headers)):
+                             cell_text = cells[k] if k < len(cells) else "&nbsp;"
+                             content_html += f"<td>{cell_text}</td>"
+                         content_html += "</tr>"
+                     content_html += "</tbody></table></div>"
+                 except Exception:
+                     content_html += f"<p>{content}</p>" # Fallback
             else:
-                # 1. Process text before the table
-                before_table_content = '\n'.join(lines[:table_start_index])
-                if before_table_content.strip():
-                    for para in before_table_content.strip().split('\n'):
-                        if para.strip(): html_body += f"<p>{para.strip()}</p>"
+                in_list = False
+                for line in lines:
+                    line = line.strip()
+                    line = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', line)
 
-                # 2. Find the end of the table
-                table_end_index = table_start_index + 2
-                for j in range(table_start_index + 2, len(lines)):
-                    if not lines[j].strip().startswith('|'):
-                        table_end_index = j
-                        break
-                else:
-                    table_end_index = len(lines)
-                
-                table_lines = [line.strip() for line in lines[table_start_index:table_end_index]]
-
-                # 3. Convert the found table to HTML
-                try:
-                    headers = [h.strip() for h in table_lines[0].strip('|').split('|')]
-                    table_html = "<div style='overflow-x:auto;'><table class='custom-table'><thead><tr>"
-                    for header in headers:
-                        table_html += f"<th>{header}</th>"
-                    table_html += "</tr></thead><tbody>"
-                    
-                    for row_line in table_lines[2:]:
-                        table_html += "<tr>"
-                        cells = [c.strip() for c in row_line.strip('|').split('|')]
-                        for k in range(len(headers)):
-                            cell_text = cells[k] if k < len(cells) else "&nbsp;"
-                            table_html += f"<td>{cell_text}</td>"
-                        table_html += "</tr>"
-                    table_html += "</tbody></table></div>"
-                    html_body += table_html
-                except Exception:
-                    # Fallback if conversion fails
-                    for line in table_lines:
-                         html_body += f"<p>{line}</p>"
-                
-                # 4. Process text after the table
-                after_table_content = '\n'.join(lines[table_end_index:])
-                if after_table_content.strip():
-                    for para in after_table_content.strip().split('\n'):
-                        if para.strip(): html_body += f"<p>{para.strip()}</p>"
+                    is_list_item = line.startswith('* ') or line.startswith('- ')
+                    if is_list_item:
+                        if not in_list:
+                            content_html += "<ul>"
+                            in_list = True
+                        content_html += f"<li>{line[2:].strip()}</li>"
+                    else:
+                        if in_list:
+                            content_html += "</ul>"
+                            in_list = False
+                        if line:
+                            content_html += f"<p>{line}</p>"
+                if in_list:
+                    content_html += "</ul>"
+            html_body += content_html
 
         html_style = """
         <style>
@@ -2546,6 +2537,8 @@ def portfolio_agent_app(user_id: str):
             .analysis-container .custom-table th, .analysis-container .custom-table td { border: 1px solid #ddd; padding: 10px 14px; text-align: left; }
             .analysis-container .custom-table th { background-color: #e6f1f6; font-weight: 600; }
             .analysis-container p { margin-bottom: 1em; line-height: 1.6; }
+            .analysis-container ul { margin-left: 0; padding-left: 1.5em; }
+            .analysis-container li { margin-bottom: 0.75em; line-height: 1.6;}
             .analysis-container .sources { font-size: 0.85em; color: #555; margin-top: 25px; text-align: right; }
         </style>
         """
@@ -2569,14 +2562,12 @@ def portfolio_agent_app(user_id: str):
                     st.error("Pinecone API key not found.")
                     raise
                 self.pc = Pinecone(api_key=pinecone_api_key)
-                # --- CHANGE HERE ---
-                # Check if index exists using the new method
+                
+                # ❗ CHANGE: Use modern, correct method to check for index existence.
                 if index_name not in [idx.name for idx in self.pc.list_indexes()]:
                     st.error(f"Index '{index_name}' does not exist.")
                     raise
                 self.index = self.pc.Index(index_name)
-                # Using a more powerful model is a good idea, but requires changing vector dimensions.
-                # For now, we stick with the original to avoid breaking changes.
                 self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
             def sanitize_filename(self, name: str) -> str:
@@ -2588,11 +2579,7 @@ def portfolio_agent_app(user_id: str):
                         with fitz.open(stream=file_content, filetype="pdf") as doc:
                             return "\n".join(page.get_text() for page in doc)
                     elif filename.lower().endswith(".docx"):
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
-                            tmp.write(file_content)
-                            tmp_path = tmp.name
-                        doc = Document(tmp_path)
-                        os.unlink(tmp_path)
+                        doc = Document(io.BytesIO(file_content))
                         return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
                     elif filename.lower().endswith(".txt"):
                         return file_content.decode("utf-8")
@@ -2600,135 +2587,112 @@ def portfolio_agent_app(user_id: str):
                     st.warning(f"Could not read {filename}: {e}")
                 return ""
 
-            # In PortfolioAgent, replace the old _chunk_text method
+            # ❗ CHANGE: Replaced old chunker with superior token-based method.
             def _chunk_text(self, text: str, max_tokens: int = 512, overlap_tokens: int = 50) -> List[str]:
-                """
-                Splits text into chunks using a token-aware method with overlap.
-                """
                 try:
-                    # Using an encoding appropriate for many modern models
                     enc = tiktoken.get_encoding("cl100k_base")
                 except Exception:
-                    # Fallback for environments where tiktoken might have issues
                     enc = tiktoken.get_encoding("gpt2")
-                    
                 tokens = enc.encode(text)
                 chunks = []
-                
                 start = 0
                 while start < len(tokens):
                     end = start + max_tokens
-                    chunk_tokens = tokens[start:end]
-                    chunk_text = enc.decode(chunk_tokens)
-                    chunks.append(chunk_text.strip())
-                    
-                    # Move the start position back by the overlap to create context continuity
+                    chunks.append(enc.decode(tokens[start:end]).strip())
                     start += (max_tokens - overlap_tokens)
-                    
-                return [chunk for chunk in chunks if chunk] # Filter out any empty chunks
-            
+                return [chunk for chunk in chunks if chunk]
+
             def _get_year_from_filename(self, filename: str) -> int:
                 matches = re.findall(r'\b(20\d{2})\b', filename)
-                if matches:
-                    return int(max(matches))
-                return 0
+                return int(max(matches)) if matches else 0
 
+            # ❗ CHANGE: Updated to prevent duplicates and use manual batching.
             def add_documents(self, company: str, uploaded_files: list):
                 safe_company_name = self.sanitize_filename(company)
                 with st.status(f"Processing documents for {safe_company_name}...", expanded=True) as status:
                     total_vectors_processed = 0
                     for file in uploaded_files:
-                        
-                        # --- CHANGE 1: Delete existing data for this file to prevent duplicates ---
                         status.write(f"Clearing old entries for {file.name}...")
                         self.index.delete(
                             filter={"company": {"$eq": safe_company_name}, "source_file": {"$eq": file.name}},
                             namespace=self.namespace
                         )
-
                         file_year = self._get_year_from_filename(file.name)
                         if file_year == 0:
-                            st.warning(f"Could not extract year from filename '{file.name}'. Data will be indexed without a year.")
-                        
-                        status.write(f"Extracting text from {file.name} (Year: {file_year or 'N/A'})...")
-                        
+                            st.warning(f"Could not extract year from '{file.name}'.")
+                        status.write(f"Extracting text from {file.name}...")
                         text = self._extract_text(file.getvalue(), file.name)
                         if not text:
                             st.write(f"Skipping {file.name}: no text could be extracted.")
                             continue
                         
-                        status.write(f"Chunking and embedding text from {file.name}...")
+                        status.write(f"Chunking and embedding {file.name}...")
                         chunks = self._chunk_text(text)
                         vectors = self.embedding_model.encode(chunks).tolist()
-                        
                         vectors_to_upsert = []
                         for i, chunk in enumerate(chunks):
                             chunk_id = f"{safe_company_name}-{self.sanitize_filename(file.name)}-{i}"
-                            metadata = {
-                                "company": safe_company_name, 
-                                "source_file": file.name, 
-                                "original_text": chunk,
-                                "year": file_year 
-                            }
+                            metadata = {"company": safe_company_name, "source_file": file.name, "original_text": chunk, "year": file_year}
                             vectors_to_upsert.append({"id": chunk_id, "values": vectors[i], "metadata": metadata})
                         
                         if not vectors_to_upsert:
-                            st.warning(f"No text chunks were generated for {file.name}.")
                             continue
 
-                        # --- CHANGE 2: Manually batch upserts as `batch_size` argument is deprecated ---
-                        status.write(f"Upserting {len(vectors_to_upsert)} new chunks to Pinecone...")
+                        status.write(f"Upserting {len(vectors_to_upsert)} chunks to Pinecone...")
                         batch_size = 100
                         for i in range(0, len(vectors_to_upsert), batch_size):
                             self.index.upsert(
-                                vectors=vectors_to_upsert[i:i + batch_size], 
+                                vectors=vectors_to_upsert[i:i + batch_size],
                                 namespace=self.namespace
                             )
-                        
                         total_vectors_processed += len(vectors_to_upsert)
 
-                    # --- CHANGE 3: Report total across all files ---
                     if total_vectors_processed > 0:
-                        st.success(f"Successfully indexed a total of {total_vectors_processed} new document chunks for **{company}**.")
+                        st.success(f"Successfully indexed {total_vectors_processed} new document chunks for **{company}**.")
                     else:
-                        st.warning("No new content was indexed. The files may have been empty or could not be read.")
+                        st.warning("No new content was indexed.")
 
             def query(self, query_text: str, companies: List[str], k: int = 7) -> Tuple[str, str]:
                 query_vector = self.embedding_model.encode(query_text).tolist()
                 query_filter = {"company": {"$in": [self.sanitize_filename(c) for c in companies]}}
                 results = self.index.query(vector=query_vector, top_k=k, filter=query_filter, include_metadata=True, namespace=self.namespace)
-                if not results.matches: return "I could not find relevant information in the indexed documents to answer your question.", ""
+                if not results.matches: return "I could not find relevant information in the indexed documents.", ""
                 
                 context_excerpts = [f"Excerpt from '{m.metadata['source_file']}':\n\"{m.metadata['original_text']}\"\n" for m in results.matches]
-                source_docs = set(m.metadata['source_file'] for m in results.matches)
-                
+                source_docs = sorted(list(set(m.metadata['source_file'] for m in results.matches)))
                 safe_context = truncate_context(context_excerpts)
-                
-                prompt = (f"Answer the user's question based *only* on the following context:\n--- CONTEXT ---\n{safe_context}\n--- QUESTION ---\n{query_text}\n--- ANSWER ---\n")
-                answer = call_deepseek_model(prompt)
-                return answer, ", ".join(sorted(list(source_docs)))
+                prompt = f"Answer the user's question based *only* on the following context:\n--- CONTEXT ---\n{safe_context}\n--- QUESTION ---\n{query_text}\n--- ANSWER ---\n"
+                return call_deepseek_model(prompt), ", ".join(source_docs)
 
             def get_predefined_analysis(self, analysis_type: str, companies: List[str], k: int = 40) -> Tuple[str, str]:
                 ANALYSIS_CONFIG = {
+                    # ❗ MAJOR CHANGE: Rewritten prompt for analyst-grade output.
                     "Quick Company Note": {
-                        "search_query": "Comprehensive company profile including business overview, products, services, market position, key financial data like revenue, profit, debt, cash, market cap, industry trends, competitive landscape, investment highlights, strengths, weaknesses, opportunities, threats, risk factors, governance issues, and any legal or regulatory challenges like litigations or claims.",
-                        "system_prompt": """You are a top-tier equity research analyst.
-**CRITICAL INSTRUCTION: The entire output must be plain text. Do NOT use any asterisks (`*`) for formatting.**
-Your task is to generate a professional 'Quick Company Note' as plain, narrative text based ONLY on the provided document excerpts.
-Structure your response with the following headings, but write the content for each section as continuous prose paragraphs.
+                        "search_query": "Comprehensive company profile including business overview, products, services, market position, key financial data like revenue, profit, margins, cash flow, EPS, balance sheet items (debt, cash), industry trends, competitive landscape, investment highlights, strengths, weaknesses, opportunities, threats, risk factors, and any red flags like impairments or governance issues.",
+                        "system_prompt": """You are an expert equity research analyst from a top-tier investment bank. Your task is to generate a professional 'Quick Company Note' based ONLY on the provided document excerpts. The output MUST be in clean markdown format.
+
+Structure your response with the following headings:
+
 # 1. Company Overview
 (Provide a comprehensive summary of the company as a narrative text.)
-# 2. Financial Data
-(Provide key financial metrics on a single line, separated by semicolons. Format: "Metric1: Value1; Metric2: Value2; ...")
-# 3. Industry Overview
-(Provide an analysis of the industry landscape as a narrative text.)
-# 4. Key Investment Highlights
-(Write a detailed paragraph explaining the company's key strengths and investment thesis points. Do not use a list.)
-# 5. Key Risks
-(Write a detailed paragraph explaining the most significant risks. Do not use a list.)
-# 6. Red Flags
-(Write a detailed paragraph identifying any potential red flags. Do not use a list.)"""
+
+# 2. Financial Performance
+(Create a markdown table with the columns: 'Metric', 'Most Recent Fiscal Year', 'Prior Fiscal Year', and 'YoY Growth / Change'. Include key metrics like Revenue, Operating Profit, and Free Cash Flow. If possible, calculate and include key ratios like **Operating Margin %**.)
+
+# 3. Key Investment Highlights
+(Generate a list of concise bullet points, starting each with `*`. For each bullet, **bold the key takeaway** at the beginning. Example: `* **Dominant Market Position:** The company holds the #1 spot...`)
+
+# 4. Key Risks
+(Generate a list of concise bullet points, starting each with `*`. For each bullet, **bold the primary risk factor**. Example: `* **Regulatory Headwinds:** The company faces potential...`)
+
+# 5. Red Flags
+(Generate a list of concise bullet points, starting each with `*`. Identify any potential red flags like impairments, governance issues, or high valuation uncertainty. **Bold the core issue** of each point.)
+
+# 6. Analyst Commentary
+(Write a short, concluding paragraph that synthesizes the key findings and provides a balanced view on the company's position.)
+"""
                     },
+                    # All other analysis configs are included without changes
                     "Cap Structure": {
                         "search_query": "Detailed information about the company's capital structure, including short-term and long-term debt instruments, maturity dates, coupon rates, leases, equity, and debt covenants.",
                         "system_prompt": """You are a senior credit analyst.
@@ -2805,27 +2769,22 @@ Structure your response with the following headings:
 
                 config = ANALYSIS_CONFIG.get(analysis_type)
                 if not config: return "Invalid analysis type selected.", ""
-                
+
                 query_vector = self.embedding_model.encode(config["search_query"]).tolist()
                 query_filter = {"company": {"$in": [self.sanitize_filename(c) for c in companies]}}
                 results = self.index.query(vector=query_vector, top_k=k, filter=query_filter, include_metadata=True, namespace=self.namespace)
-                if not results.matches: return f"Could not find any documents related to '{analysis_type}'.", ""
+                if not results.matches: return f"Could not find any documents for this analysis.", ""
                 
-                context_excerpts = [f"Excerpt from '{m.metadata['source_file']}':\n\"{m.metadata['original_text']}\"\n" for m in results.matches]
-                source_docs = set(m.metadata['source_file'] for m in results.matches)
-                
+                context_excerpts = [f"Excerpt from '{m.metadata['source_file']} (Year: {m.metadata.get('year', 'N/A')})':\n\"{m.metadata['original_text']}\"\n" for m in results.matches]
+                source_docs = sorted(list(set(m.metadata['source_file'] for m in results.matches)))
                 safe_context = truncate_context(context_excerpts)
-                
-                prompt = (f"{config['system_prompt']}\n\nBase your analysis *only* on the following context:\n--- DOCUMENT CONTEXT ---\n{safe_context}\n--- END CONTEXT ---\n\nProvide the analysis for '{', '.join(companies)}'.")
-                analysis_content = call_deepseek_model(prompt)
-                return analysis_content, ", ".join(sorted(list(source_docs)))
+                prompt = f"{config['system_prompt']}\n\nBase your analysis *only* on the following context:\n--- DOCUMENT CONTEXT ---\n{safe_context}\n--- END CONTEXT ---\n\nProvide the analysis for '{', '.join(companies)}'."
+                return call_deepseek_model(prompt), ", ".join(source_docs)
 
+            # ❗ CHANGE: Simplified and corrected this method for fetching company names.
             def get_indexed_companies(self) -> List[str]:
                 all_companies = set()
                 try:
-                    # --- CHANGE HERE ---
-                    # Standardize on attribute access (.matches) and safe metadata access (.get)
-                    # The vector dimension must match your index (384 for all-MiniLM-L6-v2)
                     response = self.index.query(vector=[0.0]*384, top_k=1000, include_metadata=True, namespace=self.namespace)
                     for match in response.matches:
                         company = match.metadata.get("company")
@@ -2844,16 +2803,16 @@ Structure your response with the following headings:
                     st.error(f"Failed to delete data for {company_name}: {e}")
         
         try:
-            return PortfolioAgent(user_id=user_id, index_name="portfolio-agent")
+            return PortfolioAgent(user_id=user_id)
         except Exception as e:
             st.error(f"Failed to initialize Portfolio Agent: {e}")
             return None
 
+    # --- Streamlit UI for the Portfolio Agent ---
     agent = load_agent(user_id=user_id)
     if not agent:
         st.stop()
 
-    # --- Streamlit UI for the Portfolio Agent ---
     st.subheader("📁 Index New Company Documents")
     
     with st.form("indexing_form", clear_on_submit=True):
@@ -2862,7 +2821,7 @@ Structure your response with the following headings:
         if st.form_submit_button("Index Documents", type="primary"):
             if new_company and new_docs:
                 agent.add_documents(new_company, new_docs)
-                st.cache_resource.clear() # Clear cache to refresh company list
+                st.cache_resource.clear()
                 st.rerun()
             else:
                 st.warning("Please provide a company name and at least one document.")
@@ -2894,7 +2853,6 @@ Structure your response with the following headings:
             user_query = st.text_area("Ask a question about the selected companies' documents")
 
         if st.button("🚀 Run Analysis", use_container_width=True):
-            # Input validation
             proceed_with_analysis = False
             if not selected_companies:
                 st.warning("Please select at least one company to analyze.")
@@ -2951,17 +2909,17 @@ Structure your response with the following headings:
                                     mime="text/html"
                                 )
 
-        st.markdown("---")
-        st.markdown("#### Manage Data")
-        
-        company_to_delete = st.selectbox("Select Company to Delete", options=[""] + indexed_companies, key="delete_select")
-        if st.button("🗑️ Delete All Data for This Company", type="secondary"):
-            if company_to_delete:
-                agent.delete_company_data(company_to_delete)
-                st.cache_resource.clear() # Clear cache to refresh company list
-                st.rerun()
-            else:
-                st.warning("Please select a company to delete.")
+    st.markdown("---")
+    st.markdown("#### Manage Data")
+    
+    company_to_delete = st.selectbox("Select Company to Delete", options=[""] + indexed_companies, key="delete_select")
+    if st.button("🗑️ Delete All Data for This Company", type="secondary"):
+        if company_to_delete:
+            agent.delete_company_data(company_to_delete)
+            st.cache_resource.clear()
+            st.rerun()
+        else:
+            st.warning("Please select a company to delete.")
 
     
 
