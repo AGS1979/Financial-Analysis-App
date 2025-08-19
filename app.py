@@ -1339,7 +1339,7 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
 # 4. SPECIAL SITUATIONS ANALYZER
 # (Code from app - SpecialSituations.py)
 # ==============================================================================
-ddef special_situations_app():
+def special_situations_app():
     """
     Encapsulates the complete Special Situations Analyzer functionality,
     including memo generation, a valuation module, and infographic creation.
