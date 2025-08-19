@@ -3235,13 +3235,14 @@ def main():
     with st.sidebar:
         st.title("Aranca Financial Suite")
         # Display the user's email, which is stored in 'username' of session_state
-        st.write(f"Welcome, **{st.session_state.username}**") 
+        st.write(f"Welcome, **{st.session_state.username}**")
         st.markdown("---")
 
         app_mode = st.radio(
             "Choose a tool:",
             [
                 "🏠 Welcome",
+                "PE Investment Agent", # 👈 ADDED
                 "Pre-IPO Investment Memo Generator",
                 "DCF Ginny",
                 "Special Situations Analyzer",
@@ -3256,52 +3257,68 @@ def main():
         # --- NEW: Whitelist Manager UI ---
         whitelist_manager_ui()
         st.markdown("---")
-        
+
         if st.button("Logout"):
             # Clear all session state on logout
             for key in st.session_state.keys():
                 del st.session_state[key]
             st.rerun()
-            
+
         st.info("App powered by Aranca.")
 
-    st.markdown("---") 
+    st.markdown("---")
 
     # --- Router Logic ---
-    if app_mode == "Pre-IPO Investment Memo Generator":
+    if app_mode == "PE Investment Agent": # 👈 ADDED THIS ENTIRE BLOCK
+        gcp_project_id = st.secrets.get("gcp", {}).get("project_id")
+        gcp_location = st.secrets.get("gcp", {}).get("location", "asia-south1") # Default to Mumbai
+        if not gcp_project_id:
+            st.error("GCP Project ID is not configured in your secrets.toml file.")
+        else:
+            pe_agent_app(gcp_project_id=gcp_project_id, gcp_location=gcp_location)
+            
+    elif app_mode == "Pre-IPO Investment Memo Generator":
         investment_memo_app()
+        
     elif app_mode == "DCF Ginny":
         dcf_agent_app(client=openai_client, FMP_API_KEY=FMP_API_KEY)
+        
     elif app_mode == "Special Situations Analyzer":
         special_situations_app()
+        
     elif app_mode == "ESG Analyzer":
         esg_analyzer_app()
+        
     elif app_mode == "Portfolio Agent":
         # Pass the logged-in user's email as the unique ID for the agent
-        portfolio_agent_app(user_id=st.session_state.username) 
+        portfolio_agent_app(user_id=st.session_state.username)
+        
     elif app_mode == "Tariff Impact Tracker":
         # The logo_base64 variable is defined globally, so this works
         tariff_impact_tracker_app(DEEPSEEK_API_KEY=DEEPSEEK_API_KEY, FMP_API_KEY=FMP_API_KEY, logo_base64_string=logo_base64)
-    else: 
+        
+    else:
         st.markdown('<p class="welcome-subtitle">A unified platform for advanced financial analysis.</p>', unsafe_allow_html=True)
         st.info("👈 **Select an agent from the sidebar to begin.**")
 
         st.subheader("Available Agents")
         c1, c2, c3 = st.columns(3)
         with c1:
+            st.markdown("##### 🔒 PE Investment Agent") # 👈 ADDED
+            st.markdown("Analyze confidential IMs and teasers with enterprise-grade security using Google Vertex AI.", help="Ensures data residency and privacy by processing documents within your own secure GCP environment.")
             st.markdown("##### 📝 Pre-IPO Investment Memo")
             st.markdown("Upload a DRHP/IPO PDF to automatically generate a detailed investment memo and perform Q&A.", help="Uses LLMs to parse and structure information from prospectus documents.")
-            st.markdown("##### 📊 Special Situations Analyzer")
-            st.markdown("Analyze events like M&A, spin-offs, and activist campaigns by uploading relevant documents to generate a summary memo.", help="Ideal for event-driven investment strategies.")
             
         with c2:
             st.markdown("##### 📈 DCF Ginny")
             st.markdown("Generate a document-driven Discounted Cash Flow (DCF) analysis using public data or your own financials.", help="Combines quantitative data with qualitative insights from documents.")
+            st.markdown("##### 📊 Special Situations Analyzer")
+            st.markdown("Analyze events like M&A, spin-offs, and activist campaigns by uploading relevant documents to generate a summary memo.", help="Ideal for event-driven investment strategies.")
+
+        with c3:
             st.markdown("##### 🌍 ESG Analyzer")
             st.markdown("Extract and compare key ESG metrics from sustainability reports to benchmark corporate performance.", help="Provides a quick overview of Environmental, Social, and Governance factors.")
-        
-        with c3:
-            st.markdown("##### 🗂️ Portfolio Agent") 
+            st.markdown("##### 🗂️ Portfolio Agent")
             st.markdown("Index company-specific documents (10-Ks, earnings calls) and perform Q&A across your entire portfolio.", help="A persistent knowledge base for your covered companies.")
             st.markdown("##### 📈 Tariff Impact Tracker")
             st.markdown("Analyze earnings calls or filings to extract mentions of tariffs and their financial impact.", help="Quickly gauge a company's exposure and sentiment towards trade duties.")
