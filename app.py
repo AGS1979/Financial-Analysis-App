@@ -1783,9 +1783,12 @@ Structure:
     def summarize_section_with_deepseek(section_title, section_text):
         prompt = f"""
 You are an institutional research analyst preparing a financial infographic.
-Summarize the section titled \"{section_title}\" into 3 to 5 concise bullet points.
-Each point should be a single sentence, highlighting key insights clearly and professionally.
-Section:
+Your task is to summarize the provided section text into 3 to 5 concise bullet points.
+Each point must be a single sentence, highlighting key insights clearly and professionally.
+
+**CRITICAL INSTRUCTION:** Do NOT include any introductory or concluding phrases like "Here is a summary...". Your response must begin directly with the first bullet point.
+
+Section to Summarize:
 \"\"\"{section_text}\"\"\"
 """
         headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}
