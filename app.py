@@ -3385,7 +3385,7 @@ def main():
             "Choose a tool:",
             [
                 "🏠 Welcome",
-                "PE Investment Agent", # 👈 ADDED
+                "PE Investment Agent",
                 "Pre-IPO Investment Memo Generator",
                 "DCF Ginny",
                 "Special Situations Analyzer",
@@ -3412,14 +3412,10 @@ def main():
     st.markdown("---")
 
     # --- Router Logic ---
-    if app_mode == "PE Investment Agent": # 👈 ADDED THIS ENTIRE BLOCK
-        gcp_project_id = st.secrets.get("gcp", {}).get("project_id")
-        gcp_location = st.secrets.get("gcp", {}).get("location", "asia-south1") # Default to Mumbai
-        if not gcp_project_id:
-            st.error("GCP Project ID is not configured in your secrets.toml file.")
-        else:
-            pe_agent_app(gcp_project_id=gcp_project_id, gcp_location=gcp_location)
-            
+    if app_mode == "PE Investment Agent":
+        # This now calls your self-contained Azure function
+        pe_agent_app_azure()
+        
     elif app_mode == "Pre-IPO Investment Memo Generator":
         investment_memo_app()
         
@@ -3440,15 +3436,16 @@ def main():
         # The logo_base64 variable is defined globally, so this works
         tariff_impact_tracker_app(DEEPSEEK_API_KEY=DEEPSEEK_API_KEY, FMP_API_KEY=FMP_API_KEY, logo_base64_string=logo_base64)
         
-    else:
+    else: # Welcome Page
         st.markdown('<p class="welcome-subtitle">A unified platform for advanced financial analysis.</p>', unsafe_allow_html=True)
         st.info("👈 **Select an agent from the sidebar to begin.**")
 
         st.subheader("Available Agents")
         c1, c2, c3 = st.columns(3)
         with c1:
-            st.markdown("##### 🔒 PE Investment Agent") # 👈 ADDED
-            st.markdown("Analyze confidential IMs and teasers with enterprise-grade security using Google Vertex AI.", help="Ensures data residency and privacy by processing documents within your own secure GCP environment.")
+            # Updated description to mention Azure
+            st.markdown("##### 🔒 PE Investment Agent")
+            st.markdown("Analyze confidential IMs and teasers with enterprise-grade security using Azure AI.", help="Ensures data residency and privacy by processing documents within your own secure Azure environment.")
             st.markdown("##### 📝 Pre-IPO Investment Memo")
             st.markdown("Upload a DRHP/IPO PDF to automatically generate a detailed investment memo and perform Q&A.", help="Uses LLMs to parse and structure information from prospectus documents.")
             
