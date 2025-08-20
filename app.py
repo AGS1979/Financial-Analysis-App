@@ -3273,7 +3273,7 @@ def pe_agent_app(gcp_project_id: str, gcp_location: str):
     dlp_client = dlp_v2.DlpServiceClient(credentials=credentials)
     docai_opts = {"api_endpoint": f"{DOCAI_LOCATION}-documentai.googleapis.com"}
     docai_client = documentai.DocumentProcessorServiceClient(client_options=docai_opts, credentials=credentials)
-    vertexai.init(project=gcp_project_id, location=gcp_location, credentials=credentials)
+    vertexai.init(project=gcp_project_id, location="us-central1", credentials=credentials)
 
 
     # --- HELPER FUNCTIONS (GCP Services) ---
