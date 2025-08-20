@@ -6,7 +6,7 @@ requests
 markdown
 
 # AI & LLM Services
-openai
+openai>=1.0.0
 pinecone
 st-supabase-connection
 gotrue
@@ -31,3 +31,4 @@ Jinja2
 
 # Financial Data
 yfinance
+azure-ai-documentintelligence==1.0.0b2

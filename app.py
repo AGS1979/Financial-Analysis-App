@@ -1,3 +1,7 @@
+# Add these new imports at the top of your app.py
+from azure.core.credentials import AzureKeyCredential
+from azure.ai.documentintelligence import DocumentIntelligenceClient
+from openai import AzureOpenAI # Use the Azure-specific client
 from google.oauth2 import service_account
 from google.cloud import aiplatform
 from google.cloud import storage
@@ -3240,239 +3244,122 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
 # 8. PE INVESTMENT AGENT (VERTEX AI POWERED)
 # ==============================================================================
 
-def pe_agent_app(gcp_project_id: str, gcp_location: str):
+def pe_agent_app_azure():
     """
-    A secure, confidential agent for Private Equity investment analysis using Google Vertex AI.
+    A secure, confidential agent for Private Equity analysis using Azure services.
     """
-    st.markdown("### 🔒 PE Investment Agent")
+    st.markdown("### 🔒 PE Investment Agent (Powered by Azure AI)")
     st.markdown(
-        "Analyze Investment Memos, Teasers, and Financials with enterprise-grade data privacy and security, powered by Google Vertex AI."
+        "Analyze Investment Memos with enterprise-grade privacy. Documents are parsed and analyzed "
+        "within a secure Azure environment."
     )
 
-    # --- AGENT CONFIG (Fetched from secrets) ---
+    # --- AGENT CONFIG (Fetched from secrets for Azure) ---
     try:
-        GCS_BUCKET = st.secrets["gcp"]["gcs_bucket_name"]
-        # **CHANGE 1: Add a GCS path for Document AI output**
-        GCS_OUTPUT_PATH = st.secrets["gcp"]["gcs_output_path"] # e.g., "docai-output/"
-        DOCAI_PROCESSOR_ID = st.secrets["gcp"]["docai_processor_id"]
-        DOCAI_LOCATION = st.secrets["gcp"]["docai_location"]
+        di_endpoint = st.secrets["azure"]["di_endpoint"]
+        di_key = st.secrets["azure"]["di_key"]
+        openai_endpoint = st.secrets["azure"]["openai_endpoint"]
+        openai_key = st.secrets["azure"]["openai_key"]
+        openai_deployment_name = st.secrets["azure"]["openai_deployment_name"]
     except KeyError as e:
-        st.error(f"Configuration error: Missing key {e} in your secrets.toml file under the [gcp] section.")
+        st.error(f"Configuration error: Missing Azure secret: {e}. Please check your secrets.toml file.")
         st.stop()
 
-    # --- GCP AUTHENTICATION ---
-    try:
-        creds_dict = st.secrets["gcp_credentials"]
-        credentials = service_account.Credentials.from_service_account_info(creds_dict)
-    except (KeyError, FileNotFoundError):
-        st.info("Service account secrets not found. Using Application Default Credentials for local development.")
-        credentials = None
+    # --- HELPER FUNCTIONS (Azure Services) ---
 
-    # --- INITIALIZE GCP CLIENTS ---
-    storage_client = storage.Client(project=gcp_project_id, credentials=credentials)
-    dlp_client = dlp_v2.DlpServiceClient(credentials=credentials)
-    docai_opts = {"api_endpoint": f"{DOCAI_LOCATION}-documentai.googleapis.com"}
-    docai_client = documentai.DocumentProcessorServiceClient(client_options=docai_opts, credentials=credentials)
-    vertexai.init(project=gcp_project_id, location="us-central1", credentials=credentials)
-
-
-    # --- HELPER FUNCTIONS (GCP Services) ---
-
-    @st.cache_data(show_spinner=False)
-    def upload_to_gcs(_storage_client, bucket_name: str, source_file_bytes: bytes, destination_blob_name: str):
-        """Uploads file bytes to a GCS bucket."""
+    @st.cache_data(show_spinner="Parsing document with Azure AI...")
+    def parse_pdf_with_azure_di(file_bytes: bytes) -> tuple[str, list]:
+        """Extracts text and tables from a PDF using Azure AI Document Intelligence."""
         try:
-            bucket = _storage_client.bucket(bucket_name)
-            blob = bucket.blob(destination_blob_name)
-            blob.upload_from_string(source_file_bytes, content_type='application/pdf')
-            return f"gs://{bucket_name}/{destination_blob_name}"
-        except Exception as e:
-            st.error(f"GCS Upload Failed: {e}")
-            return None
-
-    # **CHANGE 2: Create a new function for asynchronous processing**
-    @st.cache_data(show_spinner=False)
-    def parse_document_asynchronously(
-        _docai_client, _storage_client, _project_id: str, _location: str, _processor_id: str,
-        gcs_input_uri: str, gcs_output_bucket: str, gcs_output_prefix: str
-    ):
-        """Processes a document asynchronously with Document AI."""
-        try:
-            resource_name = _docai_client.processor_path(_project_id, _location, _processor_id)
-
-            # Specify the GCS location for the input file
-            gcs_document = documentai.GcsDocument(gcs_uri=gcs_input_uri, mime_type="application/pdf")
-            gcs_documents = documentai.GcsDocuments(documents=[gcs_document])
-            input_config = documentai.BatchDocumentsInputConfig(gcs_documents=gcs_documents)
-
-            # Specify the GCS location for the output
-            gcs_output_config = documentai.DocumentOutputConfig.GcsOutputConfig(
-                gcs_uri=f"gs://{gcs_output_bucket}/{gcs_output_prefix}"
+            document_intelligence_client = DocumentIntelligenceClient(
+                endpoint=di_endpoint, credential=AzureKeyCredential(di_key)
             )
-            output_config = documentai.DocumentOutputConfig(gcs_output_config=gcs_output_config)
-
-            # Build the batch processing request
-            request = documentai.BatchProcessRequest(
-                name=resource_name,
-                input_documents=input_config,
-                document_output_config=output_config,
+            poller = document_intelligence_client.begin_analyze_document(
+                "prebuilt-layout", analyze_request=file_bytes, content_type="application/octet-stream"
             )
+            result = poller.result()
 
-            # Start the batch process
-            operation = _docai_client.batch_process_documents(request=request)
-            st.write(f"⏳ Document AI batch job started. Waiting for completion...")
-            operation.result(timeout=1800) # Wait for the operation to complete (e.g., 30 min timeout)
-            st.write("✅ Document AI batch job finished.")
-
-            # --- Parse the output JSON files from GCS ---
-            match = re.match(r"gs://(.*?)/(.*)", f"gs://{gcs_output_bucket}/{gcs_output_prefix}")
-            bucket_name, prefix = match.groups()
-
-            bucket = _storage_client.get_bucket(bucket_name)
-            blob_list = list(bucket.list_blobs(prefix=prefix))
-
-            full_text = ""
+            full_text = result.content
             all_tables = []
-
-            st.write(f"Found {len(blob_list)} output files to process.")
-
-            for blob in blob_list:
-                if ".json" in blob.name:
-                    json_string = blob.download_as_string()
-                    document = documentai.Document.from_json(json_string)
-
-                    # Append text
-                    full_text += document.text
-
-                    # Extract tables using your original logic
-                    for page in document.pages:
-                        for table in page.tables:
-                            try:
-                                header_cells = table.header_rows[0].cells
-                                header_text = [
-                                    _get_text(cell.layout.text_anchor, document.text) for cell in header_cells
-                                ]
-
-                                rows = []
-                                for body_row in table.body_rows:
-                                    row_data = [
-                                        _get_text(cell.layout.text_anchor, document.text) for cell in body_row.cells
-                                    ]
-                                    rows.append(row_data)
-
-                                df = pd.DataFrame(rows, columns=header_text)
-                                all_tables.append(df)
-                            except (IndexError, KeyError):
-                                continue
+            if result.tables:
+                for table in result.tables:
+                    # Reconstruct the DataFrame from the table cells
+                    table_data = []
+                    header = [cell.content for cell in table.cells if cell.kind == "columnHeader"]
+                    
+                    # Group cells by row index
+                    rows = {}
+                    for cell in table.cells:
+                        if cell.kind != "columnHeader":
+                            if cell.row_index not in rows:
+                                rows[cell.row_index] = [""] * table.column_count
+                            rows[cell.row_index][cell.column_index] = cell.content
+                    
+                    table_data = [rows[i] for i in sorted(rows.keys())]
+                    df = pd.DataFrame(table_data, columns=header if header else None)
+                    all_tables.append(df)
+            
             return full_text, all_tables
-
         except Exception as e:
-            st.error(f"Document AI Async Parsing Failed: {e}")
+            st.error(f"Azure AI Document Intelligence error: {e}")
             return None, []
 
-    def _get_text(text_anchor, text):
-        """Helper function to extract text from a document's text anchor."""
-        if text_anchor.text_segments:
-            start_index = int(text_anchor.text_segments[0].start_index)
-            end_index = int(text_anchor.text_segments[0].end_index)
-            return text[start_index:end_index].strip()
-        return ""
-
-    @st.cache_data(show_spinner=False)
-    def redact_text_with_dlp(_dlp_client, _project_id: str, text: str):
-        """Redacts sensitive PII from text using Cloud DLP."""
+    @st.cache_data(show_spinner="Analyzing with Azure OpenAI...")
+    def analyze_with_azure_openai(_context: str, _prompt: str) -> str:
+        """Analyzes context using the Azure OpenAI Service."""
         try:
-            parent = f"projects/{_project_id}/locations/global"
-            info_types = [{"name": "PERSON_NAME"}, {"name": "EMAIL_ADDRESS"}, {"name": "PHONE_NUMBER"}]
-            deidentify_config = { "info_type_transformations": { "transformations": [ {"primitive_transformation": {"replace_with_info_type_config": {}}} ] } }
-            inspect_config = {"info_types": info_types}
-            item = {"value": text}
-
-            response = _dlp_client.deidentify_content(
-                request={ "parent": parent, "deidentify_config": deidentify_config, "inspect_config": inspect_config, "item": item, }
+            client = AzureOpenAI(
+                api_key=openai_key,
+                api_version="2024-02-01", # A recent, stable API version
+                azure_endpoint=openai_endpoint
             )
-            return response.item.value
+            response = client.chat.completions.create(
+                model=openai_deployment_name, # Your deployment name
+                messages=[
+                    {"role": "system", "content": "You are a world-class private equity analyst."},
+                    {"role": "user", "content": f"CONTEXT:\n---\n{_context}\n---\nANALYST REQUEST: {_prompt}"}
+                ]
+            )
+            return response.choices[0].message.content
         except Exception as e:
-            st.error(f"Cloud DLP Redaction Failed: {e}")
-            return text
-
-    @st.cache_data(show_spinner=False)
-    def analyze_with_gemini(_context: str, _prompt: str):
-        """Analyzes context using Gemini Pro."""
-        model = GenerativeModel("gemini-1.0-pro")
-        full_prompt = [
-            Part.from_text("You are a world-class private equity analyst..."),
-            Part.from_text(f"CONTEXT:\n---\n{_context}\n---"),
-            Part.from_text(f"ANALYST REQUEST: {_prompt}"),
-        ]
-        try:
-            response = model.generate_content(full_prompt)
-            return response.text
-        except Exception as e:
-            return f"Error during Gemini analysis: {e}"
-
-    if "pe_agent_document_text" not in st.session_state: st.session_state.pe_agent_document_text = None
-    if "pe_agent_financial_tables" not in st.session_state: st.session_state.pe_agent_financial_tables = []
-    if "pe_agent_redacted_text" not in st.session_state: st.session_state.pe_agent_redacted_text = None
-    if "pe_agent_analysis_result" not in st.session_state: st.session_state.pe_agent_analysis_result = None
+            return f"Error during Azure OpenAI analysis: {e}"
 
     # --- UI & WORKFLOW ---
     st.subheader("1. Upload Confidential Document")
-    st.info("Your document is uploaded to a private GCS bucket and processed within your secure GCP environment.", icon="🛡️")
+    uploaded_file = st.file_uploader("Upload a Teaser, CIM, or Financial Statement (PDF)", type="pdf", key="pe_agent_uploader_azure")
 
-    uploaded_file = st.file_uploader("Upload a Teaser, CIM, or Financial Statement (PDF)", type="pdf", key="pe_agent_uploader")
-
-    if uploaded_file and st.button("Process and Secure Document"):
-        with st.status("Securing and processing document...", expanded=True) as status:
+    if uploaded_file and st.button("Process and Analyze Document"):
+        with st.status("Processing document in secure Azure environment...", expanded=True) as status:
             file_bytes = uploaded_file.getvalue()
-
-            status.update(label="Step 1/3: Uploading to secure storage...")
-            # Use a unique name for the upload to avoid conflicts
-            gcs_file_name = f"pe-uploads/{uploaded_file.name}"
-            gcs_uri = upload_to_gcs(storage_client, GCS_BUCKET, file_bytes, gcs_file_name)
-            if not gcs_uri:
-                st.error("Halting process due to GCS upload failure.")
-                st.stop()
-            st.write(f"✅ Document securely stored at: `{gcs_uri}`")
-
-            status.update(label="Step 2/3: Parsing with Document AI (Async)...")
-            # **CHANGE 3: Call the new asynchronous function**
-            full_text, tables = parse_document_asynchronously(
-                docai_client, storage_client, gcp_project_id, DOCAI_LOCATION, DOCAI_PROCESSOR_ID,
-                gcs_uri, GCS_BUCKET, GCS_OUTPUT_PATH
-            )
+            
+            status.update(label="Step 1/2: Parsing document with Azure AI...")
+            full_text, tables = parse_pdf_with_azure_di(file_bytes)
+            
             if not full_text:
-                st.error("Halting process due to Document AI parsing failure.")
+                st.error("Halting process: Document parsing failed.")
                 st.stop()
-            st.session_state.pe_agent_document_text = full_text
-            st.session_state.pe_agent_financial_tables = tables
-            st.write(f"✅ Document parsed. Extracted {len(tables)} financial tables.")
+            
+            st.session_state.pe_agent_financial_tables_azure = tables
+            st.write(f"✅ Document parsed. Extracted {len(tables)} tables.")
+            
+            status.update(label="Step 2/2: Generating analysis with Azure OpenAI...")
+            analysis_prompt = "Summarize the investment thesis, key risks, and fee structure."
+            result = analyze_with_azure_openai(full_text, analysis_prompt)
+            st.session_state.pe_agent_analysis_result_azure = result
+        
+        st.success("Analysis Complete!")
 
-            status.update(label="Step 3/3: Redacting sensitive data...")
-            redacted_text = redact_text_with_dlp(dlp_client, gcp_project_id, full_text)
-            st.session_state.pe_agent_redacted_text = redacted_text
-            st.write("✅ Sensitive data redacted for analysis.")
-
-        st.success("Document is processed and ready for analysis.")
-        st.rerun()
-
-    # (The rest of your UI logic for analysis remains the same)
-    if st.session_state.pe_agent_redacted_text:
+    # Display results from session state
+    if st.session_state.get('pe_agent_analysis_result_azure'):
         st.markdown("---")
-        st.subheader("2. Analyze Document")
-        analysis_prompt = st.text_area("What would you like to analyze?", value="Summarize the investment thesis, key risks, and fee structure.", height=150)
-        if st.button("Generate Analysis", type="primary"):
-            with st.spinner("Gemini is analyzing the document..."):
-                result = analyze_with_gemini(st.session_state.pe_agent_redacted_text, analysis_prompt)
-                st.session_state.pe_agent_analysis_result = result
-        if st.session_state.pe_agent_analysis_result:
-            st.markdown("### Analysis Result")
-            st.markdown(st.session_state.pe_agent_analysis_result)
-        if st.session_state.pe_agent_financial_tables:
-            st.markdown("### Extracted Financial Tables")
-            for i, df in enumerate(st.session_state.pe_agent_financial_tables):
-                st.write(f"**Table {i+1}**")
-                st.dataframe(df)
+        st.subheader("Analysis Result")
+        st.markdown(st.session_state.pe_agent_analysis_result_azure)
+
+    if st.session_state.get('pe_agent_financial_tables_azure'):
+        st.markdown("### Extracted Financial Tables")
+        for i, df in enumerate(st.session_state.get('pe_agent_financial_tables_azure', [])):
+            st.write(f"**Table {i+1}**")
+            st.dataframe(df.fillna(''))
 
 
 
