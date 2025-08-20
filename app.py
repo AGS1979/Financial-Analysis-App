@@ -3344,16 +3344,17 @@ def pe_agent_app_azure():
         except Exception as e:
             return f"Error during Azure OpenAI analysis: {e}"
 
-     # --- FINAL CORRECTED HTML FORMATTER ---
+    # --- FINAL CORRECTED HTML FORMATTER ---
     def format_analysis_to_html(analysis_results: dict) -> str:
         """
         Converts a dictionary of AI-generated text (with potential markdown)
-        into a single, clean professional HTML string, removing all markdown characters.
+        into a single, clean professional HTML string, correctly handling headings and lists.
         """
         styles = """
         <style>
             .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9fafb; }
             .analysis-container h2 { font-size: 1.5em; color: #00416A; border-bottom: 2px solid #00416A; padding-bottom: 10px; margin-top: 20px; margin-bottom: 15px; }
+            .analysis-container h3 { font-size: 1.25em; color: #1e1e1e; margin-top: 1.5em; margin-bottom: 0.5em; border-bottom: 1px solid #dde; padding-bottom: 5px;}
             .analysis-container p { margin-bottom: 1em; line-height: 1.6; color: #333; }
             .analysis-container ul { list-style-position: outside; padding-left: 20px; margin-bottom: 1em; }
             .analysis-container li { margin-bottom: 0.75em; line-height: 1.6; }
@@ -3364,15 +3365,15 @@ def pe_agent_app_azure():
         for title, content in analysis_results.items():
             html_body += f"<h2>{html.escape(title)}</h2>"
             
-            # Start with the raw content
-            processed_content = content
+            # Start with the raw content and escape it for safety
+            processed_content = html.escape(content)
             
-            # 1. FIX: Completely remove any lines that look like markdown headings
-            processed_content = re.sub(r'(?m)^\s*#+.*$', '', processed_content)
-            
-            # 2. Convert bold text: **text** -> <strong>text</strong>
+            # 1. Convert bold text: **text** -> <strong>text</strong>
             processed_content = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', processed_content)
-
+            
+            # 2. FIX: Convert markdown headings to HTML h3 tags
+            processed_content = re.sub(r'#+\s*(.*?)\s*$', r'<h3>\1</h3>', processed_content, flags=re.MULTILINE)
+            
             # 3. Handle list items
             def replace_lists(match):
                 items_text = match.group(0)
@@ -3384,14 +3385,13 @@ def pe_agent_app_azure():
 
             # 4. Wrap remaining text blocks in <p> tags
             final_html_parts = []
-            # Split by one or more newlines to handle paragraphs
             blocks = re.split(r'\n\s*\n', processed_content.strip())
             for block in blocks:
                 block = block.strip()
                 if not block:
                     continue
-                # If it's not a list we've already created, wrap it in a paragraph
-                if not block.startswith('<ul>'):
+                # If it's not a list or heading we've already created, wrap it in a paragraph
+                if not block.startswith(('<ul', '<h3')):
                     final_html_parts.append(f"<p>{block.replace(chr(10), '<br>')}</p>")
                 else:
                     final_html_parts.append(block)
