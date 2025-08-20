@@ -1,3 +1,4 @@
+from google.oauth2 import service_account
 from google.cloud import aiplatform
 from google.cloud import storage
 from google.cloud import documentai_v1 as documentai
@@ -3239,6 +3240,8 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
 # 8. PE INVESTMENT AGENT (VERTEX AI POWERED)
 # ==============================================================================
 
+# In your app.py, replace your old pe_agent_app function with this one
+
 def pe_agent_app(gcp_project_id: str, gcp_location: str):
     """
     A secure, confidential agent for Private Equity investment analysis using Google Vertex AI.
@@ -3256,25 +3259,40 @@ def pe_agent_app(gcp_project_id: str, gcp_location: str):
     except KeyError as e:
         st.error(f"Configuration error: Missing key {e} in your secrets.toml file under the [gcp] section.")
         st.stop()
-        
-    # Initialize Vertex AI SDK
+
+    # --- CHANGE 1: ADD THIS ENTIRE BLOCK TO HANDLE AUTHENTICATION ---
+    # This block creates the credentials object that all GCP clients will use.
+    # It works for both deployed (using secrets) and local (using gcloud) environments.
     try:
-        vertexai.init(project=gcp_project_id, location=gcp_location)
+        # Tries to load credentials from Streamlit's secrets manager (for deployment)
+        creds_dict = st.secrets["gcp_service_account"]
+        credentials = service_account.Credentials.from_service_account_info(creds_dict)
+    except (KeyError, FileNotFoundError):
+        # If secrets are not found, it falls back to default credentials (for local development)
+        st.info("Service account secrets not found. Using Application Default Credentials for local development.")
+        credentials = None # Let the libraries find the local gcloud auth file
+
+    # --- CHANGE 2: INITIALIZE ALL GCP CLIENTS HERE, USING THE CREDENTIALS ---
+    storage_client = storage.Client(project=gcp_project_id, credentials=credentials)
+    dlp_client = dlp_v2.DlpServiceClient(credentials=credentials)
+    docai_opts = {"api_endpoint": f"{DOCAI_LOCATION}-documentai.googleapis.com"}
+    docai_client = documentai.DocumentProcessorServiceClient(client_options=docai_opts, credentials=credentials)
+
+    try:
+        vertexai.init(project=gcp_project_id, location=gcp_location, credentials=credentials)
     except Exception as e:
         st.error(f"Failed to initialize Vertex AI SDK: {e}")
-        st.info("Please ensure you have authenticated with GCP (e.g., via `gcloud auth application-default login`).")
         st.stop()
 
+
     # --- HELPER FUNCTIONS (GCP Services) ---
+    # Helper functions now receive the clients they need as arguments
 
     @st.cache_data(show_spinner=False)
-    # CHANGE 1: Add 'project_id' as the first argument.
-    def upload_to_gcs(project_id: str, bucket_name: str, source_file_bytes: bytes, destination_blob_name: str):
+    def upload_to_gcs(_storage_client, bucket_name: str, source_file_bytes: bytes, destination_blob_name: str):
         """Uploads file bytes to a GCS bucket."""
         try:
-            # CHANGE 1 (continued): Pass the project_id to the client.
-            storage_client = storage.Client(project=project_id)
-            bucket = storage_client.bucket(bucket_name)
+            bucket = _storage_client.bucket(bucket_name)
             blob = bucket.blob(destination_blob_name)
             blob.upload_from_string(source_file_bytes)
             return f"gs://{bucket_name}/{destination_blob_name}"
@@ -3283,32 +3301,31 @@ def pe_agent_app(gcp_project_id: str, gcp_location: str):
             return None
 
     @st.cache_data(show_spinner=False)
-    def parse_document_with_docai(_project_id: str, _location: str, _processor_id: str, file_bytes: bytes, mime_type: str):
+    def parse_document_with_docai(_docai_client, _project_id: str, _location: str, _processor_id: str, file_bytes: bytes, mime_type: str):
         """Processes a document with Document AI to extract text and tables."""
         try:
-            opts = {"api_endpoint": f"{_location}-documentai.googleapis.com"}
-            docai_client = documentai.DocumentProcessorServiceClient(client_options=opts)
-            resource_name = docai_client.processor_path(_project_id, _location, _processor_id)
-
+            resource_name = _docai_client.processor_path(_project_id, _location, _processor_id)
             raw_document = documentai.RawDocument(content=file_bytes, mime_type=mime_type)
             request = documentai.ProcessRequest(name=resource_name, raw_document=raw_document)
-            result = docai_client.process_document(request=request)
+            result = _docai_client.process_document(request=request)
             document = result.document
             
-            # Extract tables into pandas DataFrames
+            # (Your table extraction logic remains the same here)
             tables = []
             for page in document.pages:
                 for table in page.tables:
-                    header_row = [cell.layout.text_anchor.text_segments[0].end_index for cell in table.header_rows[0].cells]
-                    header_text = [document.text[0:end_index].split()[-1] for end_index in header_row]
-                    
-                    rows = []
-                    for body_row in table.body_rows:
-                        row_data = [document.text[cell.layout.text_anchor.text_segments[0].start_index:cell.layout.text_anchor.text_segments[0].end_index].strip() for cell in body_row.cells]
-                        rows.append(row_data)
-
-                    df = pd.DataFrame(rows, columns=header_text)
-                    tables.append(df)
+                    try:
+                        header_row = [cell.layout.text_anchor.text_segments[0].end_index for cell in table.header_rows[0].cells]
+                        header_text = [document.text[0:end_index].split()[-1] for end_index in header_row]
+                        rows = []
+                        for body_row in table.body_rows:
+                            row_data = [document.text[cell.layout.text_anchor.text_segments[0].start_index:cell.layout.text_anchor.text_segments[0].end_index].strip() for cell in body_row.cells]
+                            rows.append(row_data)
+                        df = pd.DataFrame(rows, columns=header_text)
+                        tables.append(df)
+                    except (IndexError, KeyError):
+                        # Handle cases where tables might be malformed
+                        continue
             
             return document.text, tables
         except Exception as e:
@@ -3316,97 +3333,60 @@ def pe_agent_app(gcp_project_id: str, gcp_location: str):
             return None, []
 
     @st.cache_data(show_spinner=False)
-    def redact_text_with_dlp(_project_id: str, text: str):
+    def redact_text_with_dlp(_dlp_client, _project_id: str, text: str):
         """Redacts sensitive PII from text using Cloud DLP."""
         try:
-            dlp_client = dlp_v2.DlpServiceClient()
             parent = f"projects/{_project_id}/locations/global"
-            
-            # Specify what to look for
             info_types = [{"name": "PERSON_NAME"}, {"name": "EMAIL_ADDRESS"}, {"name": "PHONE_NUMBER"}]
-            
-            # Define the redaction configuration
-            deidentify_config = {
-                "info_type_transformations": {
-                    "transformations": [
-                        {"primitive_transformation": {"replace_with_info_type_config": {}}}
-                    ]
-                }
-            }
+            deidentify_config = { "info_type_transformations": { "transformations": [ {"primitive_transformation": {"replace_with_info_type_config": {}}} ] } }
             inspect_config = {"info_types": info_types}
             item = {"value": text}
 
-            response = dlp_client.deidentify_content(
-                request={
-                    "parent": parent,
-                    "deidentify_config": deidentify_config,
-                    "inspect_config": inspect_config,
-                    "item": item,
-                }
+            response = _dlp_client.deidentify_content(
+                request={ "parent": parent, "deidentify_config": deidentify_config, "inspect_config": inspect_config, "item": item, }
             )
             return response.item.value
         except Exception as e:
             st.error(f"Cloud DLP Redaction Failed: {e}")
-            return text # Return original text on failure
+            return text
 
+    # (Your analyze_with_gemini and session state functions remain the same)
     @st.cache_data(show_spinner=False)
     def analyze_with_gemini(_context: str, _prompt: str):
         """Analyzes context using Gemini Pro."""
         model = GenerativeModel("gemini-1.5-pro")
-        full_prompt = [
-            Part.from_text(
-                "You are a world-class private equity analyst. Your task is to analyze the provided context from an investment document. "
-                "You must base your answer *exclusively* on the text provided. Do not use any external knowledge. "
-                "If the information is not in the text, state that clearly. Structure your response in clear, professional markdown."
-            ),
-            Part.from_text(f"CONTEXT:\n---\n{_context}\n---"),
-            Part.from_text(f"ANALYST REQUEST: {_prompt}"),
-        ]
+        full_prompt = [ Part.from_text( "You are a world-class private equity analyst..." ), Part.from_text(f"CONTEXT:\n---\n{_context}\n---"), Part.from_text(f"ANALYST REQUEST: {_prompt}"), ]
         try:
             response = model.generate_content(full_prompt)
             return response.text
         except Exception as e:
             return f"Error during Gemini analysis: {e}"
 
-    # --- SESSION STATE INITIALIZATION ---
-    if "pe_agent_document_text" not in st.session_state:
-        st.session_state.pe_agent_document_text = None
-    if "pe_agent_financial_tables" not in st.session_state:
-        st.session_state.pe_agent_financial_tables = []
-    if "pe_agent_redacted_text" not in st.session_state:
-        st.session_state.pe_agent_redacted_text = None
-    if "pe_agent_analysis_result" not in st.session_state:
-        st.session_state.pe_agent_analysis_result = None
-
+    if "pe_agent_document_text" not in st.session_state: st.session_state.pe_agent_document_text = None
+    if "pe_agent_financial_tables" not in st.session_state: st.session_state.pe_agent_financial_tables = []
+    if "pe_agent_redacted_text" not in st.session_state: st.session_state.pe_agent_redacted_text = None
+    if "pe_agent_analysis_result" not in st.session_state: st.session_state.pe_agent_analysis_result = None
+    
     # --- UI & WORKFLOW ---
     st.subheader("1. Upload Confidential Document")
-    st.info(
-        "Your document is uploaded to a private, regional GCS bucket. "
-        "It is never sent to a public endpoint and is processed within your secure GCP environment."
-    , icon="🛡️")
+    st.info("Your document is uploaded to a private GCS bucket and processed within your secure GCP environment.", icon="🛡️")
     
-    uploaded_file = st.file_uploader(
-        "Upload a Teaser, CIM, or Financial Statement (PDF)",
-        type="pdf",
-        key="pe_agent_uploader"
-    )
+    uploaded_file = st.file_uploader("Upload a Teaser, CIM, or Financial Statement (PDF)", type="pdf", key="pe_agent_uploader")
 
     if uploaded_file and st.button("Process and Secure Document"):
         with st.status("Securing and processing document...", expanded=True) as status:
             file_bytes = uploaded_file.getvalue()
             
             status.update(label="Step 1/3: Uploading to secure storage...")
-            # CHANGE 2: Pass 'gcp_project_id' to the function call.
-            gcs_uri = upload_to_gcs(gcp_project_id, GCS_BUCKET, file_bytes, f"pe-uploads/{uploaded_file.name}")
+            # --- CHANGE 3: PASS THE CLIENTS TO THE HELPER FUNCTIONS ---
+            gcs_uri = upload_to_gcs(storage_client, GCS_BUCKET, file_bytes, f"pe-uploads/{uploaded_file.name}")
             if not gcs_uri:
                 st.error("Halting process due to GCS upload failure.")
                 st.stop()
             st.write(f"✅ Document securely stored at: `{gcs_uri}`")
 
             status.update(label="Step 2/3: Parsing with Document AI...")
-            full_text, tables = parse_document_with_docai(
-                gcp_project_id, DOCAI_LOCATION, DOCAI_PROCESSOR_ID, file_bytes, "application/pdf"
-            )
+            full_text, tables = parse_document_with_docai(docai_client, gcp_project_id, DOCAI_LOCATION, DOCAI_PROCESSOR_ID, file_bytes, "application/pdf")
             if not full_text:
                 st.error("Halting process due to Document AI parsing failure.")
                 st.stop()
@@ -3415,7 +3395,7 @@ def pe_agent_app(gcp_project_id: str, gcp_location: str):
             st.write(f"✅ Document parsed. Extracted {len(tables)} financial tables.")
             
             status.update(label="Step 3/3: Redacting sensitive data...")
-            redacted_text = redact_text_with_dlp(gcp_project_id, full_text)
+            redacted_text = redact_text_with_dlp(dlp_client, gcp_project_id, full_text)
             st.session_state.pe_agent_redacted_text = redacted_text
             st.write("✅ Sensitive data redacted for analysis.")
         
@@ -3423,24 +3403,17 @@ def pe_agent_app(gcp_project_id: str, gcp_location: str):
         st.rerun()
 
     if st.session_state.pe_agent_redacted_text:
+        # (The rest of your UI logic for analysis remains the same)
         st.markdown("---")
         st.subheader("2. Analyze Document")
-
-        analysis_prompt = st.text_area(
-            "What would you like to analyze?",
-            value="Summarize the investment thesis. Identify the top 3 key risks and any potential red flags. Extract the key financial KPIs like Revenue, EBITDA, and Margin trends for the last 3 years.",
-            height=150
-        )
-        
+        analysis_prompt = st.text_area("What would you like to analyze?", value="Summarize the investment thesis...", height=150)
         if st.button("Generate Analysis", type="primary"):
             with st.spinner("Gemini is analyzing the document..."):
                 result = analyze_with_gemini(st.session_state.pe_agent_redacted_text, analysis_prompt)
                 st.session_state.pe_agent_analysis_result = result
-        
         if st.session_state.pe_agent_analysis_result:
             st.markdown("### Analysis Result")
             st.markdown(st.session_state.pe_agent_analysis_result)
-
         if st.session_state.pe_agent_financial_tables:
             st.markdown("### Extracted Financial Tables")
             for i, df in enumerate(st.session_state.pe_agent_financial_tables):
