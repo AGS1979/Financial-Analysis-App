@@ -3268,10 +3268,12 @@ def pe_agent_app(gcp_project_id: str, gcp_location: str):
     # --- HELPER FUNCTIONS (GCP Services) ---
 
     @st.cache_data(show_spinner=False)
-    def upload_to_gcs(bucket_name: str, source_file_bytes: bytes, destination_blob_name: str):
+    # CHANGE 1: Add 'project_id' as the first argument.
+    def upload_to_gcs(project_id: str, bucket_name: str, source_file_bytes: bytes, destination_blob_name: str):
         """Uploads file bytes to a GCS bucket."""
         try:
-            storage_client = storage.Client()
+            # CHANGE 1 (continued): Pass the project_id to the client.
+            storage_client = storage.Client(project=project_id)
             bucket = storage_client.bucket(bucket_name)
             blob = bucket.blob(destination_blob_name)
             blob.upload_from_string(source_file_bytes)
@@ -3394,7 +3396,8 @@ def pe_agent_app(gcp_project_id: str, gcp_location: str):
             file_bytes = uploaded_file.getvalue()
             
             status.update(label="Step 1/3: Uploading to secure storage...")
-            gcs_uri = upload_to_gcs(GCS_BUCKET, file_bytes, f"pe-uploads/{uploaded_file.name}")
+            # CHANGE 2: Pass 'gcp_project_id' to the function call.
+            gcs_uri = upload_to_gcs(gcp_project_id, GCS_BUCKET, file_bytes, f"pe-uploads/{uploaded_file.name}")
             if not gcs_uri:
                 st.error("Halting process due to GCS upload failure.")
                 st.stop()
