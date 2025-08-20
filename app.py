@@ -3265,8 +3265,8 @@ def pe_agent_app(gcp_project_id: str, gcp_location: str):
     # It works for both deployed (using secrets) and local (using gcloud) environments.
     try:
         # Tries to load credentials from Streamlit's secrets manager (for deployment)
-        json_string = st.secrets["gcp_credentials"]["text"]
-        creds_dict = json.loads(json_string)
+        creds_dict = st.secrets["gcp_credentials"]
+        #creds_dict = json.loads(json_string)
         credentials = service_account.Credentials.from_service_account_info(creds_dict)
     except (KeyError, FileNotFoundError):
         # If secrets are not found, it falls back to default credentials (for local development)
