@@ -3344,7 +3344,7 @@ def pe_agent_app_azure():
         except Exception as e:
             return f"Error during Azure OpenAI analysis: {e}"
 
-    # --- NEW & IMPROVED HTML FORMATTER ---
+    # --- CORRECTED HTML FORMATTER ---
     def format_analysis_to_html(analysis_results: dict) -> str:
         """
         Converts a dictionary of AI-generated text (with potential markdown)
@@ -3366,25 +3366,21 @@ def pe_agent_app_azure():
         for title, content in analysis_results.items():
             html_body += f"<h2>{html.escape(title)}</h2>"
             
-            # Escape HTML characters to prevent injection, then process markdown
             safe_content = html.escape(content)
-
-            # Convert bold: **text** -> <strong>text</strong>
             processed_content = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', safe_content)
-            
-            # Convert headings: ### Title -> <h3>Title</h3>
             processed_content = re.sub(r'^#+\s*(.*?)\s*$', r'<h3>\1</h3>', processed_content, flags=re.MULTILINE)
-            
-            # Convert list items: * item -> <li>item</li> and wrap in <ul>
+
+            # FIX: This function now correctly handles list conversion without the f-string syntax error.
             def replace_lists(match):
-                items = match.group(0).strip().split('\n')
-                li_items = "".join(f"<li>{re.sub(r'^\s*[\*\-]\s*', '', item)}</li>" for item in items)
+                items_text = match.group(0)
+                # Find all list item contents directly
+                list_contents = re.findall(r'^\s*[\*\-]\s+(.*)', items_text, flags=re.MULTILINE)
+                # Create the <li> tags
+                li_items = "".join(f"<li>{item_content.strip()}</li>" for item_content in list_contents)
                 return f"<ul>{li_items}</ul>"
             
             processed_content = re.sub(r'(?m)^(\s*[\*\-]\s+.*\n?)+', replace_lists, processed_content)
             
-            # Wrap remaining lines/blocks in <p> tags, avoiding empty paragraphs
-            # and already-tagged blocks (like our new ul and h3)
             final_html_parts = []
             blocks = processed_content.split('\n\n')
             for block in blocks:
