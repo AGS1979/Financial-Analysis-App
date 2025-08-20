@@ -3399,7 +3399,7 @@ def pe_agent_app(gcp_project_id: str, gcp_location: str):
     @st.cache_data(show_spinner=False)
     def analyze_with_gemini(_context: str, _prompt: str):
         """Analyzes context using Gemini Pro."""
-        model = GenerativeModel("gemini-1.5-pro-001")
+        model = GenerativeModel("gemini-1.0-pro")
         full_prompt = [
             Part.from_text("You are a world-class private equity analyst..."),
             Part.from_text(f"CONTEXT:\n---\n{_context}\n---"),
