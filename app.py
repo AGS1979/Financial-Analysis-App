@@ -3240,8 +3240,6 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
 # 8. PE INVESTMENT AGENT (VERTEX AI POWERED)
 # ==============================================================================
 
-# In your app.py, replace your old pe_agent_app function with this one
-
 def pe_agent_app(gcp_project_id: str, gcp_location: str):
     """
     A secure, confidential agent for Private Equity investment analysis using Google Vertex AI.
@@ -3254,40 +3252,31 @@ def pe_agent_app(gcp_project_id: str, gcp_location: str):
     # --- AGENT CONFIG (Fetched from secrets) ---
     try:
         GCS_BUCKET = st.secrets["gcp"]["gcs_bucket_name"]
+        # **CHANGE 1: Add a GCS path for Document AI output**
+        GCS_OUTPUT_PATH = st.secrets["gcp"]["gcs_output_path"] # e.g., "docai-output/"
         DOCAI_PROCESSOR_ID = st.secrets["gcp"]["docai_processor_id"]
         DOCAI_LOCATION = st.secrets["gcp"]["docai_location"]
     except KeyError as e:
         st.error(f"Configuration error: Missing key {e} in your secrets.toml file under the [gcp] section.")
         st.stop()
 
-    # --- CHANGE 1: ADD THIS ENTIRE BLOCK TO HANDLE AUTHENTICATION ---
-    # This block creates the credentials object that all GCP clients will use.
-    # It works for both deployed (using secrets) and local (using gcloud) environments.
+    # --- GCP AUTHENTICATION ---
     try:
-        # Tries to load credentials from Streamlit's secrets manager (for deployment)
         creds_dict = st.secrets["gcp_credentials"]
-        #creds_dict = json.loads(json_string)
         credentials = service_account.Credentials.from_service_account_info(creds_dict)
     except (KeyError, FileNotFoundError):
-        # If secrets are not found, it falls back to default credentials (for local development)
         st.info("Service account secrets not found. Using Application Default Credentials for local development.")
-        credentials = None # Let the libraries find the local gcloud auth file
+        credentials = None
 
-    # --- CHANGE 2: INITIALIZE ALL GCP CLIENTS HERE, USING THE CREDENTIALS ---
+    # --- INITIALIZE GCP CLIENTS ---
     storage_client = storage.Client(project=gcp_project_id, credentials=credentials)
     dlp_client = dlp_v2.DlpServiceClient(credentials=credentials)
     docai_opts = {"api_endpoint": f"{DOCAI_LOCATION}-documentai.googleapis.com"}
     docai_client = documentai.DocumentProcessorServiceClient(client_options=docai_opts, credentials=credentials)
-
-    try:
-        vertexai.init(project=gcp_project_id, location=gcp_location, credentials=credentials)
-    except Exception as e:
-        st.error(f"Failed to initialize Vertex AI SDK: {e}")
-        st.stop()
+    vertexai.init(project=gcp_project_id, location=gcp_location, credentials=credentials)
 
 
     # --- HELPER FUNCTIONS (GCP Services) ---
-    # Helper functions now receive the clients they need as arguments
 
     @st.cache_data(show_spinner=False)
     def upload_to_gcs(_storage_client, bucket_name: str, source_file_bytes: bytes, destination_blob_name: str):
@@ -3295,43 +3284,99 @@ def pe_agent_app(gcp_project_id: str, gcp_location: str):
         try:
             bucket = _storage_client.bucket(bucket_name)
             blob = bucket.blob(destination_blob_name)
-            blob.upload_from_string(source_file_bytes)
+            blob.upload_from_string(source_file_bytes, content_type='application/pdf')
             return f"gs://{bucket_name}/{destination_blob_name}"
         except Exception as e:
             st.error(f"GCS Upload Failed: {e}")
             return None
 
+    # **CHANGE 2: Create a new function for asynchronous processing**
     @st.cache_data(show_spinner=False)
-    def parse_document_with_docai(_docai_client, _project_id: str, _location: str, _processor_id: str, file_bytes: bytes, mime_type: str):
-        """Processes a document with Document AI to extract text and tables."""
+    def parse_document_asynchronously(
+        _docai_client, _storage_client, _project_id: str, _location: str, _processor_id: str,
+        gcs_input_uri: str, gcs_output_bucket: str, gcs_output_prefix: str
+    ):
+        """Processes a document asynchronously with Document AI."""
         try:
             resource_name = _docai_client.processor_path(_project_id, _location, _processor_id)
-            raw_document = documentai.RawDocument(content=file_bytes, mime_type=mime_type)
-            request = documentai.ProcessRequest(name=resource_name, raw_document=raw_document)
-            result = _docai_client.process_document(request=request)
-            document = result.document
-            
-            # (Your table extraction logic remains the same here)
-            tables = []
-            for page in document.pages:
-                for table in page.tables:
-                    try:
-                        header_row = [cell.layout.text_anchor.text_segments[0].end_index for cell in table.header_rows[0].cells]
-                        header_text = [document.text[0:end_index].split()[-1] for end_index in header_row]
-                        rows = []
-                        for body_row in table.body_rows:
-                            row_data = [document.text[cell.layout.text_anchor.text_segments[0].start_index:cell.layout.text_anchor.text_segments[0].end_index].strip() for cell in body_row.cells]
-                            rows.append(row_data)
-                        df = pd.DataFrame(rows, columns=header_text)
-                        tables.append(df)
-                    except (IndexError, KeyError):
-                        # Handle cases where tables might be malformed
-                        continue
-            
-            return document.text, tables
+
+            # Specify the GCS location for the input file
+            gcs_document = documentai.GcsDocument(gcs_uri=gcs_input_uri, mime_type="application/pdf")
+            gcs_documents = documentai.GcsDocuments(documents=[gcs_document])
+            input_config = documentai.BatchDocumentsInputConfig(gcs_documents=gcs_documents)
+
+            # Specify the GCS location for the output
+            gcs_output_config = documentai.DocumentOutputConfig.GcsOutputConfig(
+                gcs_uri=f"gs://{gcs_output_bucket}/{gcs_output_prefix}"
+            )
+            output_config = documentai.DocumentOutputConfig(gcs_output_config=gcs_output_config)
+
+            # Build the batch processing request
+            request = documentai.BatchProcessRequest(
+                name=resource_name,
+                input_documents=input_config,
+                document_output_config=output_config,
+            )
+
+            # Start the batch process
+            operation = _docai_client.batch_process_documents(request=request)
+            st.write(f"⏳ Document AI batch job started. Waiting for completion...")
+            operation.result(timeout=1800) # Wait for the operation to complete (e.g., 30 min timeout)
+            st.write("✅ Document AI batch job finished.")
+
+            # --- Parse the output JSON files from GCS ---
+            match = re.match(r"gs://(.*?)/(.*)", f"gs://{gcs_output_bucket}/{gcs_output_prefix}")
+            bucket_name, prefix = match.groups()
+
+            bucket = _storage_client.get_bucket(bucket_name)
+            blob_list = list(bucket.list_blobs(prefix=prefix))
+
+            full_text = ""
+            all_tables = []
+
+            st.write(f"Found {len(blob_list)} output files to process.")
+
+            for blob in blob_list:
+                if ".json" in blob.name:
+                    json_string = blob.download_as_string()
+                    document = documentai.Document.from_json(json_string)
+
+                    # Append text
+                    full_text += document.text
+
+                    # Extract tables using your original logic
+                    for page in document.pages:
+                        for table in page.tables:
+                            try:
+                                header_cells = table.header_rows[0].cells
+                                header_text = [
+                                    _get_text(cell.layout.text_anchor, document.text) for cell in header_cells
+                                ]
+
+                                rows = []
+                                for body_row in table.body_rows:
+                                    row_data = [
+                                        _get_text(cell.layout.text_anchor, document.text) for cell in body_row.cells
+                                    ]
+                                    rows.append(row_data)
+
+                                df = pd.DataFrame(rows, columns=header_text)
+                                all_tables.append(df)
+                            except (IndexError, KeyError):
+                                continue
+            return full_text, all_tables
+
         except Exception as e:
-            st.error(f"Document AI Parsing Failed: {e}")
+            st.error(f"Document AI Async Parsing Failed: {e}")
             return None, []
+
+    def _get_text(text_anchor, text):
+        """Helper function to extract text from a document's text anchor."""
+        if text_anchor.text_segments:
+            start_index = int(text_anchor.text_segments[0].start_index)
+            end_index = int(text_anchor.text_segments[0].end_index)
+            return text[start_index:end_index].strip()
+        return ""
 
     @st.cache_data(show_spinner=False)
     def redact_text_with_dlp(_dlp_client, _project_id: str, text: str):
@@ -3351,12 +3396,15 @@ def pe_agent_app(gcp_project_id: str, gcp_location: str):
             st.error(f"Cloud DLP Redaction Failed: {e}")
             return text
 
-    # (Your analyze_with_gemini and session state functions remain the same)
     @st.cache_data(show_spinner=False)
     def analyze_with_gemini(_context: str, _prompt: str):
         """Analyzes context using Gemini Pro."""
-        model = GenerativeModel("gemini-1.5-pro")
-        full_prompt = [ Part.from_text( "You are a world-class private equity analyst..." ), Part.from_text(f"CONTEXT:\n---\n{_context}\n---"), Part.from_text(f"ANALYST REQUEST: {_prompt}"), ]
+        model = GenerativeModel("gemini-1.5-pro-001")
+        full_prompt = [
+            Part.from_text("You are a world-class private equity analyst..."),
+            Part.from_text(f"CONTEXT:\n---\n{_context}\n---"),
+            Part.from_text(f"ANALYST REQUEST: {_prompt}"),
+        ]
         try:
             response = model.generate_content(full_prompt)
             return response.text
@@ -3367,47 +3415,52 @@ def pe_agent_app(gcp_project_id: str, gcp_location: str):
     if "pe_agent_financial_tables" not in st.session_state: st.session_state.pe_agent_financial_tables = []
     if "pe_agent_redacted_text" not in st.session_state: st.session_state.pe_agent_redacted_text = None
     if "pe_agent_analysis_result" not in st.session_state: st.session_state.pe_agent_analysis_result = None
-    
+
     # --- UI & WORKFLOW ---
     st.subheader("1. Upload Confidential Document")
     st.info("Your document is uploaded to a private GCS bucket and processed within your secure GCP environment.", icon="🛡️")
-    
+
     uploaded_file = st.file_uploader("Upload a Teaser, CIM, or Financial Statement (PDF)", type="pdf", key="pe_agent_uploader")
 
     if uploaded_file and st.button("Process and Secure Document"):
         with st.status("Securing and processing document...", expanded=True) as status:
             file_bytes = uploaded_file.getvalue()
-            
+
             status.update(label="Step 1/3: Uploading to secure storage...")
-            # --- CHANGE 3: PASS THE CLIENTS TO THE HELPER FUNCTIONS ---
-            gcs_uri = upload_to_gcs(storage_client, GCS_BUCKET, file_bytes, f"pe-uploads/{uploaded_file.name}")
+            # Use a unique name for the upload to avoid conflicts
+            gcs_file_name = f"pe-uploads/{uploaded_file.name}"
+            gcs_uri = upload_to_gcs(storage_client, GCS_BUCKET, file_bytes, gcs_file_name)
             if not gcs_uri:
                 st.error("Halting process due to GCS upload failure.")
                 st.stop()
             st.write(f"✅ Document securely stored at: `{gcs_uri}`")
 
-            status.update(label="Step 2/3: Parsing with Document AI...")
-            full_text, tables = parse_document_with_docai(docai_client, gcp_project_id, DOCAI_LOCATION, DOCAI_PROCESSOR_ID, file_bytes, "application/pdf")
+            status.update(label="Step 2/3: Parsing with Document AI (Async)...")
+            # **CHANGE 3: Call the new asynchronous function**
+            full_text, tables = parse_document_asynchronously(
+                docai_client, storage_client, gcp_project_id, DOCAI_LOCATION, DOCAI_PROCESSOR_ID,
+                gcs_uri, GCS_BUCKET, GCS_OUTPUT_PATH
+            )
             if not full_text:
                 st.error("Halting process due to Document AI parsing failure.")
                 st.stop()
             st.session_state.pe_agent_document_text = full_text
             st.session_state.pe_agent_financial_tables = tables
             st.write(f"✅ Document parsed. Extracted {len(tables)} financial tables.")
-            
+
             status.update(label="Step 3/3: Redacting sensitive data...")
             redacted_text = redact_text_with_dlp(dlp_client, gcp_project_id, full_text)
             st.session_state.pe_agent_redacted_text = redacted_text
             st.write("✅ Sensitive data redacted for analysis.")
-        
+
         st.success("Document is processed and ready for analysis.")
         st.rerun()
 
+    # (The rest of your UI logic for analysis remains the same)
     if st.session_state.pe_agent_redacted_text:
-        # (The rest of your UI logic for analysis remains the same)
         st.markdown("---")
         st.subheader("2. Analyze Document")
-        analysis_prompt = st.text_area("What would you like to analyze?", value="Summarize the investment thesis...", height=150)
+        analysis_prompt = st.text_area("What would you like to analyze?", value="Summarize the investment thesis, key risks, and fee structure.", height=150)
         if st.button("Generate Analysis", type="primary"):
             with st.spinner("Gemini is analyzing the document..."):
                 result = analyze_with_gemini(st.session_state.pe_agent_redacted_text, analysis_prompt)
