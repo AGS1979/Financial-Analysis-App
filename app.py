@@ -3345,6 +3345,7 @@ def pe_agent_app_azure():
             return f"Error during Azure OpenAI analysis: {e}"
 
     # --- CORRECTED HTML FORMATTER ---
+    # --- CORRECTED HTML FORMATTER ---
     def format_analysis_to_html(analysis_results: dict) -> str:
         """
         Converts a dictionary of AI-generated text (with potential markdown)
@@ -3370,12 +3371,9 @@ def pe_agent_app_azure():
             processed_content = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', safe_content)
             processed_content = re.sub(r'^#+\s*(.*?)\s*$', r'<h3>\1</h3>', processed_content, flags=re.MULTILINE)
 
-            # FIX: This function now correctly handles list conversion without the f-string syntax error.
             def replace_lists(match):
                 items_text = match.group(0)
-                # Find all list item contents directly
                 list_contents = re.findall(r'^\s*[\*\-]\s+(.*)', items_text, flags=re.MULTILINE)
-                # Create the <li> tags
                 li_items = "".join(f"<li>{item_content.strip()}</li>" for item_content in list_contents)
                 return f"<ul>{li_items}</ul>"
             
@@ -3394,7 +3392,10 @@ def pe_agent_app_azure():
 
             html_body += "".join(final_html_parts)
             
-        return f"{styles}<div class='analysis-container'>{html_body}</div>"
+        # ✅ FIX: Unescape HTML entities like '&amp;' to render correctly as characters.
+        final_html = html.unescape(html_body)
+
+        return f"{styles}<div class='analysis-container'>{final_html}</div>"
 
 
     # --- UI & WORKFLOW ---
