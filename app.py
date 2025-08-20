@@ -3347,15 +3347,15 @@ def pe_agent_app_azure():
     # --- FINAL CORRECTED HTML FORMATTER ---
     def format_analysis_to_html(analysis_results: dict) -> str:
         """
-        Converts a dictionary of AI-generated text (with potential markdown)
-        into a single, clean professional HTML string, correctly handling headings and lists.
+        Converts a dictionary of AI-generated text into a clean, professional HTML string,
+        with simple bold headings and correct character rendering.
         """
         styles = """
         <style>
             .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9fafb; }
             .analysis-container h2 { font-size: 1.5em; color: #00416A; border-bottom: 2px solid #00416A; padding-bottom: 10px; margin-top: 20px; margin-bottom: 15px; }
-            .analysis-container h3 { font-size: 1.25em; color: #1e1e1e; margin-top: 1.5em; margin-bottom: 0.5em; border-bottom: 1px solid #dde; padding-bottom: 5px;}
             .analysis-container p { margin-bottom: 1em; line-height: 1.6; color: #333; }
+            .analysis-container .subheading { font-weight: bold; color: #1e1e1e; margin-top: 1.5em; margin-bottom: 0.5em; }
             .analysis-container ul { list-style-position: outside; padding-left: 20px; margin-bottom: 1em; }
             .analysis-container li { margin-bottom: 0.75em; line-height: 1.6; }
             .analysis-container strong { color: #00416A; }
@@ -3365,40 +3365,41 @@ def pe_agent_app_azure():
         for title, content in analysis_results.items():
             html_body += f"<h2>{html.escape(title)}</h2>"
             
-            # Start with the raw content and escape it for safety
-            processed_content = html.escape(content)
+            # FIX 1: Explicitly handle apostrophes to prevent encoding errors like x27;s
+            content = content.replace("'", "&rsquo;")
+
+            # 1. Convert bold markdown to <strong> tags
+            processed_content = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', content)
             
-            # 1. Convert bold text: **text** -> <strong>text</strong>
-            processed_content = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', processed_content)
-            
-            # 2. FIX: Convert markdown headings to HTML h3 tags
-            processed_content = re.sub(r'#+\s*(.*?)\s*$', r'<h3>\1</h3>', processed_content, flags=re.MULTILINE)
-            
-            # 3. Handle list items
+            # 2. FIX 2: Convert markdown headings to simple bold paragraphs, not H3 tags
+            processed_content = re.sub(r'#+\s*(.*?)\s*$', r'<p class="subheading">\1</p>', processed_content, flags=re.MULTILINE)
+
+            # 3. Convert markdown lists to HTML lists
             def replace_lists(match):
                 items_text = match.group(0)
                 list_contents = re.findall(r'^\s*[\*\-]\s+(.*)', items_text, flags=re.MULTILINE)
-                li_items = "".join(f"<li>{item_content.strip()}</li>" for item_content in list_contents)
+                li_items = "".join(f"<li>{html.escape(item_content.strip())}</li>" for item_content in list_contents)
                 return f"<ul>{li_items}</ul>"
             
             processed_content = re.sub(r'(?m)^(\s*[\*\-]\s+.*\n?)+', replace_lists, processed_content)
 
-            # 4. Wrap remaining text blocks in <p> tags
+            # 4. Wrap remaining blocks in <p> tags
             final_html_parts = []
             blocks = re.split(r'\n\s*\n', processed_content.strip())
             for block in blocks:
                 block = block.strip()
                 if not block:
                     continue
-                # If it's not a list or heading we've already created, wrap it in a paragraph
-                if not block.startswith(('<ul', '<h3')):
-                    final_html_parts.append(f"<p>{block.replace(chr(10), '<br>')}</p>")
+                # If the block is not already a list or our new subheading, wrap it
+                if not block.startswith(('<ul', '<p class="subheading"')):
+                    sanitized_block = html.escape(block).replace('\n', '<br>')
+                    final_html_parts.append(f"<p>{sanitized_block}</p>")
                 else:
                     final_html_parts.append(block)
 
             html_body += "".join(final_html_parts)
         
-        # Finally, unescape any lingering HTML entities for clean display
+        # Unescape the entire body to ensure things like '&rsquo;' render as characters
         final_html = html.unescape(html_body)
 
         return f"{styles}<div class='analysis-container'>{final_html}</div>"
