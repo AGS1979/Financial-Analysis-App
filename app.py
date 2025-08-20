@@ -3246,7 +3246,8 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
 
 def pe_agent_app_azure():
     """
-    A secure, confidential agent for Private Equity analysis using Azure services.
+    A secure, confidential agent for Private Equity analysis using Azure services,
+    offering multiple, in-depth analysis options with professional HTML output.
     """
     st.markdown("### 🔒 PE Investment Agent (Powered by Azure AI)")
     st.markdown(
@@ -3265,76 +3266,77 @@ def pe_agent_app_azure():
         st.error(f"Configuration error: Missing Azure secret: {e}. Please check your secrets.toml file.")
         st.stop()
 
-    # --- HELPER FUNCTIONS (Azure Services) ---
+    # --- ANALYSIS PROMPTS ---
+    ANALYSIS_PROMPTS = {
+        "Investment Thesis": (
+            "You are a top-tier private equity analyst. Based on the context provided, formulate a comprehensive "
+            "investment thesis. Structure your response clearly, addressing:\n"
+            "1. **Market Opportunity:** The size and growth of the target market.\n"
+            "2. **Competitive Moat:** The company's unique competitive advantages and defensible position.\n"
+            "3. **Value Creation Levers:** Specific operational or strategic initiatives that could drive significant value post-investment (e.g., margin expansion, market entry, product development).\n"
+            "4. **Overall Rationale:** A concluding summary of why this is a compelling investment opportunity."
+        ),
+        "Key Risks & Mitigants": (
+            "You are a senior risk officer at a private equity firm. Analyze the provided document to identify and "
+            "evaluate key investment risks. For each risk, you must also identify any mitigating factors mentioned or "
+            "implied in the text. Categorize the risks into the following sections:\n"
+            "1. **Market & Competitive Risks:** (e.g., industry disruption, market saturation, intense competition).\n"
+            "2. **Operational Risks:** (e.g., supply chain dependency, key personnel risk, technology obsolescence).\n"
+            "3. **Financial Risks:** (e.g., high leverage, customer concentration, volatile cash flows).\n"
+            "Present your findings in a structured, clear format."
+        ),
+        "Financial Highlights": (
+            "You are a financial diligence expert. From the provided context, extract and summarize the key financial highlights. "
+            "Focus on:\n"
+            "1. **Revenue & Profitability:** Analyze historical revenue growth, EBITDA, and net income trends. Comment on margin profiles (Gross, EBITDA, Net).\n"
+            "2. **Balance Sheet Health:** Summarize key balance sheet items like cash position, debt levels (net debt), and working capital.\n"
+            "3. **Cash Flow:** Comment on the company's ability to generate cash from operations.\n"
+            "Present only the information available in the text; do not invent or extrapolate data."
+        ),
+        "Potential Exit Options": (
+            "You are a partner on the investment committee. Based on the company's profile, industry, and market position described in the "
+            "document, analyze and propose potential exit strategies. For each option, provide a clear rationale. Consider the following:\n"
+            "1. **Strategic Sale:** Who are the likely strategic acquirers and why would they be interested?\n"
+            "2. **Secondary Buyout:** Would the company be an attractive target for other financial sponsors?\n"
+            "3. **Initial Public Offering (IPO):** Does the company have the scale, growth profile, and story to succeed in the public markets?\n"
+            "Evaluate the feasibility and potential attractiveness of each path."
+        )
+    }
 
-    
+    # --- HELPER FUNCTIONS (Azure Services & Formatting) ---
     def parse_pdf_with_azure_di(file_bytes: bytes) -> tuple[str, list]:
         """Extracts text and tables from a PDF using Azure AI Document Intelligence."""
         try:
-            document_intelligence_client = DocumentIntelligenceClient(
-                endpoint=di_endpoint, credential=AzureKeyCredential(di_key)
-            )
-            poller = document_intelligence_client.begin_analyze_document(
-                "prebuilt-layout", analyze_request=file_bytes, content_type="application/octet-stream"
-            )
+            client = DocumentIntelligenceClient(endpoint=di_endpoint, credential=AzureKeyCredential(di_key))
+            poller = client.begin_analyze_document("prebuilt-layout", analyze_request=file_bytes, content_type="application/octet-stream")
             result = poller.result()
-
             full_text = result.content
             all_tables = []
-            
             if result.tables:
                 for table in result.tables:
-                    # --- ROBUST TABLE PARSING LOGIC START ---
-                    if table.row_count == 0 or table.column_count == 0:
-                        continue
-                        
-                    # Create a map of all cells by their coordinates
+                    if table.row_count == 0 or table.column_count == 0: continue
                     cell_map = {(cell.row_index, cell.column_index): cell.content for cell in table.cells}
-                    
-                    # Reconstruct the full table as a list of lists
-                    reconstructed_table = []
-                    for r in range(table.row_count):
-                        row_data = [cell_map.get((r, c), "") for c in range(table.column_count)]
-                        reconstructed_table.append(row_data)
-                    
-                    if not reconstructed_table:
-                        continue
-
-                    # Assume the first row is the header, and the rest is data
+                    reconstructed_table = [[cell_map.get((r, c), "") for c in range(table.column_count)] for r in range(table.row_count)]
+                    if not reconstructed_table: continue
                     header = reconstructed_table[0]
                     data = reconstructed_table[1:]
-                    
-                    # Ensure data and header have the same width
                     num_columns = len(header)
-                    cleaned_data = []
-                    for row in data:
-                        # Truncate or pad the row to match the header length
-                        cleaned_row = (row + [""] * num_columns)[:num_columns]
-                        cleaned_data.append(cleaned_row)
-                    
-                    # Create the DataFrame
+                    cleaned_data = [(row + [""] * num_columns)[:num_columns] for row in data]
                     df = pd.DataFrame(cleaned_data, columns=header)
                     all_tables.append(df)
-                    # --- ROBUST TABLE PARSING LOGIC END ---
-            
             return full_text, all_tables
         except Exception as e:
             st.error(f"Azure AI Document Intelligence error: {e}")
             return None, []
 
-    
     def analyze_with_azure_openai(_context: str, _prompt: str) -> str:
         """Analyzes context using the Azure OpenAI Service."""
         try:
-            client = AzureOpenAI(
-                api_key=openai_key,
-                api_version="2024-02-01",
-                azure_endpoint=openai_endpoint
-            )
+            client = AzureOpenAI(api_key=openai_key, api_version="2024-02-01", azure_endpoint=openai_endpoint)
             response = client.chat.completions.create(
                 model=openai_deployment_name,
                 messages=[
-                    {"role": "system", "content": "You are a world-class private equity analyst."},
+                    {"role": "system", "content": "You are a world-class private equity analyst providing detailed, structured, and professional analysis. Do not use markdown."},
                     {"role": "user", "content": f"CONTEXT:\n---\n{_context}\n---\nANALYST REQUEST: {_prompt}"}
                 ]
             )
@@ -3342,42 +3344,96 @@ def pe_agent_app_azure():
         except Exception as e:
             return f"Error during Azure OpenAI analysis: {e}"
 
+    def format_analysis_to_html(analysis_results: dict) -> str:
+        """Converts the dictionary of analysis results into a single professional HTML string."""
+        styles = """
+        <style>
+            .analysis-container {
+                font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0;
+                border-radius: 8px; padding: 25px; background-color: #f9fafb;
+            }
+            .analysis-container h2 {
+                font-size: 1.5em; color: #00416A; border-bottom: 2px solid #00416A;
+                padding-bottom: 10px; margin-top: 20px; margin-bottom: 15px;
+            }
+            .analysis-container p { margin-bottom: 1em; line-height: 1.6; color: #333; }
+            .analysis-container ul { list-style-type: disc; margin-left: 20px; }
+            .analysis-container li { margin-bottom: 0.75em; }
+        </style>
+        """
+        html_body = ""
+        for title, content in analysis_results.items():
+            html_body += f"<h2>{title}</h2>"
+            # Basic conversion of newlines to paragraphs for clean HTML
+            paragraphs = content.strip().split('\n')
+            for p_text in paragraphs:
+                if p_text.strip():
+                    # Simple check for list items
+                    if p_text.strip().startswith(('* ', '- ')):
+                         html_body += f"<ul><li>{p_text.strip()[2:]}</li></ul>"
+                    else:
+                         html_body += f"<p>{p_text.strip()}</p>"
+
+        return f"{styles}<div class='analysis-container'>{html_body}</div>"
+
     # --- UI & WORKFLOW ---
     st.subheader("1. Upload Confidential Document")
     uploaded_file = st.file_uploader("Upload a Teaser, CIM, or Financial Statement (PDF)", type="pdf", key="pe_agent_uploader_azure")
 
-    if uploaded_file and st.button("Process and Analyze Document"):
-        with st.status("Processing document in secure Azure environment...", expanded=True) as status:
-            file_bytes = uploaded_file.getvalue()
-            
-            status.update(label="Step 1/2: Parsing document with Azure AI...")
-            full_text, tables = parse_pdf_with_azure_di(file_bytes)
-            
-            if not full_text:
-                st.error("Halting process: Document parsing failed.")
-                st.stop()
-            
-            st.session_state.pe_agent_financial_tables_azure = tables
-            st.write(f"✅ Document parsed. Extracted {len(tables)} tables.")
-            
-            status.update(label="Step 2/2: Generating analysis with Azure OpenAI...")
-            analysis_prompt = "Summarize the investment thesis, key risks, and fee structure."
-            result = analyze_with_azure_openai(full_text, analysis_prompt)
-            st.session_state.pe_agent_analysis_result_azure = result
-        
-        st.success("Analysis Complete!")
+    # Step 1: Process Document
+    if uploaded_file and "pe_agent_text" not in st.session_state:
+        if st.button("Process Document", type="primary"):
+            with st.spinner("Processing document in secure Azure environment..."):
+                file_bytes = uploaded_file.getvalue()
+                full_text, tables = parse_pdf_with_azure_di(file_bytes)
+
+                if full_text:
+                    st.session_state.pe_agent_text = full_text
+                    st.session_state.pe_agent_tables = tables
+                    st.rerun()
+                else:
+                    st.error("Document parsing failed. Please try another document.")
+
+    # Step 2: Select and Run Analysis (if document has been processed)
+    if "pe_agent_text" in st.session_state:
+        st.success(f"✅ Document processed successfully. Extracted {len(st.session_state.pe_agent_tables)} tables.")
+        st.markdown("---")
+        st.subheader("2. Select and Generate Analysis")
+
+        analysis_choices = st.multiselect(
+            "Choose the analyses you want to perform:",
+            options=list(ANALYSIS_PROMPTS.keys()),
+            default=list(ANALYSIS_PROMPTS.keys())
+        )
+
+        if st.button("Generate Analysis", use_container_width=True):
+            if not analysis_choices:
+                st.warning("Please select at least one analysis type.")
+            else:
+                full_text = st.session_state.pe_agent_text
+                analysis_results = {}
+                with st.spinner("Generating insights with Azure OpenAI... This may take a moment."):
+                    for choice in analysis_choices:
+                        prompt = ANALYSIS_PROMPTS[choice]
+                        result = analyze_with_azure_openai(full_text, prompt)
+                        analysis_results[choice] = result
+                st.session_state.pe_agent_analysis_results = analysis_results
 
     # Display results from session state
-    if st.session_state.get('pe_agent_analysis_result_azure'):
+    if "pe_agent_analysis_results" in st.session_state:
         st.markdown("---")
-        st.subheader("Analysis Result")
-        st.markdown(st.session_state.pe_agent_analysis_result_azure)
+        st.subheader("Analysis Results")
+        results_html = format_analysis_to_html(st.session_state.pe_agent_analysis_results)
+        st.markdown(results_html, unsafe_allow_html=True)
 
-    if st.session_state.get('pe_agent_financial_tables_azure'):
-        st.markdown("### Extracted Financial Tables")
-        for i, df in enumerate(st.session_state.get('pe_agent_financial_tables_azure', [])):
-            st.write(f"**Table {i+1}**")
-            st.dataframe(df.fillna(''))
+    if "pe_agent_tables" in st.session_state:
+        tables = st.session_state.pe_agent_tables
+        if tables:
+            st.markdown("---")
+            st.subheader("Extracted Financial Tables")
+            for i, df in enumerate(tables):
+                st.write(f"**Table {i+1}**")
+                st.dataframe(df.fillna(''))
 
 
 
