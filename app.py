@@ -3281,23 +3281,41 @@ def pe_agent_app_azure():
 
             full_text = result.content
             all_tables = []
+            
             if result.tables:
                 for table in result.tables:
-                    # Reconstruct the DataFrame from the table cells
-                    table_data = []
-                    header = [cell.content for cell in table.cells if cell.kind == "columnHeader"]
+                    # --- ROBUST TABLE PARSING LOGIC START ---
+                    if table.row_count == 0 or table.column_count == 0:
+                        continue
+                        
+                    # Create a map of all cells by their coordinates
+                    cell_map = {(cell.row_index, cell.column_index): cell.content for cell in table.cells}
                     
-                    # Group cells by row index
-                    rows = {}
-                    for cell in table.cells:
-                        if cell.kind != "columnHeader":
-                            if cell.row_index not in rows:
-                                rows[cell.row_index] = [""] * table.column_count
-                            rows[cell.row_index][cell.column_index] = cell.content
+                    # Reconstruct the full table as a list of lists
+                    reconstructed_table = []
+                    for r in range(table.row_count):
+                        row_data = [cell_map.get((r, c), "") for c in range(table.column_count)]
+                        reconstructed_table.append(row_data)
                     
-                    table_data = [rows[i] for i in sorted(rows.keys())]
-                    df = pd.DataFrame(table_data, columns=header if header else None)
+                    if not reconstructed_table:
+                        continue
+
+                    # Assume the first row is the header, and the rest is data
+                    header = reconstructed_table[0]
+                    data = reconstructed_table[1:]
+                    
+                    # Ensure data and header have the same width
+                    num_columns = len(header)
+                    cleaned_data = []
+                    for row in data:
+                        # Truncate or pad the row to match the header length
+                        cleaned_row = (row + [""] * num_columns)[:num_columns]
+                        cleaned_data.append(cleaned_row)
+                    
+                    # Create the DataFrame
+                    df = pd.DataFrame(cleaned_data, columns=header)
                     all_tables.append(df)
+                    # --- ROBUST TABLE PARSING LOGIC END ---
             
             return full_text, all_tables
         except Exception as e:
@@ -3310,11 +3328,11 @@ def pe_agent_app_azure():
         try:
             client = AzureOpenAI(
                 api_key=openai_key,
-                api_version="2024-02-01", # A recent, stable API version
+                api_version="2024-02-01",
                 azure_endpoint=openai_endpoint
             )
             response = client.chat.completions.create(
-                model=openai_deployment_name, # Your deployment name
+                model=openai_deployment_name,
                 messages=[
                     {"role": "system", "content": "You are a world-class private equity analyst."},
                     {"role": "user", "content": f"CONTEXT:\n---\n{_context}\n---\nANALYST REQUEST: {_prompt}"}
