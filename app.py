@@ -3267,7 +3267,7 @@ def pe_agent_app_azure():
 
     # --- HELPER FUNCTIONS (Azure Services) ---
 
-    @st.cache_data(show_spinner="Parsing document with Azure AI...")
+    
     def parse_pdf_with_azure_di(file_bytes: bytes) -> tuple[str, list]:
         """Extracts text and tables from a PDF using Azure AI Document Intelligence."""
         try:
@@ -3322,7 +3322,7 @@ def pe_agent_app_azure():
             st.error(f"Azure AI Document Intelligence error: {e}")
             return None, []
 
-    @st.cache_data(show_spinner="Analyzing with Azure OpenAI...")
+    
     def analyze_with_azure_openai(_context: str, _prompt: str) -> str:
         """Analyzes context using the Azure OpenAI Service."""
         try:
