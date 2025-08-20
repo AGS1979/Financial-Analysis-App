@@ -3336,7 +3336,7 @@ def pe_agent_app_azure():
             response = client.chat.completions.create(
                 model=openai_deployment_name,
                 messages=[
-                    {"role": "system", "content": "You are a world-class private equity analyst providing detailed, structured, and professional analysis. Do not use markdown."},
+                    {"role": "system", "content": "You are a world-class private equity analyst. Use professional headings and clear paragraphs for your analysis."},
                     {"role": "user", "content": f"CONTEXT:\n---\n{_context}\n---\nANALYST REQUEST: {_prompt}"}
                 ]
             )
@@ -3344,37 +3344,62 @@ def pe_agent_app_azure():
         except Exception as e:
             return f"Error during Azure OpenAI analysis: {e}"
 
+    # --- NEW & IMPROVED HTML FORMATTER ---
     def format_analysis_to_html(analysis_results: dict) -> str:
-        """Converts the dictionary of analysis results into a single professional HTML string."""
+        """
+        Converts a dictionary of AI-generated text (with potential markdown)
+        into a single, clean professional HTML string.
+        """
         styles = """
         <style>
-            .analysis-container {
-                font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0;
-                border-radius: 8px; padding: 25px; background-color: #f9fafb;
-            }
-            .analysis-container h2 {
-                font-size: 1.5em; color: #00416A; border-bottom: 2px solid #00416A;
-                padding-bottom: 10px; margin-top: 20px; margin-bottom: 15px;
-            }
+            .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9fafb; }
+            .analysis-container h2 { font-size: 1.5em; color: #00416A; border-bottom: 2px solid #00416A; padding-bottom: 10px; margin-top: 20px; margin-bottom: 15px; }
+            .analysis-container h3 { font-size: 1.25em; color: #1e1e1e; margin-top: 1.5em; margin-bottom: 0.5em; }
+            .analysis-container h4 { font-size: 1.1em; color: #333; margin-top: 1em; margin-bottom: 0.5em; }
             .analysis-container p { margin-bottom: 1em; line-height: 1.6; color: #333; }
-            .analysis-container ul { list-style-type: disc; margin-left: 20px; }
-            .analysis-container li { margin-bottom: 0.75em; }
+            .analysis-container ul { list-style-position: outside; padding-left: 20px; margin-bottom: 1em; }
+            .analysis-container li { margin-bottom: 0.75em; line-height: 1.6; }
+            .analysis-container strong { color: #00416A; }
         </style>
         """
         html_body = ""
         for title, content in analysis_results.items():
-            html_body += f"<h2>{title}</h2>"
-            # Basic conversion of newlines to paragraphs for clean HTML
-            paragraphs = content.strip().split('\n')
-            for p_text in paragraphs:
-                if p_text.strip():
-                    # Simple check for list items
-                    if p_text.strip().startswith(('* ', '- ')):
-                         html_body += f"<ul><li>{p_text.strip()[2:]}</li></ul>"
-                    else:
-                         html_body += f"<p>{p_text.strip()}</p>"
+            html_body += f"<h2>{html.escape(title)}</h2>"
+            
+            # Escape HTML characters to prevent injection, then process markdown
+            safe_content = html.escape(content)
 
+            # Convert bold: **text** -> <strong>text</strong>
+            processed_content = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', safe_content)
+            
+            # Convert headings: ### Title -> <h3>Title</h3>
+            processed_content = re.sub(r'^#+\s*(.*?)\s*$', r'<h3>\1</h3>', processed_content, flags=re.MULTILINE)
+            
+            # Convert list items: * item -> <li>item</li> and wrap in <ul>
+            def replace_lists(match):
+                items = match.group(0).strip().split('\n')
+                li_items = "".join(f"<li>{re.sub(r'^\s*[\*\-]\s*', '', item)}</li>" for item in items)
+                return f"<ul>{li_items}</ul>"
+            
+            processed_content = re.sub(r'(?m)^(\s*[\*\-]\s+.*\n?)+', replace_lists, processed_content)
+            
+            # Wrap remaining lines/blocks in <p> tags, avoiding empty paragraphs
+            # and already-tagged blocks (like our new ul and h3)
+            final_html_parts = []
+            blocks = processed_content.split('\n\n')
+            for block in blocks:
+                block = block.strip()
+                if not block:
+                    continue
+                if not block.startswith(('<ul', '<h')):
+                    final_html_parts.append(f"<p>{block.replace(chr(10), '<br>')}</p>")
+                else:
+                    final_html_parts.append(block)
+
+            html_body += "".join(final_html_parts)
+            
         return f"{styles}<div class='analysis-container'>{html_body}</div>"
+
 
     # --- UI & WORKFLOW ---
     st.subheader("1. Upload Confidential Document")
