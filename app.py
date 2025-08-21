@@ -628,7 +628,7 @@ def investment_memo_app():
         sections = {}
         for title in section_titles:
             prompt = (
-                f"You are writing a professional pre-IPO investment memo section titled: {title[3:]}. "
+                f"You are writing a professional Agent Pre-IPO section titled: {title[3:]}. "
                 "Please generate ~500 words of clean, structured, analytical prose suitable for institutional investors. "
                 "Do not mention this is a memo. Avoid starting with the section title, and avoid phrases like 'In this section'. "
                 "Strictly avoid markdown (no asterisks, hashes, underscores). Use plain text only.\n\n"
@@ -661,7 +661,7 @@ def investment_memo_app():
         style.font.size = Pt(11)
 
         title_para = doc.add_paragraph()
-        title_run = title_para.add_run(f"{company_name} Pre-IPO Investment Memo")
+        title_run = title_para.add_run(f"{company_name} Agent Pre-IPO")
         title_run.font.name = 'Aptos Display'
         title_run.font.size = Pt(20)
         title_run.bold = True
@@ -3435,7 +3435,7 @@ def main():
             # Updated description to mention Azure
             st.markdown("##### 🔒 Agent PE")
             st.markdown("Analyze confidential IMs and teasers with enterprise-grade security using Azure AI.", help="Ensures data residency and privacy by processing documents within your own secure Azure environment.")
-            st.markdown("##### 📝 Pre-IPO Investment Memo")
+            st.markdown("##### 📝 Agent Pre-IPO")
             st.markdown("Upload a DRHP/IPO PDF to automatically generate a detailed investment memo and perform Q&A.", help="Uses LLMs to parse and structure information from prospectus documents.")
             
         with c2:
