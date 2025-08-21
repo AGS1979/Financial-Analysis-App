@@ -3350,14 +3350,11 @@ def pe_agent_app_azure():
         Converts a dictionary of AI-generated text into a clean, professional HTML string,
         with simple bold headings and correct character rendering.
         """
-        # --- MODIFIED CSS ---
         styles = """
         <style>
             .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9fafb; }
-            /* CHANGE: Increased main heading font size and added more bottom margin */
             .analysis-container h2 { font-size: 1.7em; color: #00416A; border-bottom: 2px solid #00416A; padding-bottom: 12px; margin-top: 20px; margin-bottom: 20px; }
             .analysis-container p { margin-bottom: 1em; line-height: 1.6; color: #333; }
-            /* CHANGE: Added top margin to create a gap before the subheading */
             .analysis-container .subheading { font-weight: bold; color: #1e1e1e; margin-top: 2em; margin-bottom: 0.5em; }
             .analysis-container ul { list-style-position: outside; padding-left: 20px; margin-bottom: 1em; }
             .analysis-container li { margin-bottom: 0.75em; line-height: 1.6; }
@@ -3388,13 +3385,14 @@ def pe_agent_app_azure():
                 if not block:
                     continue
 
-                # --- CHANGE: Logic to remove redundant subheadings ---
-                # If a subheading's text is very similar to the main title, skip it.
+                # --- REFINED LOGIC to better remove redundant subheadings ---
                 if block.startswith('<p class="subheading"'):
-                    subheading_text = re.sub(r'<.*?>', '', block) # Extract text from the tag
-                    if title.lower() in subheading_text.lower() or subheading_text.lower() in title.lower():
-                        continue # Skip this redundant block
-                # --- END CHANGE ---
+                    # Clean the text inside the tag for comparison
+                    subheading_text = re.sub(r'^\d+\.\s*', '', re.sub(r'<.*?>', '', block)).strip()
+                    # If the cleaned subheading is the same as the main title, skip it
+                    if title.strip().lower() == subheading_text.lower():
+                        continue 
+                # --- END REFINEMENT ---
 
                 if not block.startswith(('<ul', '<p class="subheading"')):
                     sanitized_block = html.escape(block).replace('\n', '<br>')
