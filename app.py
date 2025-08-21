@@ -3142,7 +3142,7 @@ def pe_agent_app_azure():
 
     st.markdown("### 🔒 PE Investment Agent")
     st.markdown(
-        "Analyze Investment Memos with enterprise-grade privacy. Documents are parsed and analyzed "
+        "Analyze deal documents with enterprise-grade privacy. Documents are analyzed "
         "within a secure environment."
     )
 
