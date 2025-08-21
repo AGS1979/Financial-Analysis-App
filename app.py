@@ -3123,7 +3123,7 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
 
 
 # ==============================================================================
-# 8. PE INVESTMENT AGENT (VERTEX AI POWERED)
+# 8. Agent PE (Azure POWERED)
 # ==============================================================================
 
 def pe_agent_app_azure():
@@ -3140,7 +3140,7 @@ def pe_agent_app_azure():
     from azure.ai.documentintelligence.models import ContentFormat
     from openai import AzureOpenAI
 
-    st.markdown("### 🔒 PE Investment Agent")
+    st.markdown("### 🔒 Agent PE")
     st.markdown(
         "Analyze deal documents with enterprise-grade privacy. Documents are analyzed "
         "within a secure environment."
@@ -3374,7 +3374,7 @@ def main():
             "Choose a tool:",
             [
                 "🏠 Welcome",
-                "PE Investment Agent",
+                "Agent PE",
                 "Pre-IPO Investment Memo Generator",
                 "DCF Ginny",
                 "Special Situations Analyzer",
@@ -3401,7 +3401,7 @@ def main():
     st.markdown("---")
 
     # --- Router Logic ---
-    if app_mode == "PE Investment Agent":
+    if app_mode == "Agent PE":
         # This now calls your self-contained Azure function
         pe_agent_app_azure()
         
@@ -3433,7 +3433,7 @@ def main():
         c1, c2, c3 = st.columns(3)
         with c1:
             # Updated description to mention Azure
-            st.markdown("##### 🔒 PE Investment Agent")
+            st.markdown("##### 🔒 Agent PE")
             st.markdown("Analyze confidential IMs and teasers with enterprise-grade security using Azure AI.", help="Ensures data residency and privacy by processing documents within your own secure Azure environment.")
             st.markdown("##### 📝 Pre-IPO Investment Memo")
             st.markdown("Upload a DRHP/IPO PDF to automatically generate a detailed investment memo and perform Q&A.", help="Uses LLMs to parse and structure information from prospectus documents.")
