@@ -2518,9 +2518,11 @@ def portfolio_agent_app(user_id: str):
 
                 # If not a table, process as paragraph or list
                 else:
+                    # FIX: Add this line to clean up the text
+                    line = add_spacing_to_run_on_text(line)
+                    
                     line = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', line)
                     if line.startswith(('* ', '- ')):
-                        # Simple list handling (can be improved if nested lists are needed)
                         content_html += f"<ul><li>{line[2:].strip()}</li></ul>"
                     elif line:
                         content_html += f"<p>{line}</p>"
