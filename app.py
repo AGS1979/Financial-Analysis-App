@@ -3389,7 +3389,6 @@ def pe_agent_app_azure():
 
     if "pe_agent_analysis_results" in st.session_state:
         st.markdown("---")
-        st.subheader("Analysis Results")
         
         # --- CHANGE HERE: Separate styles and content for reliable rendering ---
         styles_html, content_html = parse_markdown_to_html(st.session_state.pe_agent_analysis_results)
