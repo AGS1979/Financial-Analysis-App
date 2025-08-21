@@ -3250,10 +3250,10 @@ def pe_agent_app_azure():
     A secure, confidential agent for Private Equity analysis using Azure services.
     This version uses a robust markdown-to-HTML parsing pipeline for clean output.
     """
-    st.markdown("### 🔒 PE Investment Agent (Powered by Azure AI)")
+    st.markdown("### 🔒 PE Investment Agent")
     st.markdown(
         "Analyze Investment Memos with enterprise-grade privacy. Documents are parsed and analyzed "
-        "within a secure Azure environment."
+        "within a secure environment."
     )
 
     # --- AGENT CONFIG (Fetched from secrets for Azure) ---
@@ -3379,7 +3379,7 @@ def pe_agent_app_azure():
             else:
                 full_text = st.session_state.pe_agent_text
                 analysis_results = {}
-                with st.spinner("Generating insights with Azure OpenAI..."):
+                with st.spinner("Generating insights..."):
                     for choice in analysis_choices:
                         prompt = ANALYSIS_PROMPTS[choice]
                         result = analyze_with_azure_openai(full_text, prompt)
