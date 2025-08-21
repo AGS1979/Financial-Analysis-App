@@ -1347,12 +1347,12 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
 
 
 # ==============================================================================
-# 4. SPECIAL SITUATIONS ANALYZER
+# 4. Agent Special Situations
 # (Code from app - SpecialSituations.py)
 # ==============================================================================
 def special_situations_app():
     """
-    Encapsulates the complete Special Situations Analyzer functionality,
+    Encapsulates the complete Agent Special Situations functionality,
     including memo generation, a valuation module, and infographic creation.
     """
 
@@ -1870,7 +1870,7 @@ Section to Summarize:
     # ==========================
     # STREAMLIT UI & APP LOGIC
     # ==========================
-    st.markdown("### 🔀 Special Situation Memo & Infographic Generator")
+    st.markdown("### 🔀 Agent Special Situations")
     # --- Step 1: Memo Generation ---
     st.header("Step 1: Generate Investment Memo")
 
@@ -3377,7 +3377,7 @@ def main():
                 "Agent PE",
                 "Agent Pre-IPO",
                 "DCF Ginny",
-                "Special Situations Analyzer",
+                "Agent Special Situations",
                 "ESG Analyzer",
                 "Portfolio Agent",
                 "Tariff Impact Tracker"
@@ -3411,7 +3411,7 @@ def main():
     elif app_mode == "DCF Ginny":
         dcf_agent_app(client=openai_client, FMP_API_KEY=FMP_API_KEY)
         
-    elif app_mode == "Special Situations Analyzer":
+    elif app_mode == "Agent Special Situations":
         special_situations_app()
         
     elif app_mode == "ESG Analyzer":
@@ -3441,7 +3441,7 @@ def main():
         with c2:
             st.markdown("##### 📈 DCF Ginny")
             st.markdown("Generate a document-driven Discounted Cash Flow (DCF) analysis using public data or your own financials.", help="Combines quantitative data with qualitative insights from documents.")
-            st.markdown("##### 📊 Special Situations Analyzer")
+            st.markdown("##### 📊 Agent Special Situations")
             st.markdown("Analyze events like M&A, spin-offs, and activist campaigns by uploading relevant documents to generate a summary memo.", help="Ideal for event-driven investment strategies.")
 
         with c3:
