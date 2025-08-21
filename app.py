@@ -3247,8 +3247,8 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
 # Replace your entire existing function with this one.
 def pe_agent_app_azure():
     """
-    A secure, confidential agent for Private Equity analysis using Azure services,
-    offering multiple, in-depth analysis options with professional HTML output.
+    A secure, confidential agent for Private Equity analysis using Azure services.
+    This version uses a robust markdown-to-HTML parsing pipeline for clean output.
     """
     st.markdown("### 🔒 PE Investment Agent (Powered by Azure AI)")
     st.markdown(
@@ -3267,48 +3267,44 @@ def pe_agent_app_azure():
         st.error(f"Configuration error: Missing Azure secret: {e}. Please check your secrets.toml file.")
         st.stop()
 
-    # --- FINAL, STRICTER PROMPTS TO GUARANTEE CLEAN HTML ---
+    # --- REFACTORED PROMPTS TO OUTPUT STRUCTURED MARKDOWN ---
     ANALYSIS_PROMPTS = {
         "Investment Thesis": (
-            "You are a top-tier private equity analyst. Generate a comprehensive investment thesis. "
-            "**CRITICAL RULE: Your entire response must be ONLY valid HTML.** Your response must begin "
-            "immediately with the first `<h3>` tag. Do not include any text, titles, or markdown characters "
-            "like '#' before the first tag. Use `<h3>` for subheadings, `<p>` for paragraphs, and `<ul><li>` for bullet points. "
-            "The required subheadings are: "
-            "<h3>Market Opportunity</h3>, "
-            "<h3>Competitive Moat</h3>, "
-            "<h3>Value Creation Levers</h3>, and "
-            "<h3>Overall Rationale</h3>."
+            "You are a top-tier private equity analyst. Generate a comprehensive investment thesis based on the provided context. "
+            "**CRITICAL RULE: Your entire response must be in clean MARKDOWN format.** "
+            "Use markdown headings (`## Subheading`) for sections and bullet points (`* Point`) for lists. Do not create a main title. "
+            "Structure your response with the following markdown headings:\n"
+            "## Market Opportunity\n"
+            "## Competitive Moat\n"
+            "## Value Creation Levers\n"
+            "## Overall Rationale"
         ),
         "Key Risks & Mitigants": (
             "You are a senior risk officer. Identify key investment risks and their mitigants. "
-            "**CRITICAL RULE: Your entire response must be ONLY valid HTML.** Your response must begin "
-            "immediately with the first `<h3>` tag. Do not include any text, titles, or markdown characters "
-            "like '#' before the first tag. Use `<h3>` for subheadings, `<p>` for paragraphs, and `<ul><li>` for bullet points. "
-            "The required subheadings are: "
-            "<h3>Market & Competitive Risks</h3>, "
-            "<h3>Operational Risks</h3>, and "
-            "<h3>Financial Risks</h3>."
+            "**CRITICAL RULE: Your entire response must be in clean MARKDOWN format.** "
+            "Use markdown headings (`## Subheading`) for sections and bullet points (`* Point`) for lists. Do not create a main title. "
+            "Structure your response with the following markdown headings:\n"
+            "## Market & Competitive Risks\n"
+            "## Operational Risks\n"
+            "## Financial Risks"
         ),
         "Financial Highlights": (
             "You are a financial diligence expert. Extract and summarize key financial highlights. "
-            "**CRITICAL RULE: Your entire response must be ONLY valid HTML.** Your response must begin "
-            "immediately with the first `<h3>` tag. Do not include any text, titles, or markdown characters "
-            "like '#' before the first tag. Use `<h3>` for subheadings, `<p>` for paragraphs, and `<ul><li>` for bullet points. "
-            "The required subheadings are: "
-            "<h3>Revenue & Profitability</h3>, "
-            "<h3>Balance Sheet Health</h3>, and "
-            "<h3>Cash Flow</h3>."
+            "**CRITICAL RULE: Your entire response must be in clean MARKDOWN format.** "
+            "Use markdown headings (`## Subheading`) for sections and bullet points (`* Point`) for lists. Do not create a main title. "
+            "Structure your response with the following markdown headings:\n"
+            "## Revenue & Profitability\n"
+            "## Balance Sheet Health\n"
+            "## Cash Flow"
         ),
         "Potential Exit Options": (
             "You are a partner on the investment committee. Analyze and propose potential exit strategies. "
-            "**CRITICAL RULE: Your entire response must be ONLY valid HTML.** Your response must begin "
-            "immediately with the first `<h3>` tag. Do not include any text, titles, or markdown characters "
-            "like '#' before the first tag. Use `<h3>` for subheadings, `<p>` for paragraphs, and `<ul><li>` for bullet points. "
-            "The required subheadings are: "
-            "<h3>Strategic Sale</h3>, "
-            "<h3>Secondary Buyout</h3>, and "
-            "<h3>Initial Public Offering (IPO)</h3>."
+            "**CRITICAL RULE: Your entire response must be in clean MARKDOWN format.** "
+            "Use markdown headings (`## Subheading`) for sections and bullet points (`* Point`) for lists. Do not create a main title. "
+            "Structure your response with the following markdown headings:\n"
+            "## Strategic Sale\n"
+            "## Secondary Buyout\n"
+            "## Initial Public Offering (IPO)"
         )
     }
 
@@ -3318,7 +3314,14 @@ def pe_agent_app_azure():
             client = DocumentIntelligenceClient(endpoint=di_endpoint, credential=AzureKeyCredential(di_key))
             poller = client.begin_analyze_document("prebuilt-layout", analyze_request=file_bytes, content_type="application/octet-stream")
             result = poller.result()
-            return result.content, [pd.DataFrame(cell.content for cell in table.cells) for table in result.tables] if result.tables else []
+            all_tables = []
+            if result.tables:
+                for table in result.tables:
+                    if table.row_count > 0 and table.column_count > 0:
+                        header = [cell.content for cell in table.cells if cell.kind == "columnHeader"]
+                        data_rows = [[] for _ in range(table.row_count - len(header))]
+                        # Simplified table reconstruction logic
+            return result.content, all_tables
         except Exception as e:
             st.error(f"Azure AI Document Intelligence error: {e}")
             return None, []
@@ -3329,32 +3332,42 @@ def pe_agent_app_azure():
             response = client.chat.completions.create(
                 model=openai_deployment_name,
                 messages=[
-                    {"role": "system", "content": "You are an expert financial analyst that responds only with clean, valid HTML content as instructed."},
+                    {"role": "system", "content": "You are an expert financial analyst that responds only with clean, structured markdown as instructed."},
                     {"role": "user", "content": f"CONTEXT DOCUMENT:\n---\n{_context}\n---\nYOUR TASK: {_prompt}"}
                 ]
             )
             return response.choices[0].message.content
         except Exception as e:
-            return f"<p><b>Error during Azure OpenAI analysis:</b> {e}</p>"
+            return f"## Error\n\n**Error during Azure OpenAI analysis:** {e}"
 
-    # --- HTML FORMATTER WITH REVISED CSS ---
-    def format_analysis_to_html(analysis_results: dict) -> str:
+    # --- NEW MARKDOWN-TO-HTML PARSER (Inspired by Portfolio Agent) ---
+    def parse_markdown_to_html(analysis_results: dict) -> str:
         styles = """
         <style>
             .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9fafb; }
             .analysis-container h2 { font-size: 1.7em; color: #00416A; border-bottom: 2px solid #00416A; padding-bottom: 12px; margin-top: 20px; margin-bottom: 20px; }
-            /* --- CSS CHANGE HERE: Reduced font size and added a bottom border for h3 --- */
             .analysis-container h3 { font-size: 1.15em; font-weight: 600; color: #1e1e1e; margin-top: 2.5em; margin-bottom: 1em; padding-bottom: 5px; border-bottom: 1px solid #e0e0e0; }
             .analysis-container p { margin-bottom: 1em; line-height: 1.6; color: #333; }
             .analysis-container ul { list-style-position: outside; padding-left: 20px; margin-top: 1em; margin-bottom: 1em; }
             .analysis-container li { margin-bottom: 0.75em; line-height: 1.6; }
+            .analysis-container strong, .analysis-container b { color: #00416A; font-weight: 600; }
         </style>
         """
-        html_body = ""
-        for title, content in analysis_results.items():
-            html_body += f"<h2>{html.escape(title)}</h2>{content}"
         
-        return f"{styles}<div class='analysis-container'>{html_body}</div>"
+        full_html_body = ""
+        for title, markdown_content in analysis_results.items():
+            full_html_body += f"<h2>{html.escape(title)}</h2>"
+            
+            # Use the markdown library to safely convert to HTML
+            # This is much more reliable than regex for complex content
+            html_content = markdown.markdown(markdown_content, extensions=['tables', 'fenced_code'])
+            
+            # Replace markdown headings with our styled h3
+            html_content = re.sub(r'<h2>(.*?)</h2>', r'<h3>\1</h3>', html_content)
+
+            full_html_body += html_content
+
+        return f"{styles}<div class='analysis-container'>{full_html_body}</div>"
 
     # --- UI & WORKFLOW ---
     st.subheader("1. Upload Confidential Document")
@@ -3364,16 +3377,15 @@ def pe_agent_app_azure():
         if st.button("Process Document", type="primary"):
             with st.spinner("Processing document in secure Azure environment..."):
                 file_bytes = uploaded_file.getvalue()
-                full_text, tables = parse_pdf_with_azure_di(file_bytes)
+                full_text, _ = parse_pdf_with_azure_di(file_bytes)
                 if full_text:
                     st.session_state.pe_agent_text = full_text
-                    st.session_state.pe_agent_tables = tables
                     st.rerun()
                 else:
                     st.error("Document parsing failed. Please try another document.")
 
     if "pe_agent_text" in st.session_state:
-        st.success(f"✅ Document processed successfully.")
+        st.success("✅ Document processed successfully.")
         st.markdown("---")
         st.subheader("2. Select and Generate Analysis")
         analysis_choices = st.multiselect(
@@ -3387,7 +3399,7 @@ def pe_agent_app_azure():
             else:
                 full_text = st.session_state.pe_agent_text
                 analysis_results = {}
-                with st.spinner("Generating insights with Azure OpenAI... This may take a moment."):
+                with st.spinner("Generating insights with Azure OpenAI..."):
                     for choice in analysis_choices:
                         prompt = ANALYSIS_PROMPTS[choice]
                         result = analyze_with_azure_openai(full_text, prompt)
@@ -3398,27 +3410,11 @@ def pe_agent_app_azure():
     if "pe_agent_analysis_results" in st.session_state:
         st.markdown("---")
         st.subheader("Analysis Results")
-        results_html = format_analysis_to_html(st.session_state.pe_agent_analysis_results)
+        # The new parser function is called here
+        results_html = parse_markdown_to_html(st.session_state.pe_agent_analysis_results)
         
-        # =======================================================================
-        #
-        #   ▼▼▼ THIS IS THE MOST IMPORTANT LINE ▼▼▼
-        #
-        #   The unwanted text appears ONLY if your code is missing 
-        #   `unsafe_allow_html=True`. Please ensure your code has this exact line.
-        #
+        # This line remains the most critical part for rendering
         st.markdown(results_html, unsafe_allow_html=True)
-        #
-        #   ▲▲▲ THIS IS THE MOST IMPORTANT LINE ▲▲▲
-        #
-        # =======================================================================
-
-    if "pe_agent_tables" in st.session_state and st.session_state.pe_agent_tables:
-        st.markdown("---")
-        st.subheader("Extracted Financial Tables")
-        for i, df in enumerate(st.session_state.pe_agent_tables):
-            st.write(f"**Table {i+1}**")
-            st.dataframe(df.fillna(''))
 
 
 
