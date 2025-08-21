@@ -2331,7 +2331,7 @@ def esg_analyzer_app():
 
 
 # ==============================================================================
-# 6. PORTFOLIO AGENT (FINAL CORRECTED VERSION)
+# 6. Agent Portfolio (FINAL CORRECTED VERSION)
 # ==============================================================================
 
 def portfolio_agent_app(user_id: str):
@@ -2339,7 +2339,7 @@ def portfolio_agent_app(user_id: str):
     A persistent agent to index and query company documents using Pinecone,
     with added capabilities for pre-defined, structured analysis.
     """
-    st.markdown("### 🗂️ Portfolio Agent")
+    st.markdown("### 🗂️ Agent Portfolio")
     st.markdown("Upload company-specific documents for indexation.")
 
     # --- HELPER FUNCTIONS ---
@@ -2712,10 +2712,10 @@ Structure your response with the following headings:
         try:
             return PortfolioAgent(user_id=user_id)
         except Exception as e:
-            st.error(f"Failed to initialize Portfolio Agent: {e}")
+            st.error(f"Failed to initialize Agent Portfolio: {e}")
             return None
 
-    # --- Streamlit UI for the Portfolio Agent ---
+    # --- Streamlit UI for the Agent Portfolio ---
     agent = load_agent(user_id=user_id)
     if not agent:
         st.stop()
@@ -3379,7 +3379,7 @@ def main():
                 "DCF Ginny",
                 "Agent Special Situations",
                 "ESG Analyzer",
-                "Portfolio Agent",
+                "Agent Portfolio",
                 "Tariff Impact Tracker"
             ],
             key="app_tool_choice"
@@ -3417,7 +3417,7 @@ def main():
     elif app_mode == "ESG Analyzer":
         esg_analyzer_app()
         
-    elif app_mode == "Portfolio Agent":
+    elif app_mode == "Agent Portfolio":
         # Pass the logged-in user's email as the unique ID for the agent
         portfolio_agent_app(user_id=st.session_state.username)
         
@@ -3447,7 +3447,7 @@ def main():
         with c3:
             st.markdown("##### 🌍 ESG Analyzer")
             st.markdown("Extract and compare key ESG metrics from sustainability reports to benchmark corporate performance.", help="Provides a quick overview of Environmental, Social, and Governance factors.")
-            st.markdown("##### 🗂️ Portfolio Agent")
+            st.markdown("##### 🗂️ Agent Portfolio")
             st.markdown("Index company-specific documents (10-Ks, earnings calls) and perform Q&A across your entire portfolio.", help="A persistent knowledge base for your covered companies.")
             st.markdown("##### 📈 Tariff Impact Tracker")
             st.markdown("Analyze earnings calls or filings to extract mentions of tariffs and their financial impact.", help="Quickly gauge a company's exposure and sentiment towards trade duties.")
