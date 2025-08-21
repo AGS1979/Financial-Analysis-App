@@ -2465,83 +2465,26 @@ def portfolio_agent_app(user_id: str):
         return buffer.getvalue()
 
     # ❗ CHANGE: Updated function to correctly render markdown tables and lists.
-    def format_analysis_as_html(structured_data: list, title: str, sources: str) -> str:
-        html_body = ""
-        for i, (heading, content) in enumerate(structured_data):
-            cleaned_heading = re.sub(r'^#+\s*(\d+\.\s*)?', '', heading).strip()
-            if i == 0 and title.lower() in cleaned_heading.lower():
-                continue
-            html_body += f"<h3>{cleaned_heading}</h3>"
-
-            content_html = ""
-            lines = content.strip().split('\n')
-            
-            # --- REVISED LOGIC START ---
-            in_table = False
-            table_headers = []
-            line_idx = 0
-            while line_idx < len(lines):
-                line = lines[line_idx].strip()
-                
-                # Check if we've found the start of a table
-                is_header = '|' in line
-                is_separator = (line_idx + 1 < len(lines)) and re.match(r'^\s*\|?(:?-+:?\|)+(:?-+:?)?\s*$', lines[line_idx + 1].strip())
-
-                if is_header and is_separator:
-                    # Start of a table found
-                    try:
-                        table_headers = [h.strip() for h in line.strip('|').split('|')]
-                        content_html += "<div style='overflow-x:auto;'><table class='custom-table'><thead><tr>"
-                        for header in table_headers:
-                            content_html += f"<th>{header}</th>"
-                        content_html += "</tr></thead><tbody>"
-                        
-                        # Skip the separator line
-                        line_idx += 2 
-                        
-                        # Process table rows
-                        while line_idx < len(lines) and lines[line_idx].strip().startswith('|'):
-                            row_line = lines[line_idx].strip()
-                            content_html += "<tr>"
-                            cells = [c.strip().replace('**', '') for c in row_line.strip('|').split('|')]
-                            for k in range(len(table_headers)):
-                                cell_text = cells[k] if k < len(cells) else "&nbsp;"
-                                content_html += f"<td>{cell_text}</td>"
-                            content_html += "</tr>"
-                            line_idx += 1
-                        
-                        content_html += "</tbody></table></div>"
-                        continue # Move to the next line after the table
-                    except Exception:
-                        # Fallback for malformed tables: treat as plain text
-                        content_html += f"<p>{line}</p>"
-
-                # If not a table, process as paragraph or list
-                else:
-                    # FIX: Add this line to clean up the text
-                    line = add_spacing_to_run_on_text(line)
-                    
-                    line = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', line)
-                    if line.startswith(('* ', '- ')):
-                        content_html += f"<ul><li>{line[2:].strip()}</li></ul>"
-                    elif line:
-                        content_html += f"<p>{line}</p>"
-                
-                line_idx += 1
-            # --- REVISED LOGIC END ---
-                
-            html_body += content_html
+    # ❗ REPLACEMENT for format_analysis_as_html
+    def format_analysis_as_html(markdown_text: str, title: str, sources: str) -> str:
+        """
+        Converts a full markdown string to a styled HTML block.
+        """
+        # Convert the entire markdown block to HTML using the library
+        # The 'tables' extension correctly handles markdown tables
+        content_html = markdown.markdown(markdown_text, extensions=['tables'])
 
         html_style = """
         <style>
             .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9f9f9; margin-top: 20px; }
-            .analysis-container h2 {font-size: 1.5em; color: #00416A; border-bottom: 2px solid #00416A; padding-bottom: 10px; margin-top: 0;}
-            .analysis-container h3 {font-size: 1.2em; color: #00416A; padding-bottom: 5px; margin-top: 25px; border-bottom: 1px solid #e6f1f6;}
-            .analysis-container .custom-table { width: 100%; border-collapse: collapse; margin: 15px 0; }
-            .analysis-container .custom-table th, .analysis-container .custom-table td { border: 1px solid #ddd; padding: 10px 14px; text-align: left; }
-            .analysis-container .custom-table th { background-color: #e6f1f6; font-weight: 600; }
+            .analysis-container h1, .analysis-container h2, .analysis-container h3, .analysis-container h4 { color: #00416A; }
+            .analysis-container h2 {font-size: 1.5em; border-bottom: 2px solid #00416A; padding-bottom: 10px; margin-top: 0;}
+            .analysis-container h3 {font-size: 1.2em; padding-bottom: 5px; margin-top: 25px; border-bottom: 1px solid #e6f1f6;}
+            .analysis-container table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+            .analysis-container th, .analysis-container td { border: 1px solid #ddd; padding: 10px 14px; text-align: left; }
+            .analysis-container th { background-color: #e6f1f6; font-weight: 600; }
             .analysis-container p { margin-bottom: 1em; line-height: 1.6; }
-            .analysis-container ul { margin-left: 0; padding-left: 1.5em; }
+            .analysis-container ul, .analysis-container ol { padding-left: 1.5em; }
             .analysis-container li { margin-bottom: 0.75em; line-height: 1.6;}
             .analysis-container .sources { font-size: 0.85em; color: #555; margin-top: 25px; text-align: right; }
         </style>
@@ -2550,7 +2493,7 @@ def portfolio_agent_app(user_id: str):
         {html_style}
         <div class="analysis-container">
             <h2>{title} Analysis</h2>
-            {html_body}
+            {content_html}
             <div class="sources"><strong>Sources:</strong> {sources}</div>
         </div>
         """
@@ -2890,12 +2833,17 @@ Structure your response with the following headings:
                         )
                     else: # Handles all predefined analysis types
                         analysis_md, sources = agent.get_predefined_analysis(analysis_choice, selected_companies)
+
+                        # ✅ FIX: Clean the entire raw markdown output at once.
+                        analysis_md = add_spacing_to_run_on_text(analysis_md)
+
                         if "Error:" in analysis_md or "Could not find" in analysis_md:
                             st.error(analysis_md)
                         else:
+                            # Now, all subsequent functions use the cleaned text
                             structured_report = parse_markdown_to_structure(analysis_md)
                             if not structured_report:
-                                st.error("Failed to parse the analysis from the AI model. The response might be empty or malformed.")
+                                st.error("Failed to parse the analysis from the AI model...")
                             else:
                                 company_name_for_doc = selected_companies[0] if len(selected_companies) == 1 else "Multiple Companies"
                                 report_html = format_analysis_as_html(structured_report, analysis_choice, sources)
