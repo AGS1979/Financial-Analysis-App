@@ -1971,9 +1971,6 @@ Section to Summarize:
 # (Code from app-ESG.py and ESGComp.py)
 # ==============================================================================
 
-# You would have these imports at the top of your file
-# Ensure you have installed the required packages:
-# pip install streamlit pymupdf requests beautifulsoup4
 
 def esg_analyzer_app():
     """
@@ -2336,6 +2333,7 @@ def esg_analyzer_app():
 # ==============================================================================
 # 6. PORTFOLIO AGENT (FINAL CORRECTED VERSION)
 # ==============================================================================
+
 def portfolio_agent_app(user_id: str):
     """
     A persistent agent to index and query company documents using Pinecone,
@@ -2357,10 +2355,11 @@ def portfolio_agent_app(user_id: str):
             full_context += excerpt
         return full_context
 
-    # ❗ CHANGE: This function is no longer needed as we want to preserve markdown.
-    # def sanitize_ai_output...
-
-    # ❗ REPLACE your existing call_deepseek_model function with this one
+    def add_spacing_to_run_on_text(text: str) -> str:
+        text = re.sub(r'(\d)([a-zA-Z])', r'\1 \2', text)
+        text = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', text)
+        text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)
+        return text
 
     def call_deepseek_model(prompt: str) -> str:
         try:
@@ -2400,17 +2399,6 @@ def portfolio_agent_app(user_id: str):
             structure.append((heading_text, content_text))
         return structure
 
-    def clean_metric_name(name: str) -> str:
-        cleaned_name = name.replace('*', '').strip()
-        cleaned_name = re.sub(r'(?<!^)(?=[A-Z])', ' ', cleaned_name)
-        return cleaned_name
-
-    def add_spacing_to_run_on_text(text: str) -> str:
-        text = re.sub(r'(\d)([a-zA-Z])', r'\1 \2', text)
-        text = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', text)
-        text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)
-        return text
-
     def markdown_to_word_bytes(structured_data: list, company_name: str) -> bytes:
         doc = Document()
         styles = doc.styles
@@ -2438,14 +2426,12 @@ def portfolio_agent_app(user_id: str):
             cleaned_heading = re.sub(r'^#+\s*', '', heading).strip()
             doc.add_paragraph(cleaned_heading, style=heading_style)
 
-            # This can be improved to parse markdown tables into Word tables
             is_table = False
             lines = content.strip().split('\n')
             if len(lines) > 1 and '|' in lines[0] and re.match(r'^\s*\|?(:?-+:?\|)+(:?-+:?)?\s*$', lines[1]):
                 is_table = True
 
             if is_table:
-                # Basic table handling for Word
                 headers = [h.strip() for h in lines[0].strip('|').split('|')]
                 table = doc.add_table(rows=1, cols=len(headers))
                 table.style = 'Table Grid'
@@ -2472,14 +2458,10 @@ def portfolio_agent_app(user_id: str):
         buffer.seek(0)
         return buffer.getvalue()
 
-    # ❗ CHANGE: Updated function to correctly render markdown tables and lists.
-    # ❗ REPLACEMENT for format_analysis_as_html
     def format_analysis_as_html(markdown_text: str, title: str, sources: str) -> str:
         """
         Converts a full markdown string to a styled HTML block.
         """
-        # Convert the entire markdown block to HTML using the library
-        # The 'tables' extension correctly handles markdown tables
         content_html = markdown.markdown(markdown_text, extensions=['tables'])
 
         html_style = """
@@ -2512,7 +2494,6 @@ def portfolio_agent_app(user_id: str):
             def __init__(self, user_id: str, index_name: str = "portfolio-agent"):
                 self.namespace = user_id
                 try:
-                    # This is the correct, modern syntax for Serverless
                     self.pc = Pinecone(api_key=st.secrets["pinecone"]["api_key"])
 
                     if index_name not in [idx.name for idx in self.pc.list_indexes()]:
@@ -2528,9 +2509,6 @@ def portfolio_agent_app(user_id: str):
                 except Exception as e:
                     st.error(f"Failed to connect to Pinecone: {e}")
                     raise
-
-                self.index = self.pc.Index(index_name)
-                self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
             def sanitize_filename(self, name: str) -> str:
                 return re.sub(r'[<>:"/\\|?*]', '_', name.strip())
@@ -2549,7 +2527,6 @@ def portfolio_agent_app(user_id: str):
                     st.warning(f"Could not read {filename}: {e}")
                 return ""
 
-            # ❗ CHANGE: Replaced old chunker with superior token-based method.
             def _chunk_text(self, text: str, max_tokens: int = 512, overlap_tokens: int = 50) -> List[str]:
                 try:
                     enc = tiktoken.get_encoding("cl100k_base")
@@ -2568,7 +2545,6 @@ def portfolio_agent_app(user_id: str):
                 matches = re.findall(r'\b(20\d{2})\b', filename)
                 return int(max(matches)) if matches else 0
 
-            # ❗ CHANGE: Updated to prevent duplicates and use manual batching.
             def add_documents(self, company: str, uploaded_files: list):
                 safe_company_name = self.sanitize_filename(company)
                 with st.status(f"Processing documents for {safe_company_name}...", expanded=True) as status:
@@ -2630,7 +2606,6 @@ def portfolio_agent_app(user_id: str):
                 ANALYSIS_CONFIG = {
                     "Quick Company Note": {
                         "search_query": "Comprehensive company profile including business overview, products, services, market position, key financial data like revenue, profit, margins, cash flow, EPS, balance sheet items (debt, cash), industry trends, competitive landscape, investment highlights, strengths, weaknesses, opportunities, threats, risk factors, and any red flags like impairments or governance issues.",
-                        # ❗ CHANGE IS HERE
                         "system_prompt": """You are an expert equity research analyst from a top-tier investment bank. Your task is to generate a professional 'Quick Company Note' based ONLY on the provided document excerpts. The output MUST be in clean markdown format.
 
 Structure your response with the following headings:
@@ -2654,7 +2629,6 @@ Structure your response with the following headings:
 (Write a short, concluding paragraph that synthesizes the key findings and provides a balanced view on the company's position.)
 """
                     },
-                    # ... All your other analysis configs ...
                     "Cap Structure": {
                         "search_query": "Detailed information about the company's capital structure, including short-term and long-term debt instruments, maturity dates, coupon rates, leases, equity, and debt covenants.",
                         "system_prompt": """You are a senior credit analyst.
@@ -2743,10 +2717,10 @@ Structure your response with the following headings:
                 prompt = f"{config['system_prompt']}\n\nBase your analysis *only* on the following context:\n--- DOCUMENT CONTEXT ---\n{safe_context}\n--- END CONTEXT ---\n\nProvide the analysis for '{', '.join(companies)}'."
                 return call_deepseek_model(prompt), ", ".join(source_docs)
 
-            # ❗ CHANGE: Simplified and corrected this method for fetching company names.
             def get_indexed_companies(self) -> List[str]:
                 all_companies = set()
                 try:
+                    # Use a dummy vector to query and fetch metadata from all vectors
                     response = self.index.query(vector=[0.0]*384, top_k=1000, include_metadata=True, namespace=self.namespace)
                     for match in response.matches:
                         company = match.metadata.get("company")
@@ -2841,9 +2815,10 @@ Structure your response with the following headings:
                         )
                     else: # Handles all predefined analysis types
                         analysis_md, sources = agent.get_predefined_analysis(analysis_choice, selected_companies)
-
-                        # ✅ FIX: Clean the entire raw markdown output at once.
-                        analysis_md = add_spacing_to_run_on_text(analysis_md)
+                        
+                        # ============================ RECTIFIED CODE BLOCK ============================
+                        # ❗ FIX 1: Removed the redundant call to `add_spacing_to_run_on_text`.
+                        # The text is already cleaned inside the `call_deepseek_model` function.
 
                         if "Error:" in analysis_md or "Could not find" in analysis_md:
                             st.error(analysis_md)
@@ -2854,7 +2829,10 @@ Structure your response with the following headings:
                                 st.error("Failed to parse the analysis from the AI model...")
                             else:
                                 company_name_for_doc = selected_companies[0] if len(selected_companies) == 1 else "Multiple Companies"
-                                report_html = format_analysis_as_html(structured_report, analysis_choice, sources)
+                                
+                                # ❗ FIX 2: Passed the correct variable (`analysis_md`) to the HTML formatter.
+                                # It expects a markdown string, not the structured list.
+                                report_html = format_analysis_as_html(analysis_md, analysis_choice, sources)
                                 st.markdown(report_html, unsafe_allow_html=True)
 
                                 st.markdown("---")
@@ -2875,6 +2853,7 @@ Structure your response with the following headings:
                                     file_name=f"{safe_filename}_{company_name_for_doc}.html",
                                     mime="text/html"
                                 )
+                        # ==============================================================================
 
     st.markdown("---")
     st.markdown("#### Manage Data")
@@ -2887,6 +2866,8 @@ Structure your response with the following headings:
             st.rerun()
         else:
             st.warning("Please select a company to delete.")
+
+
 
     
 
