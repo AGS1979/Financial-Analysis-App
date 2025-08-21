@@ -1,4 +1,4 @@
-# Add these new imports at the top of your app.py
+from azure.ai.documentintelligence.models import ContentFormat, AnalyzeDocumentRequest
 from azure.core.credentials import AzureKeyCredential
 from azure.ai.documentintelligence import DocumentIntelligenceClient
 from openai import AzureOpenAI # Use the Azure-specific client
@@ -3244,12 +3244,20 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
 # 8. PE INVESTMENT AGENT (VERTEX AI POWERED)
 # ==============================================================================
 
-# Replace the existing pe_agent_app_azure function in your app.py with this one.
 def pe_agent_app_azure():
     """
     A secure, confidential agent for Private Equity analysis using Azure services.
     This version uses a robust markdown-to-HTML parsing pipeline for clean output.
     """
+    # --- Local imports (safe even if you already import these at top-level) ---
+    import io, re, html
+    import markdown, pdfplumber
+    import streamlit as st
+    from azure.core.credentials import AzureKeyCredential
+    from azure.ai.documentintelligence import DocumentIntelligenceClient
+    from azure.ai.documentintelligence.models import ContentFormat
+    from openai import AzureOpenAI
+
     st.markdown("### 🔒 PE Investment Agent")
     st.markdown(
         "Analyze Investment Memos with enterprise-grade privacy. Documents are parsed and analyzed "
@@ -3293,29 +3301,61 @@ def pe_agent_app_azure():
             "Use markdown headings (`## Subheading`) for sections and bullet points (`* Point`) for lists. Do not create a main title. "
             "Structure your response with the following markdown headings:\n"
             "## Strategic Sale\n## Secondary Buyout\n## Initial Public Offering (IPO)"
-        )
+        ),
     }
 
     # --- HELPER FUNCTIONS ---
     def parse_pdf_with_azure_di(file_bytes: bytes) -> tuple[str, list]:
         try:
-            client = DocumentIntelligenceClient(endpoint=di_endpoint, credential=AzureKeyCredential(di_key))
-            poller = client.begin_analyze_document("prebuilt-layout", analyze_request=file_bytes, content_type="application/octet-stream")
+            client = DocumentIntelligenceClient(
+                endpoint=di_endpoint,
+                credential=AzureKeyCredential(di_key),
+            )
+
+            # Prefer a file-like stream + correct content_type
+            stream = io.BytesIO(file_bytes)
+
+            # If needed, limit pages (e.g., first 25 pages or "1-25")
+            poller = client.begin_analyze_document(
+                model_id="prebuilt-layout",
+                analyze_request=stream,
+                content_type="application/pdf",
+                pages=None,  # e.g., "1-10" to chunk large docs
+                output_content_format=ContentFormat.MARKDOWN,  # or ContentFormat.TEXT
+            )
             result = poller.result()
-            return result.content, []
+            return (result.content or ""), []
         except Exception as e:
+            # Surface the exact Azure error
             st.error(f"Azure AI Document Intelligence error: {e}")
             return None, []
 
+    def fallback_pdf_text(file_bytes: bytes) -> str:
+        text = []
+        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+            for page in pdf.pages:
+                text.append(page.extract_text() or "")
+        return "\n".join(text).strip()
+
     def analyze_with_azure_openai(_context: str, _prompt: str) -> str:
         try:
-            client = AzureOpenAI(api_key=openai_key, api_version="2024-02-01", azure_endpoint=openai_endpoint)
+            client = AzureOpenAI(
+                api_key=openai_key,
+                api_version="2024-02-01",
+                azure_endpoint=openai_endpoint,
+            )
             response = client.chat.completions.create(
                 model=openai_deployment_name,
                 messages=[
-                    {"role": "system", "content": "You are an expert financial analyst that responds only with clean, structured markdown as instructed."},
-                    {"role": "user", "content": f"CONTEXT DOCUMENT:\n---\n{_context}\n---\nYOUR TASK: {_prompt}"}
-                ]
+                    {
+                        "role": "system",
+                        "content": "You are an expert financial analyst that responds only with clean, structured markdown as instructed.",
+                    },
+                    {
+                        "role": "user",
+                        "content": f"CONTEXT DOCUMENT:\n---\n{_context}\n---\nYOUR TASK: {_prompt}",
+                    },
+                ],
             )
             return response.choices[0].message.content
         except Exception as e:
@@ -3323,7 +3363,7 @@ def pe_agent_app_azure():
 
     # --- REVISED MARKDOWN-TO-HTML PARSER ---
     def parse_markdown_to_html(analysis_results: dict) -> tuple[str, str]:
-        # This function now returns the styles and content separately.
+        # This function returns the styles and content separately.
         styles = """
         <style>
             .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9fafb; }
@@ -3332,32 +3372,50 @@ def pe_agent_app_azure():
             .analysis-container p { margin-bottom: 1em; line-height: 1.6; color: #333; }
             .analysis-container ul { list-style-position: outside; padding-left: 20px; margin-top: 1em; margin-bottom: 1em; }
             .analysis-container li { margin-bottom: 0.75em; line-height: 1.6; }
-            /* --- CHANGE HERE: This rule removes bolding from all non-headline text --- */
+            /* Remove bolding from non-headline text */
             .analysis-container strong, .analysis-container b { font-weight: normal; color: inherit; }
         </style>
         """
-        
+
         full_html_body = ""
         for title, markdown_content in analysis_results.items():
             full_html_body += f"<h2>{html.escape(title)}</h2>"
             html_from_md = markdown.markdown(markdown_content)
             # Replace markdown's h2 with our styled h3
-            processed_html = re.sub(r'<h2>(.*?)</h2>', r'<h3>\1</h3>', html_from_md)
+            processed_html = re.sub(r"<h2>(.*?)</h2>", r"<h3>\1</h3>", html_from_md)
             full_html_body += processed_html
 
         content_div = f"<div class='analysis-container'>{full_html_body}</div>"
-        
         return styles, content_div
 
     # --- UI & WORKFLOW ---
     st.subheader("1. Upload Confidential Document")
-    uploaded_file = st.file_uploader("Upload a Teaser, CIM, or Financial Statement (PDF)", type="pdf", key="pe_agent_uploader_azure")
+    uploaded_file = st.file_uploader(
+        "Upload a Teaser, CIM, or Financial Statement (PDF)",
+        type="pdf",
+        key="pe_agent_uploader_azure",
+    )
 
     if uploaded_file and "pe_agent_text" not in st.session_state:
         if st.button("Process Document", type="primary"):
             with st.spinner("Processing document in secure Azure environment..."):
+                # Read bytes first
                 file_bytes = uploaded_file.getvalue()
+
+                # --- Preflight size guard ---
+                MAX_BYTES = 45 * 1024 * 1024  # 45 MB
+                if len(file_bytes) > MAX_BYTES:
+                    st.error("File is too large. Please upload a smaller or compressed PDF.")
+                    st.stop()
+
+                # Try Azure DI
                 full_text, _ = parse_pdf_with_azure_di(file_bytes)
+
+                # Fallback to local OCR-less text extraction if DI fails
+                if not full_text:
+                    st.warning("Falling back to local PDF text extraction.")
+                    full_text = fallback_pdf_text(file_bytes)
+
                 if full_text:
                     st.session_state.pe_agent_text = full_text
                     st.rerun()
@@ -3371,7 +3429,7 @@ def pe_agent_app_azure():
         analysis_choices = st.multiselect(
             "Choose the analyses you want to perform:",
             options=list(ANALYSIS_PROMPTS.keys()),
-            default=list(ANALYSIS_PROMPTS.keys())
+            default=list(ANALYSIS_PROMPTS.keys()),
         )
         if st.button("Generate Analysis", use_container_width=True):
             if not analysis_choices:
@@ -3389,15 +3447,10 @@ def pe_agent_app_azure():
 
     if "pe_agent_analysis_results" in st.session_state:
         st.markdown("---")
-        
-        # --- CHANGE HERE: Separate styles and content for reliable rendering ---
         styles_html, content_html = parse_markdown_to_html(st.session_state.pe_agent_analysis_results)
-        
-        # Render the CSS styles invisibly first
-        st.markdown(styles_html, unsafe_allow_html=True)
-        
-        # Then, render the main content div, which will be styled by the rules above
-        st.markdown(content_html, unsafe_allow_html=True)
+        st.markdown(styles_html, unsafe_allow_html=True)   # render CSS first
+        st.markdown(content_html, unsafe_allow_html=True)  # then the content
+
 
 
 
