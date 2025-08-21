@@ -3346,67 +3346,67 @@ def pe_agent_app_azure():
 
     # --- FINAL CORRECTED HTML FORMATTER ---
     def format_analysis_to_html(analysis_results: dict) -> str:
-    """
-    Converts a dictionary of AI-generated text into a clean, professional HTML string,
-    with simple bold headings and correct character rendering.
-    """
-    # --- MODIFIED CSS ---
-    styles = """
-    <style>
-        .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9fafb; }
-        /* CHANGE: Increased main heading font size and added more bottom margin */
-        .analysis-container h2 { font-size: 1.7em; color: #00416A; border-bottom: 2px solid #00416A; padding-bottom: 12px; margin-top: 20px; margin-bottom: 20px; }
-        .analysis-container p { margin-bottom: 1em; line-height: 1.6; color: #333; }
-        /* CHANGE: Added top margin to create a gap before the subheading */
-        .analysis-container .subheading { font-weight: bold; color: #1e1e1e; margin-top: 2em; margin-bottom: 0.5em; }
-        .analysis-container ul { list-style-position: outside; padding-left: 20px; margin-bottom: 1em; }
-        .analysis-container li { margin-bottom: 0.75em; line-height: 1.6; }
-        .analysis-container strong { color: #00416A; }
-    </style>
-    """
-    html_body = ""
-    for title, content in analysis_results.items():
-        html_body += f"<h2>{html.escape(title)}</h2>"
+        """
+        Converts a dictionary of AI-generated text into a clean, professional HTML string,
+        with simple bold headings and correct character rendering.
+        """
+        # --- MODIFIED CSS ---
+        styles = """
+        <style>
+            .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9fafb; }
+            /* CHANGE: Increased main heading font size and added more bottom margin */
+            .analysis-container h2 { font-size: 1.7em; color: #00416A; border-bottom: 2px solid #00416A; padding-bottom: 12px; margin-top: 20px; margin-bottom: 20px; }
+            .analysis-container p { margin-bottom: 1em; line-height: 1.6; color: #333; }
+            /* CHANGE: Added top margin to create a gap before the subheading */
+            .analysis-container .subheading { font-weight: bold; color: #1e1e1e; margin-top: 2em; margin-bottom: 0.5em; }
+            .analysis-container ul { list-style-position: outside; padding-left: 20px; margin-bottom: 1em; }
+            .analysis-container li { margin-bottom: 0.75em; line-height: 1.6; }
+            .analysis-container strong { color: #00416A; }
+        </style>
+        """
+        html_body = ""
+        for title, content in analysis_results.items():
+            html_body += f"<h2>{html.escape(title)}</h2>"
+            
+            content = content.replace("'", "&rsquo;")
+
+            processed_content = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', content)
+            processed_content = re.sub(r'#+\s*(.*?)\s*$', r'<p class="subheading">\1</p>', processed_content, flags=re.MULTILINE)
+
+            def replace_lists(match):
+                items_text = match.group(0)
+                list_contents = re.findall(r'^\s*[\*\-]\s+(.*)', items_text, flags=re.MULTILINE)
+                li_items = "".join(f"<li>{html.escape(item_content.strip())}</li>" for item_content in list_contents)
+                return f"<ul>{li_items}</ul>"
+            
+            processed_content = re.sub(r'(?m)^(\s*[\*\-]\s+.*\n?)+', replace_lists, processed_content)
+
+            final_html_parts = []
+            blocks = re.split(r'\n\s*\n', processed_content.strip())
+            for block in blocks:
+                block = block.strip()
+                if not block:
+                    continue
+
+                # --- CHANGE: Logic to remove redundant subheadings ---
+                # If a subheading's text is very similar to the main title, skip it.
+                if block.startswith('<p class="subheading"'):
+                    subheading_text = re.sub(r'<.*?>', '', block) # Extract text from the tag
+                    if title.lower() in subheading_text.lower() or subheading_text.lower() in title.lower():
+                        continue # Skip this redundant block
+                # --- END CHANGE ---
+
+                if not block.startswith(('<ul', '<p class="subheading"')):
+                    sanitized_block = html.escape(block).replace('\n', '<br>')
+                    final_html_parts.append(f"<p>{sanitized_block}</p>")
+                else:
+                    final_html_parts.append(block)
+
+            html_body += "".join(final_html_parts)
         
-        content = content.replace("'", "&rsquo;")
+        final_html = html.unescape(html_body)
 
-        processed_content = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', content)
-        processed_content = re.sub(r'#+\s*(.*?)\s*$', r'<p class="subheading">\1</p>', processed_content, flags=re.MULTILINE)
-
-        def replace_lists(match):
-            items_text = match.group(0)
-            list_contents = re.findall(r'^\s*[\*\-]\s+(.*)', items_text, flags=re.MULTILINE)
-            li_items = "".join(f"<li>{html.escape(item_content.strip())}</li>" for item_content in list_contents)
-            return f"<ul>{li_items}</ul>"
-        
-        processed_content = re.sub(r'(?m)^(\s*[\*\-]\s+.*\n?)+', replace_lists, processed_content)
-
-        final_html_parts = []
-        blocks = re.split(r'\n\s*\n', processed_content.strip())
-        for block in blocks:
-            block = block.strip()
-            if not block:
-                continue
-
-            # --- CHANGE: Logic to remove redundant subheadings ---
-            # If a subheading's text is very similar to the main title, skip it.
-            if block.startswith('<p class="subheading"'):
-                subheading_text = re.sub(r'<.*?>', '', block) # Extract text from the tag
-                if title.lower() in subheading_text.lower() or subheading_text.lower() in title.lower():
-                    continue # Skip this redundant block
-            # --- END CHANGE ---
-
-            if not block.startswith(('<ul', '<p class="subheading"')):
-                sanitized_block = html.escape(block).replace('\n', '<br>')
-                final_html_parts.append(f"<p>{sanitized_block}</p>")
-            else:
-                final_html_parts.append(block)
-
-        html_body += "".join(final_html_parts)
-    
-    final_html = html.unescape(html_body)
-
-    return f"{styles}<div class='analysis-container'>{final_html}</div>"
+        return f"{styles}<div class='analysis-container'>{final_html}</div>"
 
 
     # --- UI & WORKFLOW ---
