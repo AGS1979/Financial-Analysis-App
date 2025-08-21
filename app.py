@@ -3434,7 +3434,7 @@ def main():
         with c1:
             # Updated description to mention Azure
             st.markdown("##### 🔒 Agent PE")
-            st.markdown("Analyze confidential IMs and teasers with enterprise-grade security using Azure AI.", help="Ensures data residency and privacy by processing documents within your own secure Azure environment.")
+            st.markdown("Analyze confidential IMs and teasers with enterprise-grade secured environment.", help="Ensures data residency and privacy by processing documents within a secure environment.")
             st.markdown("##### 📝 Agent Pre-IPO")
             st.markdown("Upload a DRHP/IPO PDF to automatically generate a detailed investment memo and perform Q&A.", help="Uses LLMs to parse and structure information from prospectus documents.")
             
