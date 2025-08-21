@@ -3311,22 +3311,17 @@ def pe_agent_app_azure():
                 endpoint=di_endpoint,
                 credential=AzureKeyCredential(di_key),
             )
-
-            # Prefer a file-like stream + correct content_type
             stream = io.BytesIO(file_bytes)
-
-            # If needed, limit pages (e.g., first 25 pages or "1-25")
             poller = client.begin_analyze_document(
                 model_id="prebuilt-layout",
                 analyze_request=stream,
                 content_type="application/pdf",
-                pages=None,  # e.g., "1-10" to chunk large docs
-                output_content_format=ContentFormat.MARKDOWN,  # or ContentFormat.TEXT
+                pages=None,
+                output_content_format=ContentFormat.MARKDOWN,
             )
             result = poller.result()
             return (result.content or ""), []
         except Exception as e:
-            # Surface the exact Azure error
             st.error(f"Azure AI Document Intelligence error: {e}")
             return None, []
 
@@ -3363,7 +3358,6 @@ def pe_agent_app_azure():
 
     # --- REVISED MARKDOWN-TO-HTML PARSER ---
     def parse_markdown_to_html(analysis_results: dict) -> tuple[str, str]:
-        # This function returns the styles and content separately.
         styles = """
         <style>
             .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9fafb; }
@@ -3372,19 +3366,15 @@ def pe_agent_app_azure():
             .analysis-container p { margin-bottom: 1em; line-height: 1.6; color: #333; }
             .analysis-container ul { list-style-position: outside; padding-left: 20px; margin-top: 1em; margin-bottom: 1em; }
             .analysis-container li { margin-bottom: 0.75em; line-height: 1.6; }
-            /* Remove bolding from non-headline text */
             .analysis-container strong, .analysis-container b { font-weight: normal; color: inherit; }
         </style>
         """
-
         full_html_body = ""
         for title, markdown_content in analysis_results.items():
             full_html_body += f"<h2>{html.escape(title)}</h2>"
             html_from_md = markdown.markdown(markdown_content)
-            # Replace markdown's h2 with our styled h3
             processed_html = re.sub(r"<h2>(.*?)</h2>", r"<h3>\1</h3>", html_from_md)
             full_html_body += processed_html
-
         content_div = f"<div class='analysis-container'>{full_html_body}</div>"
         return styles, content_div
 
@@ -3399,23 +3389,17 @@ def pe_agent_app_azure():
     if uploaded_file and "pe_agent_text" not in st.session_state:
         if st.button("Process Document", type="primary"):
             with st.spinner("Processing document in secure Azure environment..."):
-                # Read bytes first
                 file_bytes = uploaded_file.getvalue()
-
-                # --- Preflight size guard ---
-                MAX_BYTES = 45 * 1024 * 1024  # 45 MB
+                MAX_BYTES = 45 * 1024 * 1024
                 if len(file_bytes) > MAX_BYTES:
                     st.error("File is too large. Please upload a smaller or compressed PDF.")
                     st.stop()
-
-                # Try Azure DI
+                
                 full_text, _ = parse_pdf_with_azure_di(file_bytes)
-
-                # Fallback to local OCR-less text extraction if DI fails
                 if not full_text:
                     st.warning("Falling back to local PDF text extraction.")
                     full_text = fallback_pdf_text(file_bytes)
-
+                
                 if full_text:
                     st.session_state.pe_agent_text = full_text
                     st.rerun()
@@ -3447,11 +3431,43 @@ def pe_agent_app_azure():
 
     if "pe_agent_analysis_results" in st.session_state:
         st.markdown("---")
+        st.subheader("3. Generated Analysis") # Added a header
         styles_html, content_html = parse_markdown_to_html(st.session_state.pe_agent_analysis_results)
-        st.markdown(styles_html, unsafe_allow_html=True)   # render CSS first
-        st.markdown(content_html, unsafe_allow_html=True)  # then the content
+        
+        # Render the CSS and content in the Streamlit app
+        st.markdown(styles_html, unsafe_allow_html=True)
+        st.markdown(content_html, unsafe_allow_html=True)
 
+        # --- START: ADDED DOWNLOAD FEATURE ---
+        st.markdown("---")
 
+        # Create the full HTML document for download
+        full_html_for_download = f"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>PE Investment Analysis Report</title>
+            <link rel="preconnect" href="https://fonts.googleapis.com">
+            <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+            <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+            {styles_html}
+        </head>
+        <body>
+            {content_html}
+        </body>
+        </html>
+        """
+
+        # Add the download button to the UI
+        st.download_button(
+            label="📥 Download Report as HTML",
+            data=full_html_for_download,
+            file_name="pe_investment_analysis.html",
+            mime="text/html",
+            use_container_width=True
+        )
 
 
 # ==============================================================================
