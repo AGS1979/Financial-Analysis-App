@@ -3298,7 +3298,7 @@ def pe_agent_app_azure():
             "document, analyze and propose potential exit strategies. For each option, provide a clear rationale. Consider the following:\n"
             "1. **Strategic Sale:** Who are the likely strategic acquirers and why would they be interested?\n"
             "2. **Secondary Buyout:** Would the company be an attractive target for other financial sponsors?\n"
-            "3. **Initial Public Offering (IPO):** Does the company have the scale, growth profile, and story to succeed in the public markets?\n"
+            "3. **Initial Public Offering (IPO):** Does the company have the scale, a strong growth profile, and a compelling story to succeed in the public markets?\n"
             "Evaluate the feasibility and potential attractiveness of each path."
         )
     }
@@ -3344,7 +3344,7 @@ def pe_agent_app_azure():
         except Exception as e:
             return f"Error during Azure OpenAI analysis: {e}"
 
-    # --- FINAL CORRECTED HTML FORMATTER ---
+    # --- HTML FORMATTER WITH CORRECTION ---
     def format_analysis_to_html(analysis_results: dict) -> str:
         """
         Converts a dictionary of AI-generated text into a clean, professional HTML string,
@@ -3385,14 +3385,13 @@ def pe_agent_app_azure():
                 if not block:
                     continue
 
-                # --- REFINED LOGIC to better remove redundant subheadings ---
+                # --- REFACTORED LOGIC to better remove redundant subheadings ---
                 if block.startswith('<p class="subheading"'):
-                    # Clean the text inside the tag for comparison
-                    subheading_text = re.sub(r'^\d+\.\s*', '', re.sub(r'<.*?>', '', block)).strip()
-                    # If the cleaned subheading is the same as the main title, skip it
-                    if title.strip().lower() == subheading_text.lower():
+                    subheading_text = re.sub(r'<.*?>', '', block).strip()
+                    # If the subheading contains the main title (case-insensitive), skip it.
+                    if title.strip().lower() in subheading_text.lower():
                         continue 
-                # --- END REFINEMENT ---
+                # --- END REFACTOR ---
 
                 if not block.startswith(('<ul', '<p class="subheading"')):
                     sanitized_block = html.escape(block).replace('\n', '<br>')
@@ -3449,6 +3448,8 @@ def pe_agent_app_azure():
                         result = analyze_with_azure_openai(full_text, prompt)
                         analysis_results[choice] = result
                 st.session_state.pe_agent_analysis_results = analysis_results
+                # Rerun to display the new results
+                st.rerun()
 
     # Display results from session state
     if "pe_agent_analysis_results" in st.session_state:
