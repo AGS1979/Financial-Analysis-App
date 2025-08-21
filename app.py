@@ -3244,6 +3244,7 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
 # 8. PE INVESTMENT AGENT (VERTEX AI POWERED)
 # ==============================================================================
 
+# Replace your entire existing function with this one.
 def pe_agent_app_azure():
     """
     A secure, confidential agent for Private Equity analysis using Azure services,
@@ -3266,40 +3267,49 @@ def pe_agent_app_azure():
         st.error(f"Configuration error: Missing Azure secret: {e}. Please check your secrets.toml file.")
         st.stop()
 
-    # --- ANALYSIS PROMPTS ---
+    # --- REFACTORED ANALYSIS PROMPTS TO OUTPUT HTML DIRECTLY ---
+    # This is the key change to ensure clean, predictable formatting.
     ANALYSIS_PROMPTS = {
         "Investment Thesis": (
-            "You are a top-tier private equity analyst. Based on the context provided, formulate a comprehensive "
-            "investment thesis. Structure your response clearly, addressing:\n"
-            "1. **Market Opportunity:** The size and growth of the target market.\n"
-            "2. **Competitive Moat:** The company's unique competitive advantages and defensible position.\n"
-            "3. **Value Creation Levers:** Specific operational or strategic initiatives that could drive significant value post-investment (e.g., margin expansion, market entry, product development).\n"
-            "4. **Overall Rationale:** A concluding summary of why this is a compelling investment opportunity."
+            "You are a top-tier private equity analyst. Your task is to generate a comprehensive investment thesis based on the provided context. "
+            "**CRITICAL INSTRUCTION: Your entire response must be in clean HTML format.** "
+            "Use `<h3>` for subheadings, `<p>` for paragraphs, and `<ul><li>` for bullet points. "
+            "Do NOT include a main `<h2>` title, `<html>`, `<body>`, or `<style>` tags. "
+            "Structure your HTML response with the following subheadings:\n"
+            "<h3>Market Opportunity</h3>\n"
+            "<h3>Competitive Moat</h3>\n"
+            "<h3>Value Creation Levers</h3>\n"
+            "<h3>Overall Rationale</h3>"
         ),
         "Key Risks & Mitigants": (
-            "You are a senior risk officer at a private equity firm. Analyze the provided document to identify and "
-            "evaluate key investment risks. For each risk, you must also identify any mitigating factors mentioned or "
-            "implied in the text. Categorize the risks into the following sections:\n"
-            "1. **Market & Competitive Risks:** (e.g., industry disruption, market saturation, intense competition).\n"
-            "2. **Operational Risks:** (e.g., supply chain dependency, key personnel risk, technology obsolescence).\n"
-            "3. **Financial Risks:** (e.g., high leverage, customer concentration, volatile cash flows).\n"
-            "Present your findings in a structured, clear format."
+            "You are a senior risk officer. Analyze the document to identify key investment risks and their mitigants. "
+            "**CRITICAL INSTRUCTION: Your entire response must be in clean HTML format.** "
+            "Use `<h3>` for subheadings, `<p>` for paragraphs, and `<ul><li>` for bullet points. "
+            "Do NOT include a main `<h2>` title, `<html>`, `<body>`, or `<style>` tags. "
+            "Structure your HTML response with the following subheadings:\n"
+            "<h3>Market & Competitive Risks</h3>\n"
+            "<h3>Operational Risks</h3>\n"
+            "<h3>Financial Risks</h3>"
         ),
         "Financial Highlights": (
-            "You are a financial diligence expert. From the provided context, extract and summarize the key financial highlights. "
-            "Focus on:\n"
-            "1. **Revenue & Profitability:** Analyze historical revenue growth, EBITDA, and net income trends. Comment on margin profiles (Gross, EBITDA, Net).\n"
-            "2. **Balance Sheet Health:** Summarize key balance sheet items like cash position, debt levels (net debt), and working capital.\n"
-            "3. **Cash Flow:** Comment on the company's ability to generate cash from operations.\n"
-            "Present only the information available in the text; do not invent or extrapolate data."
+            "You are a financial diligence expert. Extract and summarize key financial highlights. "
+            "**CRITICAL INSTRUCTION: Your entire response must be in clean HTML format.** "
+            "Use `<h3>` for subheadings, `<p>` for paragraphs, and `<ul><li>` for bullet points. "
+            "Do NOT include a main `<h2>` title, `<html>`, `<body>`, or `<style>` tags. "
+            "Structure your HTML response with the following subheadings:\n"
+            "<h3>Revenue & Profitability</h3>\n"
+            "<h3>Balance Sheet Health</h3>\n"
+            "<h3>Cash Flow</h3>"
         ),
         "Potential Exit Options": (
-            "You are a partner on the investment committee. Based on the company's profile, industry, and market position described in the "
-            "document, analyze and propose potential exit strategies. For each option, provide a clear rationale. Consider the following:\n"
-            "1. **Strategic Sale:** Who are the likely strategic acquirers and why would they be interested?\n"
-            "2. **Secondary Buyout:** Would the company be an attractive target for other financial sponsors?\n"
-            "3. **Initial Public Offering (IPO):** Does the company have the scale, a strong growth profile, and a compelling story to succeed in the public markets?\n"
-            "Evaluate the feasibility and potential attractiveness of each path."
+            "You are a partner on the investment committee. Analyze and propose potential exit strategies. "
+            "**CRITICAL INSTRUCTION: Your entire response must be in clean HTML format.** "
+            "Use `<h3>` for subheadings, `<p>` for paragraphs, and `<ul><li>` for bullet points. "
+            "Do NOT include a main `<h2>` title, `<html>`, `<body>`, or `<style>` tags. "
+            "Structure your HTML response with the following subheadings:\n"
+            "<h3>Strategic Sale</h3>\n"
+            "<h3>Secondary Buyout</h3>\n"
+            "<h3>Initial Public Offering (IPO)</h3>"
         )
     }
 
@@ -3320,9 +3330,7 @@ def pe_agent_app_azure():
                     if not reconstructed_table: continue
                     header = reconstructed_table[0]
                     data = reconstructed_table[1:]
-                    num_columns = len(header)
-                    cleaned_data = [(row + [""] * num_columns)[:num_columns] for row in data]
-                    df = pd.DataFrame(cleaned_data, columns=header)
+                    df = pd.DataFrame(data, columns=header)
                     all_tables.append(df)
             return full_text, all_tables
         except Exception as e:
@@ -3336,87 +3344,43 @@ def pe_agent_app_azure():
             response = client.chat.completions.create(
                 model=openai_deployment_name,
                 messages=[
-                    {"role": "system", "content": "You are a world-class private equity analyst. Use professional headings and clear paragraphs for your analysis."},
+                    {"role": "system", "content": "You are a world-class private equity analyst who generates clean, professional HTML output."},
                     {"role": "user", "content": f"CONTEXT:\n---\n{_context}\n---\nANALYST REQUEST: {_prompt}"}
                 ]
             )
             return response.choices[0].message.content
         except Exception as e:
-            return f"Error during Azure OpenAI analysis: {e}"
+            return f"<p>Error during Azure OpenAI analysis: {e}</p>"
 
-    # --- HTML FORMATTER WITH CORRECTION ---
+    # --- SIMPLIFIED HTML FORMATTER ---
+    # This function now just assembles the final page and is much more reliable.
     def format_analysis_to_html(analysis_results: dict) -> str:
-        """
-        Converts a dictionary of AI-generated text into a clean, professional HTML string,
-        with simple bold headings and correct character rendering.
-        """
         styles = """
         <style>
             .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9fafb; }
             .analysis-container h2 { font-size: 1.7em; color: #00416A; border-bottom: 2px solid #00416A; padding-bottom: 12px; margin-top: 20px; margin-bottom: 20px; }
+            .analysis-container h3 { font-size: 1.3em; font-weight: 600; color: #1e1e1e; margin-top: 2em; margin-bottom: 1em; }
             .analysis-container p { margin-bottom: 1em; line-height: 1.6; color: #333; }
-            .analysis-container .subheading { font-weight: bold; color: #1e1e1e; margin-top: 2em; margin-bottom: 0.5em; }
             .analysis-container ul { list-style-position: outside; padding-left: 20px; margin-bottom: 1em; }
             .analysis-container li { margin-bottom: 0.75em; line-height: 1.6; }
-            .analysis-container strong { color: #00416A; }
         </style>
         """
         html_body = ""
         for title, content in analysis_results.items():
-            html_body += f"<h2>{html.escape(title)}</h2>"
-            
-            content = content.replace("'", "&rsquo;")
-
-            processed_content = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', content)
-            processed_content = re.sub(r'#+\s*(.*?)\s*$', r'<p class="subheading">\1</p>', processed_content, flags=re.MULTILINE)
-
-            def replace_lists(match):
-                items_text = match.group(0)
-                list_contents = re.findall(r'^\s*[\*\-]\s+(.*)', items_text, flags=re.MULTILINE)
-                li_items = "".join(f"<li>{html.escape(item_content.strip())}</li>" for item_content in list_contents)
-                return f"<ul>{li_items}</ul>"
-            
-            processed_content = re.sub(r'(?m)^(\s*[\*\-]\s+.*\n?)+', replace_lists, processed_content)
-
-            final_html_parts = []
-            blocks = re.split(r'\n\s*\n', processed_content.strip())
-            for block in blocks:
-                block = block.strip()
-                if not block:
-                    continue
-
-                # --- REFACTORED LOGIC to better remove redundant subheadings ---
-                if block.startswith('<p class="subheading"'):
-                    subheading_text = re.sub(r'<.*?>', '', block).strip()
-                    # If the subheading contains the main title (case-insensitive), skip it.
-                    if title.strip().lower() in subheading_text.lower():
-                        continue 
-                # --- END REFACTOR ---
-
-                if not block.startswith(('<ul', '<p class="subheading"')):
-                    sanitized_block = html.escape(block).replace('\n', '<br>')
-                    final_html_parts.append(f"<p>{sanitized_block}</p>")
-                else:
-                    final_html_parts.append(block)
-
-            html_body += "".join(final_html_parts)
+            # The 'title' is the main heading, 'content' is the HTML body from the AI
+            html_body += f"<h2>{html.escape(title)}</h2>{content}"
         
-        final_html = html.unescape(html_body)
-
-        return f"{styles}<div class='analysis-container'>{final_html}</div>"
-
+        return f"{styles}<div class='analysis-container'>{html_body}</div>"
 
     # --- UI & WORKFLOW ---
     st.subheader("1. Upload Confidential Document")
     uploaded_file = st.file_uploader("Upload a Teaser, CIM, or Financial Statement (PDF)", type="pdf", key="pe_agent_uploader_azure")
 
-    # Step 1: Process Document
     if uploaded_file and "pe_agent_text" not in st.session_state:
         if st.button("Process Document", type="primary"):
             with st.spinner("Processing document in secure Azure environment..."):
                 file_bytes = uploaded_file.getvalue()
                 full_text, tables = parse_pdf_with_azure_di(file_bytes)
-
                 if full_text:
                     st.session_state.pe_agent_text = full_text
                     st.session_state.pe_agent_tables = tables
@@ -3424,18 +3388,15 @@ def pe_agent_app_azure():
                 else:
                     st.error("Document parsing failed. Please try another document.")
 
-    # Step 2: Select and Run Analysis (if document has been processed)
     if "pe_agent_text" in st.session_state:
         st.success(f"✅ Document processed successfully. Extracted {len(st.session_state.pe_agent_tables)} tables.")
         st.markdown("---")
         st.subheader("2. Select and Generate Analysis")
-
         analysis_choices = st.multiselect(
             "Choose the analyses you want to perform:",
             options=list(ANALYSIS_PROMPTS.keys()),
             default=list(ANALYSIS_PROMPTS.keys())
         )
-
         if st.button("Generate Analysis", use_container_width=True):
             if not analysis_choices:
                 st.warning("Please select at least one analysis type.")
@@ -3448,15 +3409,17 @@ def pe_agent_app_azure():
                         result = analyze_with_azure_openai(full_text, prompt)
                         analysis_results[choice] = result
                 st.session_state.pe_agent_analysis_results = analysis_results
-                # Rerun to display the new results
                 st.rerun()
 
-    # Display results from session state
     if "pe_agent_analysis_results" in st.session_state:
         st.markdown("---")
         st.subheader("Analysis Results")
         results_html = format_analysis_to_html(st.session_state.pe_agent_analysis_results)
+        
+        # --- CRITICAL LINE ---
+        # Ensure this line uses unsafe_allow_html=True to render the output correctly.
         st.markdown(results_html, unsafe_allow_html=True)
+        # --- END CRITICAL LINE ---
 
     if "pe_agent_tables" in st.session_state:
         tables = st.session_state.pe_agent_tables
