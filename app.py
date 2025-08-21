@@ -809,7 +809,7 @@ def investment_memo_app():
         st.session_state.pdf_path = None
     
     # --- Main App Flow ---
-    st.markdown("### 📝 Pre-IPO Investment Memo Generator")
+    st.markdown("### 📝 Agent Pre-IPO")
     st.markdown("Upload a DRHP or IPO prospectus to automatically generate a detailed investment memo, an infographic, and perform Q&A.")
     st.subheader("📤 1. Upload DRHP or IPO PDF")
     pdf_file = st.file_uploader("Upload your PDF file", type=["pdf"], key="memo_pdf")
@@ -3375,7 +3375,7 @@ def main():
             [
                 "🏠 Welcome",
                 "Agent PE",
-                "Pre-IPO Investment Memo Generator",
+                "Agent Pre-IPO",
                 "DCF Ginny",
                 "Special Situations Analyzer",
                 "ESG Analyzer",
@@ -3405,7 +3405,7 @@ def main():
         # This now calls your self-contained Azure function
         pe_agent_app_azure()
         
-    elif app_mode == "Pre-IPO Investment Memo Generator":
+    elif app_mode == "Agent Pre-IPO":
         investment_memo_app()
         
     elif app_mode == "DCF Ginny":
