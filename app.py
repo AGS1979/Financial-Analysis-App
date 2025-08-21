@@ -3244,6 +3244,7 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
 # 8. PE INVESTMENT AGENT (VERTEX AI POWERED)
 # ==============================================================================
 
+# Replace the existing pe_agent_app_azure function in your app.py with this one.
 def pe_agent_app_azure():
     """
     A secure, confidential agent for Private Equity analysis using Azure services.
@@ -3266,43 +3267,32 @@ def pe_agent_app_azure():
         st.error(f"Configuration error: Missing Azure secret: {e}. Please check your secrets.toml file.")
         st.stop()
 
+    # --- PROMPTS TO OUTPUT STRUCTURED MARKDOWN ---
     ANALYSIS_PROMPTS = {
         "Investment Thesis": (
             "You are a top-tier private equity analyst. Generate a comprehensive investment thesis based on the provided context. "
             "**CRITICAL RULE: Your entire response must be in clean MARKDOWN format.** "
             "Use markdown headings (`## Subheading`) for sections and bullet points (`* Point`) for lists. Do not create a main title. "
             "Structure your response with the following markdown headings:\n"
-            "## Market Opportunity\n"
-            "## Competitive Moat\n"
-            "## Value Creation Levers\n"
-            "## Overall Rationale"
+            "## Market Opportunity\n## Competitive Moat\n## Value Creation Levers\n## Overall Rationale"
         ),
         "Key Risks & Mitigants": (
-            "You are a senior risk officer. Identify key investment risks and their mitigants. "
-            "**CRITICAL RULE: Your entire response must be in clean MARKDOWN format.** "
+            "You are a senior risk officer. **CRITICAL RULE: Your entire response must be in clean MARKDOWN format.** "
             "Use markdown headings (`## Subheading`) for sections and bullet points (`* Point`) for lists. Do not create a main title. "
             "Structure your response with the following markdown headings:\n"
-            "## Market & Competitive Risks\n"
-            "## Operational Risks\n"
-            "## Financial Risks"
+            "## Market & Competitive Risks\n## Operational Risks\n## Financial Risks"
         ),
         "Financial Highlights": (
-            "You are a financial diligence expert. Extract and summarize key financial highlights. "
-            "**CRITICAL RULE: Your entire response must be in clean MARKDOWN format.** "
+            "You are a financial diligence expert. **CRITICAL RULE: Your entire response must be in clean MARKDOWN format.** "
             "Use markdown headings (`## Subheading`) for sections and bullet points (`* Point`) for lists. Do not create a main title. "
             "Structure your response with the following markdown headings:\n"
-            "## Revenue & Profitability\n"
-            "## Balance Sheet Health\n"
-            "## Cash Flow"
+            "## Revenue & Profitability\n## Balance Sheet Health\n## Cash Flow"
         ),
         "Potential Exit Options": (
-            "You are a partner on the investment committee. Analyze and propose potential exit strategies. "
-            "**CRITICAL RULE: Your entire response must be in clean MARKDOWN format.** "
+            "You are a partner on the investment committee. **CRITICAL RULE: Your entire response must be in clean MARKDOWN format.** "
             "Use markdown headings (`## Subheading`) for sections and bullet points (`* Point`) for lists. Do not create a main title. "
             "Structure your response with the following markdown headings:\n"
-            "## Strategic Sale\n"
-            "## Secondary Buyout\n"
-            "## Initial Public Offering (IPO)"
+            "## Strategic Sale\n## Secondary Buyout\n## Initial Public Offering (IPO)"
         )
     }
 
@@ -3312,7 +3302,7 @@ def pe_agent_app_azure():
             client = DocumentIntelligenceClient(endpoint=di_endpoint, credential=AzureKeyCredential(di_key))
             poller = client.begin_analyze_document("prebuilt-layout", analyze_request=file_bytes, content_type="application/octet-stream")
             result = poller.result()
-            return result.content, [] # Simplified to return only text for now
+            return result.content, []
         except Exception as e:
             st.error(f"Azure AI Document Intelligence error: {e}")
             return None, []
@@ -3331,32 +3321,33 @@ def pe_agent_app_azure():
         except Exception as e:
             return f"## Error\n\n**Error during Azure OpenAI analysis:** {e}"
 
-    # --- NEW MARKDOWN-TO-HTML PARSER (Inspired by Portfolio Agent) ---
-    def parse_markdown_to_html(analysis_results: dict) -> str:
-        # This CSS block now has the corrected font sizes for h3.
+    # --- REVISED MARKDOWN-TO-HTML PARSER ---
+    def parse_markdown_to_html(analysis_results: dict) -> tuple[str, str]:
+        # This function now returns the styles and content separately.
         styles = """
         <style>
             .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9fafb; }
-            .analysis-container h2 { font-size: 1.5em; color: #00416A; border-bottom: 2px solid #00416A; padding-bottom: 10px; margin-top: 0; margin-bottom: 20px; }
-            /* --- FONT SIZE REDUCED HERE AS REQUESTED --- */
-            .analysis-container h3 { font-size: 1.05em; color: #00416A; padding-bottom: 5px; margin-top: 25px; border-bottom: 1px solid #e6f1f6;}
+            .analysis-container h2 { font-size: 1.5em; font-weight: 600; color: #00416A; border-bottom: 2px solid #00416A; padding-bottom: 10px; margin-top: 0; margin-bottom: 20px; }
+            .analysis-container h3 { font-size: 1.05em; font-weight: 600; color: #00416A; padding-bottom: 5px; margin-top: 25px; border-bottom: 1px solid #e6f1f6;}
             .analysis-container p { margin-bottom: 1em; line-height: 1.6; color: #333; }
             .analysis-container ul { list-style-position: outside; padding-left: 20px; margin-top: 1em; margin-bottom: 1em; }
             .analysis-container li { margin-bottom: 0.75em; line-height: 1.6; }
-            .analysis-container strong, .analysis-container b { color: #00416A; font-weight: 600; }
+            /* --- CHANGE HERE: This rule removes bolding from all non-headline text --- */
+            .analysis-container strong, .analysis-container b { font-weight: normal; color: inherit; }
         </style>
         """
         
         full_html_body = ""
         for title, markdown_content in analysis_results.items():
             full_html_body += f"<h2>{html.escape(title)}</h2>"
-            # The 'markdown' library safely converts markdown text to HTML strings.
-            html_content = markdown.markdown(markdown_content)
-            # We then replace the standard h2 tags from the markdown with our styled h3 tags.
-            html_content = re.sub(r'<h2>(.*?)</h2>', r'<h3>\1</h3>', html_content)
-            full_html_body += html_content
+            html_from_md = markdown.markdown(markdown_content)
+            # Replace markdown's h2 with our styled h3
+            processed_html = re.sub(r'<h2>(.*?)</h2>', r'<h3>\1</h3>', html_from_md)
+            full_html_body += processed_html
 
-        return f"{styles}<div class='analysis-container'>{full_html_body}</div>"
+        content_div = f"<div class='analysis-container'>{full_html_body}</div>"
+        
+        return styles, content_div
 
     # --- UI & WORKFLOW ---
     st.subheader("1. Upload Confidential Document")
@@ -3400,12 +3391,14 @@ def pe_agent_app_azure():
         st.markdown("---")
         st.subheader("Analysis Results")
         
-        # The new, robust parser function is called here
-        results_html = parse_markdown_to_html(st.session_state.pe_agent_analysis_results)
+        # --- CHANGE HERE: Separate styles and content for reliable rendering ---
+        styles_html, content_html = parse_markdown_to_html(st.session_state.pe_agent_analysis_results)
         
-        # This is the only way to render HTML in Streamlit. 
-        # The raw text issue you see is because this line is not running correctly in your app.
-        st.markdown(results_html, unsafe_allow_html=True)
+        # Render the CSS styles invisibly first
+        st.markdown(styles_html, unsafe_allow_html=True)
+        
+        # Then, render the main content div, which will be styled by the rules above
+        st.markdown(content_html, unsafe_allow_html=True)
 
 
 
