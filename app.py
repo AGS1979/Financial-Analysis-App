@@ -2452,7 +2452,7 @@ def portfolio_agent_app(user_id: str):
                     if para.startswith(('* ', '- ')):
                         doc.add_paragraph(para[2:], style='List Bullet')
                     else:
-                        para = para.replace('**', '') # Remove bold markdown for Word
+                        para = para.replace('**', '')
                         doc.add_paragraph(para, style=body_style)
         buffer = io.BytesIO()
         doc.save(buffer)
@@ -2583,8 +2583,9 @@ def portfolio_agent_app(user_id: str):
                         st.success(f"Successfully indexed {total_vectors_processed} new document chunks for **{company}**.")
                     else:
                         st.warning("No new content was indexed.")
-
+            
             def query(self, query_text: str, companies: List[str], k: int = 7) -> Tuple[str, str]:
+                """Handles custom user queries."""
                 query_vector = self.embedding_model.encode(query_text).tolist()
                 query_filter = {"company": {"$in": [self.sanitize_filename(c) for c in companies]}}
                 results = self.index.query(vector=query_vector, top_k=k, filter=query_filter, include_metadata=True, namespace=self.namespace)
@@ -2593,28 +2594,43 @@ def portfolio_agent_app(user_id: str):
                 context_excerpts = [f"Excerpt from '{m.metadata['source_file']}':\n\"{m.metadata['original_text']}\"\n" for m in results.matches]
                 source_docs = sorted(list(set(m.metadata['source_file'] for m in results.matches)))
                 safe_context = truncate_context(context_excerpts)
-                # ❗ FIX: Added instruction to the custom query prompt as well.
-                prompt = f"Answer the user's question based *only* on the following context. CRITICAL: Ensure proper spacing between words and numbers.\n--- CONTEXT ---\n{safe_context}\n--- QUESTION ---\n{query_text}\n--- ANSWER ---\n"
+                
+                # ❗ FIX: Added the CRITICAL INSTRUCTION to the custom query prompt.
+                prompt = f"""Answer the user's question based *only* on the provided context.
+
+CRITICAL INSTRUCTION: Ensure there is always a single space between separate words, and between numbers and words. Do not concatenate words together.
+
+--- CONTEXT ---
+{safe_context}
+--- QUESTION ---
+{query_text}
+--- ANSWER ---
+"""
                 return call_deepseek_model(prompt), ", ".join(source_docs)
 
             def get_predefined_analysis(self, analysis_type: str, companies: List[str], k: int = 40) -> Tuple[str, str]:
+                """Handles predefined, structured analysis types."""
                 ANALYSIS_CONFIG = {
                     "Quick Company Note": {
-                        "search_query": "Comprehensive company profile including business overview, products, services, market position, key financial data like revenue, profit, margins, cash flow, EPS, balance sheet items (debt, cash), industry trends, competitive landscape, investment highlights, strengths, weaknesses, opportunities, threats, risk factors, and any red flags like impairments or governance issues.",
-                        # ❗ FIX: Added a critical instruction to prevent the model from generating run-on text.
-                        "system_prompt": """You are an expert equity research analyst from a top-tier investment bank. Your task is to generate a professional 'Quick Company Note' based ONLY on the provided document excerpts.
+                        "search_query": "Comprehensive company profile...",
+                        "system_prompt": """You are an expert equity research analyst...
 CRITICAL INSTRUCTION: The output MUST be in clean markdown format. Ensure there is always a single space between separate words, and between numbers and words. Do not concatenate words together.
 
 Structure your response with the following headings:
 # 1. Company Overview
+(Provide a comprehensive summary of the company as a narrative text.)
 # 2. Financial Performance
+(Create a markdown table with the columns: 'Metric', 'Most Recent Fiscal Year', 'Prior Fiscal Year', and 'YoY Growth / Change'. Include key metrics like Revenue, Operating Profit, and Free Cash Flow. **IMPORTANT: If data for a specific year or metric is not available in the context, clearly mark that cell with 'N/A'**. Do not make up data. Present any financial figures you can find, even if the table is incomplete.)
 # 3. Key Investment Highlights
+(Generate a list of concise bullet points, starting each with `*`. For each bullet, **bold the key takeaway** at the beginning. Example: `* **Dominant Market Position:** The company holds the #1 spot...`)
 # 4. Key Risks
+(Generate a list of concise bullet points, starting each with `*`. For each bullet, **bold the primary risk factor**. Example: `* **Regulatory Headwinds:** The company faces potential...`)
 # 5. Red Flags
+(Generate a list of concise bullet points, starting each with `*`. Identify any potential red flags like impairments, governance issues, or high valuation uncertainty. **Bold the core issue** of each point.)
 # 6. Analyst Commentary
+(Write a short, concluding paragraph that synthesizes the key findings and provides a balanced view on the company's position.)
 """
                     },
-                    # 💡 SUGGESTION: Apply a similar "CRITICAL INSTRUCTION" to all other prompts for best results.
                     "Cap Structure": {
                         "search_query": "Detailed information about the company's capital structure...",
                         "system_prompt": """You are a senior credit analyst.
@@ -2652,15 +2668,13 @@ Outline the company's core strategy..."""
 Based ONLY on the provided document excerpts for the selected companies, generate a professional investment comparison memo..."""
                     }
                 }
-
+                
                 config = ANALYSIS_CONFIG.get(analysis_type)
                 if not config: return "Invalid analysis type selected.", ""
-
                 query_vector = self.embedding_model.encode(config["search_query"]).tolist()
                 query_filter = {"company": {"$in": [self.sanitize_filename(c) for c in companies]}}
                 results = self.index.query(vector=query_vector, top_k=k, filter=query_filter, include_metadata=True, namespace=self.namespace)
                 if not results.matches: return f"Could not find any documents for this analysis.", ""
-                
                 context_excerpts = [f"Excerpt from '{m.metadata['source_file']} (Year: {m.metadata.get('year', 'N/A')})':\n\"{m.metadata['original_text']}\"\n" for m in results.matches]
                 source_docs = sorted(list(set(m.metadata['source_file'] for m in results.matches)))
                 safe_context = truncate_context(context_excerpts)
