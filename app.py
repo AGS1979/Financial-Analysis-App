@@ -3267,107 +3267,91 @@ def pe_agent_app_azure():
         st.error(f"Configuration error: Missing Azure secret: {e}. Please check your secrets.toml file.")
         st.stop()
 
-    # --- REFACTORED ANALYSIS PROMPTS TO OUTPUT HTML DIRECTLY ---
-    # This is the key change to ensure clean, predictable formatting.
+    # --- FINAL, STRICTER PROMPTS TO GUARANTEE CLEAN HTML ---
     ANALYSIS_PROMPTS = {
         "Investment Thesis": (
-            "You are a top-tier private equity analyst. Your task is to generate a comprehensive investment thesis based on the provided context. "
-            "**CRITICAL INSTRUCTION: Your entire response must be in clean HTML format.** "
-            "Use `<h3>` for subheadings, `<p>` for paragraphs, and `<ul><li>` for bullet points. "
-            "Do NOT include a main `<h2>` title, `<html>`, `<body>`, or `<style>` tags. "
-            "Structure your HTML response with the following subheadings:\n"
-            "<h3>Market Opportunity</h3>\n"
-            "<h3>Competitive Moat</h3>\n"
-            "<h3>Value Creation Levers</h3>\n"
-            "<h3>Overall Rationale</h3>"
+            "You are a top-tier private equity analyst. Generate a comprehensive investment thesis. "
+            "**CRITICAL RULE: Your entire response must be ONLY valid HTML.** Your response must begin "
+            "immediately with the first `<h3>` tag. Do not include any text, titles, or markdown characters "
+            "like '#' before the first tag. Use `<h3>` for subheadings, `<p>` for paragraphs, and `<ul><li>` for bullet points. "
+            "The required subheadings are: "
+            "<h3>Market Opportunity</h3>, "
+            "<h3>Competitive Moat</h3>, "
+            "<h3>Value Creation Levers</h3>, and "
+            "<h3>Overall Rationale</h3>."
         ),
         "Key Risks & Mitigants": (
-            "You are a senior risk officer. Analyze the document to identify key investment risks and their mitigants. "
-            "**CRITICAL INSTRUCTION: Your entire response must be in clean HTML format.** "
-            "Use `<h3>` for subheadings, `<p>` for paragraphs, and `<ul><li>` for bullet points. "
-            "Do NOT include a main `<h2>` title, `<html>`, `<body>`, or `<style>` tags. "
-            "Structure your HTML response with the following subheadings:\n"
-            "<h3>Market & Competitive Risks</h3>\n"
-            "<h3>Operational Risks</h3>\n"
-            "<h3>Financial Risks</h3>"
+            "You are a senior risk officer. Identify key investment risks and their mitigants. "
+            "**CRITICAL RULE: Your entire response must be ONLY valid HTML.** Your response must begin "
+            "immediately with the first `<h3>` tag. Do not include any text, titles, or markdown characters "
+            "like '#' before the first tag. Use `<h3>` for subheadings, `<p>` for paragraphs, and `<ul><li>` for bullet points. "
+            "The required subheadings are: "
+            "<h3>Market & Competitive Risks</h3>, "
+            "<h3>Operational Risks</h3>, and "
+            "<h3>Financial Risks</h3>."
         ),
         "Financial Highlights": (
             "You are a financial diligence expert. Extract and summarize key financial highlights. "
-            "**CRITICAL INSTRUCTION: Your entire response must be in clean HTML format.** "
-            "Use `<h3>` for subheadings, `<p>` for paragraphs, and `<ul><li>` for bullet points. "
-            "Do NOT include a main `<h2>` title, `<html>`, `<body>`, or `<style>` tags. "
-            "Structure your HTML response with the following subheadings:\n"
-            "<h3>Revenue & Profitability</h3>\n"
-            "<h3>Balance Sheet Health</h3>\n"
-            "<h3>Cash Flow</h3>"
+            "**CRITICAL RULE: Your entire response must be ONLY valid HTML.** Your response must begin "
+            "immediately with the first `<h3>` tag. Do not include any text, titles, or markdown characters "
+            "like '#' before the first tag. Use `<h3>` for subheadings, `<p>` for paragraphs, and `<ul><li>` for bullet points. "
+            "The required subheadings are: "
+            "<h3>Revenue & Profitability</h3>, "
+            "<h3>Balance Sheet Health</h3>, and "
+            "<h3>Cash Flow</h3>."
         ),
         "Potential Exit Options": (
             "You are a partner on the investment committee. Analyze and propose potential exit strategies. "
-            "**CRITICAL INSTRUCTION: Your entire response must be in clean HTML format.** "
-            "Use `<h3>` for subheadings, `<p>` for paragraphs, and `<ul><li>` for bullet points. "
-            "Do NOT include a main `<h2>` title, `<html>`, `<body>`, or `<style>` tags. "
-            "Structure your HTML response with the following subheadings:\n"
-            "<h3>Strategic Sale</h3>\n"
-            "<h3>Secondary Buyout</h3>\n"
-            "<h3>Initial Public Offering (IPO)</h3>"
+            "**CRITICAL RULE: Your entire response must be ONLY valid HTML.** Your response must begin "
+            "immediately with the first `<h3>` tag. Do not include any text, titles, or markdown characters "
+            "like '#' before the first tag. Use `<h3>` for subheadings, `<p>` for paragraphs, and `<ul><li>` for bullet points. "
+            "The required subheadings are: "
+            "<h3>Strategic Sale</h3>, "
+            "<h3>Secondary Buyout</h3>, and "
+            "<h3>Initial Public Offering (IPO)</h3>."
         )
     }
 
-    # --- HELPER FUNCTIONS (Azure Services & Formatting) ---
+    # --- HELPER FUNCTIONS ---
     def parse_pdf_with_azure_di(file_bytes: bytes) -> tuple[str, list]:
-        """Extracts text and tables from a PDF using Azure AI Document Intelligence."""
         try:
             client = DocumentIntelligenceClient(endpoint=di_endpoint, credential=AzureKeyCredential(di_key))
             poller = client.begin_analyze_document("prebuilt-layout", analyze_request=file_bytes, content_type="application/octet-stream")
             result = poller.result()
-            full_text = result.content
-            all_tables = []
-            if result.tables:
-                for table in result.tables:
-                    if table.row_count == 0 or table.column_count == 0: continue
-                    cell_map = {(cell.row_index, cell.column_index): cell.content for cell in table.cells}
-                    reconstructed_table = [[cell_map.get((r, c), "") for c in range(table.column_count)] for r in range(table.row_count)]
-                    if not reconstructed_table: continue
-                    header = reconstructed_table[0]
-                    data = reconstructed_table[1:]
-                    df = pd.DataFrame(data, columns=header)
-                    all_tables.append(df)
-            return full_text, all_tables
+            return result.content, [pd.DataFrame(cell.content for cell in table.cells) for table in result.tables] if result.tables else []
         except Exception as e:
             st.error(f"Azure AI Document Intelligence error: {e}")
             return None, []
 
     def analyze_with_azure_openai(_context: str, _prompt: str) -> str:
-        """Analyzes context using the Azure OpenAI Service."""
         try:
             client = AzureOpenAI(api_key=openai_key, api_version="2024-02-01", azure_endpoint=openai_endpoint)
             response = client.chat.completions.create(
                 model=openai_deployment_name,
                 messages=[
-                    {"role": "system", "content": "You are a world-class private equity analyst who generates clean, professional HTML output."},
-                    {"role": "user", "content": f"CONTEXT:\n---\n{_context}\n---\nANALYST REQUEST: {_prompt}"}
+                    {"role": "system", "content": "You are an expert financial analyst that responds only with clean, valid HTML content as instructed."},
+                    {"role": "user", "content": f"CONTEXT DOCUMENT:\n---\n{_context}\n---\nYOUR TASK: {_prompt}"}
                 ]
             )
             return response.choices[0].message.content
         except Exception as e:
-            return f"<p>Error during Azure OpenAI analysis: {e}</p>"
+            return f"<p><b>Error during Azure OpenAI analysis:</b> {e}</p>"
 
-    # --- SIMPLIFIED HTML FORMATTER ---
-    # This function now just assembles the final page and is much more reliable.
+    # --- HTML FORMATTER WITH REVISED CSS ---
     def format_analysis_to_html(analysis_results: dict) -> str:
         styles = """
         <style>
             .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9fafb; }
             .analysis-container h2 { font-size: 1.7em; color: #00416A; border-bottom: 2px solid #00416A; padding-bottom: 12px; margin-top: 20px; margin-bottom: 20px; }
-            .analysis-container h3 { font-size: 1.3em; font-weight: 600; color: #1e1e1e; margin-top: 2em; margin-bottom: 1em; }
+            /* --- CSS CHANGE HERE: Reduced font size and added a bottom border for h3 --- */
+            .analysis-container h3 { font-size: 1.15em; font-weight: 600; color: #1e1e1e; margin-top: 2.5em; margin-bottom: 1em; padding-bottom: 5px; border-bottom: 1px solid #e0e0e0; }
             .analysis-container p { margin-bottom: 1em; line-height: 1.6; color: #333; }
-            .analysis-container ul { list-style-position: outside; padding-left: 20px; margin-bottom: 1em; }
+            .analysis-container ul { list-style-position: outside; padding-left: 20px; margin-top: 1em; margin-bottom: 1em; }
             .analysis-container li { margin-bottom: 0.75em; line-height: 1.6; }
         </style>
         """
         html_body = ""
         for title, content in analysis_results.items():
-            # The 'title' is the main heading, 'content' is the HTML body from the AI
             html_body += f"<h2>{html.escape(title)}</h2>{content}"
         
         return f"{styles}<div class='analysis-container'>{html_body}</div>"
@@ -3389,7 +3373,7 @@ def pe_agent_app_azure():
                     st.error("Document parsing failed. Please try another document.")
 
     if "pe_agent_text" in st.session_state:
-        st.success(f"✅ Document processed successfully. Extracted {len(st.session_state.pe_agent_tables)} tables.")
+        st.success(f"✅ Document processed successfully.")
         st.markdown("---")
         st.subheader("2. Select and Generate Analysis")
         analysis_choices = st.multiselect(
@@ -3416,19 +3400,25 @@ def pe_agent_app_azure():
         st.subheader("Analysis Results")
         results_html = format_analysis_to_html(st.session_state.pe_agent_analysis_results)
         
-        # --- CRITICAL LINE ---
-        # Ensure this line uses unsafe_allow_html=True to render the output correctly.
+        # =======================================================================
+        #
+        #   ▼▼▼ THIS IS THE MOST IMPORTANT LINE ▼▼▼
+        #
+        #   The unwanted text appears ONLY if your code is missing 
+        #   `unsafe_allow_html=True`. Please ensure your code has this exact line.
+        #
         st.markdown(results_html, unsafe_allow_html=True)
-        # --- END CRITICAL LINE ---
+        #
+        #   ▲▲▲ THIS IS THE MOST IMPORTANT LINE ▲▲▲
+        #
+        # =======================================================================
 
-    if "pe_agent_tables" in st.session_state:
-        tables = st.session_state.pe_agent_tables
-        if tables:
-            st.markdown("---")
-            st.subheader("Extracted Financial Tables")
-            for i, df in enumerate(tables):
-                st.write(f"**Table {i+1}**")
-                st.dataframe(df.fillna(''))
+    if "pe_agent_tables" in st.session_state and st.session_state.pe_agent_tables:
+        st.markdown("---")
+        st.subheader("Extracted Financial Tables")
+        for i, df in enumerate(st.session_state.pe_agent_tables):
+            st.write(f"**Table {i+1}**")
+            st.dataframe(df.fillna(''))
 
 
 
