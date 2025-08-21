@@ -2334,7 +2334,6 @@ def esg_analyzer_app():
 # 6. PORTFOLIO AGENT (FINAL CORRECTED VERSION)
 # ==============================================================================
 
-
 def portfolio_agent_app(user_id: str):
     """
     A persistent agent to index and query company documents using Pinecone,
@@ -2345,10 +2344,6 @@ def portfolio_agent_app(user_id: str):
 
     # --- HELPER FUNCTIONS ---
     def truncate_context(excerpts: list, max_chars: int = 120000) -> str:
-        """
-        Truncates a list of context strings to a maximum character count to avoid
-        exceeding API token limits.
-        """
         full_context = ""
         for excerpt in excerpts:
             if len(full_context) + len(excerpt) > max_chars:
@@ -2357,7 +2352,6 @@ def portfolio_agent_app(user_id: str):
         return full_context
 
     def add_spacing_to_run_on_text(text: str) -> str:
-        """A fallback function to clean up minor spacing errors."""
         text = re.sub(r'(\d)([a-zA-Z])', r'\1 \2', text)
         text = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', text)
         text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)
@@ -2372,19 +2366,17 @@ def portfolio_agent_app(user_id: str):
             payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 8192}
             response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=240)
             response.raise_for_status()
-            
             raw_content = response.json()["choices"][0]["message"]["content"]
-            
-            # Clean the text as a fallback, though the prompt fix is primary.
             cleaned_content = add_spacing_to_run_on_text(raw_content)
-            
             return cleaned_content
-
         except Exception as e:
             st.error(f"An unexpected error occurred: {e}")
             return f"Error: {e}"
 
-    def parse_markdown_to_structure(markdown_text: str) -> list:
+    def parse_markdown_to_structure(markdown_text: str, analysis_type: str) -> list:
+        if analysis_type == "Custom Query":
+            return [("Custom Query Response", markdown_text)]
+            
         structure = []
         heading_pattern = re.compile(r'^#+\s+.*$', re.MULTILINE)
         matches = list(heading_pattern.finditer(markdown_text))
@@ -2400,7 +2392,7 @@ def portfolio_agent_app(user_id: str):
             structure.append((heading_text, content_text))
         return structure
 
-    def markdown_to_word_bytes(structured_data: list, company_name: str) -> bytes:
+    def markdown_to_word_bytes(structured_data: list, company_name: str, analysis_type: str) -> bytes:
         doc = Document()
         styles = doc.styles
         def define_style(style_name, style_type, font_name, font_size, is_bold=False):
@@ -2422,16 +2414,14 @@ def portfolio_agent_app(user_id: str):
         heading_style.paragraph_format.space_before = Pt(12)
         heading_style.paragraph_format.space_after = Pt(6)
         body_style.paragraph_format.line_spacing = 1.15
-        doc.add_paragraph(f"Quick Note - {company_name}", style=title_style)
+        doc.add_paragraph(f"{analysis_type} - {company_name}", style=title_style)
         for heading, content in structured_data:
             cleaned_heading = re.sub(r'^#+\s*', '', heading).strip()
             doc.add_paragraph(cleaned_heading, style=heading_style)
-
             is_table = False
             lines = content.strip().split('\n')
             if len(lines) > 1 and '|' in lines[0] and re.match(r'^\s*\|?(:?-+:?\|)+(:?-+:?)?\s*$', lines[1]):
                 is_table = True
-
             if is_table:
                 headers = [h.strip() for h in lines[0].strip('|').split('|')]
                 table = doc.add_table(rows=1, cols=len(headers))
@@ -2557,7 +2547,6 @@ def portfolio_agent_app(user_id: str):
                         if not text:
                             st.write(f"Skipping {file.name}: no text could be extracted.")
                             continue
-                        
                         status.write(f"Chunking and embedding {file.name}...")
                         chunks = self._chunk_text(text)
                         vectors = self.embedding_model.encode(chunks).tolist()
@@ -2566,36 +2555,26 @@ def portfolio_agent_app(user_id: str):
                             chunk_id = f"{safe_company_name}-{self.sanitize_filename(file.name)}-{i}"
                             metadata = {"company": safe_company_name, "source_file": file.name, "original_text": chunk, "year": file_year}
                             vectors_to_upsert.append({"id": chunk_id, "values": vectors[i], "metadata": metadata})
-                        
                         if not vectors_to_upsert:
                             continue
-
                         status.write(f"Upserting {len(vectors_to_upsert)} chunks to Pinecone...")
                         batch_size = 100
                         for i in range(0, len(vectors_to_upsert), batch_size):
-                            self.index.upsert(
-                                vectors=vectors_to_upsert[i:i + batch_size],
-                                namespace=self.namespace
-                            )
+                            self.index.upsert(vectors=vectors_to_upsert[i:i + batch_size], namespace=self.namespace)
                         total_vectors_processed += len(vectors_to_upsert)
-
                     if total_vectors_processed > 0:
                         st.success(f"Successfully indexed {total_vectors_processed} new document chunks for **{company}**.")
                     else:
                         st.warning("No new content was indexed.")
-            
+
             def query(self, query_text: str, companies: List[str], k: int = 7) -> Tuple[str, str]:
-                """Handles custom user queries."""
                 query_vector = self.embedding_model.encode(query_text).tolist()
                 query_filter = {"company": {"$in": [self.sanitize_filename(c) for c in companies]}}
                 results = self.index.query(vector=query_vector, top_k=k, filter=query_filter, include_metadata=True, namespace=self.namespace)
                 if not results.matches: return "I could not find relevant information in the indexed documents.", ""
-                
                 context_excerpts = [f"Excerpt from '{m.metadata['source_file']}':\n\"{m.metadata['original_text']}\"\n" for m in results.matches]
                 source_docs = sorted(list(set(m.metadata['source_file'] for m in results.matches)))
                 safe_context = truncate_context(context_excerpts)
-                
-                # ❗ FIX: Added the CRITICAL INSTRUCTION to the custom query prompt.
                 prompt = f"""Answer the user's question based *only* on the provided context.
 
 CRITICAL INSTRUCTION: Ensure there is always a single space between separate words, and between numbers and words. Do not concatenate words together.
@@ -2609,66 +2588,95 @@ CRITICAL INSTRUCTION: Ensure there is always a single space between separate wor
                 return call_deepseek_model(prompt), ", ".join(source_docs)
 
             def get_predefined_analysis(self, analysis_type: str, companies: List[str], k: int = 40) -> Tuple[str, str]:
-                """Handles predefined, structured analysis types."""
                 ANALYSIS_CONFIG = {
                     "Quick Company Note": {
-                        "search_query": "Comprehensive company profile...",
-                        "system_prompt": """You are an expert equity research analyst...
+                        "search_query": "Comprehensive company profile including business overview, products, services, market position, key financial data like revenue, profit, margins, cash flow, EPS, balance sheet items (debt, cash), industry trends, competitive landscape, investment highlights, strengths, weaknesses, opportunities, threats, risk factors, and any red flags like impairments or governance issues.",
+                        "system_prompt": """You are an expert equity research analyst from a top-tier investment bank. Your task is to generate a professional 'Quick Company Note' based ONLY on the provided document excerpts.
 CRITICAL INSTRUCTION: The output MUST be in clean markdown format. Ensure there is always a single space between separate words, and between numbers and words. Do not concatenate words together.
 
 Structure your response with the following headings:
+
 # 1. Company Overview
 (Provide a comprehensive summary of the company as a narrative text.)
+
 # 2. Financial Performance
 (Create a markdown table with the columns: 'Metric', 'Most Recent Fiscal Year', 'Prior Fiscal Year', and 'YoY Growth / Change'. Include key metrics like Revenue, Operating Profit, and Free Cash Flow. **IMPORTANT: If data for a specific year or metric is not available in the context, clearly mark that cell with 'N/A'**. Do not make up data. Present any financial figures you can find, even if the table is incomplete.)
+
 # 3. Key Investment Highlights
 (Generate a list of concise bullet points, starting each with `*`. For each bullet, **bold the key takeaway** at the beginning. Example: `* **Dominant Market Position:** The company holds the #1 spot...`)
+
 # 4. Key Risks
 (Generate a list of concise bullet points, starting each with `*`. For each bullet, **bold the primary risk factor**. Example: `* **Regulatory Headwinds:** The company faces potential...`)
+
 # 5. Red Flags
 (Generate a list of concise bullet points, starting each with `*`. Identify any potential red flags like impairments, governance issues, or high valuation uncertainty. **Bold the core issue** of each point.)
+
 # 6. Analyst Commentary
 (Write a short, concluding paragraph that synthesizes the key findings and provides a balanced view on the company's position.)
 """
                     },
                     "Cap Structure": {
-                        "search_query": "Detailed information about the company's capital structure...",
+                        "search_query": "Detailed information about the company's capital structure, including short-term and long-term debt instruments, maturity dates, coupon rates, leases, equity, and debt covenants.",
                         "system_prompt": """You are a senior credit analyst.
 **CRITICAL INSTRUCTION: The entire output must be plain text. Do NOT use any asterisks (`*`) for formatting. Ensure proper spacing between all words and numbers.**
-Based on the provided text, synthesize all information about the company's capital structure..."""
+Based on the provided text, synthesize all information about the company's capital structure. Prioritize information from documents with the most recent year if there are conflicts.
+Format the output with clear headings and narrative descriptions. Do NOT use markdown tables.
+# Capital Structure Analysis
+## Debt Instruments
+(For each debt instrument, describe it in a sentence. e.g., "The company has 5.0% senior notes due 2028 with a principal of $500 million.")
+## Key Ratios
+(Describe any relevant ratios found in the text in a paragraph.)
+## Covenants
+(Describe any mentioned financial or operational covenants in a paragraph.)"""
                     },
                     "Debt Details": {
-                        "search_query": "Detailed information about the company's short-term and long-term debt...",
+                        "search_query": "Detailed information about the company's short-term and long-term debt, credit facilities, loans, bonds, debentures, financing arrangements, and key debt covenants.",
                         "system_prompt": """You are a senior credit analyst.
 **CRITICAL INSTRUCTION: The entire output must be plain text. Do NOT use any asterisks (`*`) for formatting. Ensure proper spacing between all words and numbers.**
-Based on the provided text, synthesize all available information about the company's debt structure..."""
+Based on the provided text, synthesize all available information about the company's debt structure. Prioritize information from documents with the most recent year if there are conflicts.
+Format the output as follows:
+# Debt Details Analysis
+## Debt Instruments
+Create a markdown table with the following columns: Instrument, Principal Amount, Maturity Date, Coupon/Rate.
+## Key Covenants
+Under this heading, write a plain text paragraph describing any covenants mentioned.
+## Maturity Profile
+Under this heading, write a plain text paragraph summarizing the debt maturity profile."""
                     },
                     "Litigations and Court Cases/Claims": {
-                        "search_query": "Details on litigations, legal proceedings, lawsuits...",
+                        "search_query": "Details on litigations, legal proceedings, lawsuits, court cases, regulatory investigations, and contingent liabilities.",
                         "system_prompt": """You are a legal analyst.
 **CRITICAL INSTRUCTION: The entire output must be plain text. Do NOT use any asterisks (`*`) for formatting. Ensure proper spacing between all words and numbers.**
-From the context provided, compile a report on all legal and regulatory matters..."""
+From the context provided, compile a report on all legal and regulatory matters. For each distinct case, write a paragraph detailing the nature of the claim, its status, and any potential financial impact. Prioritize information from documents with the most recent year if there are conflicts."""
                     },
                     "Investment Story (Positives & Risks)": {
-                        "search_query": "Company strengths, competitive advantages, growth drivers...",
+                        "search_query": "Company strengths, competitive advantages, growth drivers, market opportunities, risk factors, challenges, and competitive threats.",
                         "system_prompt": """You are an equity research analyst.
 **CRITICAL INSTRUCTION: The entire output must be plain text. Do NOT use any asterisks (`*`) for formatting. Ensure proper spacing between all words and numbers.**
-Construct a balanced investment story..."""
+Construct a balanced investment story. Create two sections: 'Investment Positives' and 'Key Risks'. Under each, write a detailed paragraph summarizing the key points. Do not use lists. Prioritize information from documents with the most recent year if there are conflicts."""
                     },
                     "Company Strategy": {
-                        "search_query": "Information on corporate strategy, business objectives, future plans...",
+                        "search_query": "Information on corporate strategy, business objectives, future plans, growth initiatives, market expansion, product development, and strategic priorities.",
                         "system_prompt": """You are a strategy consultant.
 **CRITICAL INSTRUCTION: The entire output must be plain text. Do NOT use any asterisks (`*`) for formatting. Ensure proper spacing between all words and numbers.**
-Outline the company's core strategy..."""
+Outline the company's core strategy. Use paragraphs for sections like 'Vision & Mission', 'Strategic Pillars', and 'Growth Initiatives'. Prioritize information from documents with the most recent year if there are conflicts."""
                     },
                     "Compare Investment Ideas": {
-                        "search_query": "Comprehensive comparison of companies including business overview...",
-                        "system_prompt": """You are a senior buy-side investment analyst...
+                        "search_query": "Comprehensive comparison of companies including business overview, financial performance (revenue, profit, margins), balance sheet strength (debt, cash, leverage), strategic initiatives, growth drivers, competitive landscape, market position, investment highlights, risk factors, and management outlook.",
+                        "system_prompt": """You are a senior buy-side investment analyst tasked with producing a comparative analysis of several investment ideas.
 **CRITICAL INSTRUCTION: The entire output must be plain text. Do NOT use any asterisks (`*`) for formatting. Ensure proper spacing between all words and numbers.**
-Based ONLY on the provided document excerpts for the selected companies, generate a professional investment comparison memo..."""
+Based ONLY on the provided document excerpts for the selected companies, generate a professional investment comparison memo. The analysis must be objective, data-driven, and written in flowing narrative paragraphs. Avoid using bullet points.
+
+Structure your response with the following headings:
+# Executive Summary
+# Financial Performance Comparison
+# Balance Sheet Health
+# Strategic Outlook & Growth Drivers
+# Risk Profile Comparison
+# Analyst Recommendation
+"""
                     }
                 }
-                
                 config = ANALYSIS_CONFIG.get(analysis_type)
                 if not config: return "Invalid analysis type selected.", ""
                 query_vector = self.embedding_model.encode(config["search_query"]).tolist()
@@ -2759,44 +2767,36 @@ Based ONLY on the provided document excerpts for the selected companies, generat
 
             if proceed:
                 with st.spinner(f"Running '{analysis_choice}' analysis for {', '.join(selected_companies)}..."):
+                    analysis_md, sources = "", ""
                     if analysis_choice == "Custom Query":
-                        answer, sources = agent.query(user_query, selected_companies)
-                        st.markdown(f"### Answer\n{answer}")
-                        st.caption(f"Sources: {sources}")
-                        structured_answer = [("Custom Query Response", answer)]
-                        word_bytes = markdown_to_word_bytes(structured_answer, "Custom Query")
-                        st.download_button(
-                            label="📥 Download as Word (.docx)", data=word_bytes,
-                            file_name="Custom_Query_Analysis.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                        )
+                        analysis_md, sources = agent.query(user_query, selected_companies)
                     else:
                         analysis_md, sources = agent.get_predefined_analysis(analysis_choice, selected_companies)
-                        if "Error:" in analysis_md or "Could not find" in analysis_md:
-                            st.error(analysis_md)
-                        else:
-                            structured_report = parse_markdown_to_structure(analysis_md)
-                            if not structured_report:
-                                st.error("Failed to parse the analysis from the AI model.")
-                            else:
-                                company_name_for_doc = selected_companies[0] if len(selected_companies) == 1 else "Multiple Companies"
-                                report_html = format_analysis_as_html(analysis_md, analysis_choice, sources)
-                                st.markdown(report_html, unsafe_allow_html=True)
 
-                                st.markdown("---")
-                                d1, d2 = st.columns(2)
-                                word_bytes = markdown_to_word_bytes(structured_report, company_name_for_doc)
-                                safe_filename = re.sub(r'[\s/]', '_', analysis_choice)
-                                d1.download_button(
-                                    label="📥 Download as Word (.docx)", data=word_bytes,
-                                    file_name=f"{safe_filename}_{company_name_for_doc}.docx",
-                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                                )
-                                d2.download_button(
-                                    label="📥 Download as HTML (.html)", data=report_html.encode("utf-8"),
-                                    file_name=f"{safe_filename}_{company_name_for_doc}.html",
-                                    mime="text/html"
-                                )
+                    if "Error:" in analysis_md or "Could not find" in analysis_md or not analysis_md.strip():
+                        st.error(analysis_md or "Failed to generate a response from the model.")
+                    else:
+                        structured_report = parse_markdown_to_structure(analysis_md, analysis_choice)
+                        company_name_for_doc = selected_companies[0] if len(selected_companies) == 1 else "Multiple Companies"
+                        report_html = format_analysis_as_html(analysis_md, analysis_choice, sources)
+                        word_bytes = markdown_to_word_bytes(structured_report, company_name_for_doc, analysis_choice)
+                        
+                        st.success("✅ Analysis complete. You can now download the report.")
+
+                        d1, d2 = st.columns(2)
+                        safe_filename = re.sub(r'[\s/]', '_', analysis_choice)
+                        d1.download_button(
+                            label="📥 Download as Word (.docx)",
+                            data=word_bytes,
+                            file_name=f"{safe_filename}_{company_name_for_doc}.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        )
+                        d2.download_button(
+                            label="📥 Download as HTML (.html)",
+                            data=report_html.encode("utf-8"),
+                            file_name=f"{safe_filename}_{company_name_for_doc}.html",
+                            mime="text/html"
+                        )
 
     st.markdown("---")
     st.markdown("#### Manage Data")
