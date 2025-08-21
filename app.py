@@ -3129,11 +3129,13 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
 def pe_agent_app_azure():
     """
     A secure, confidential agent for Private Equity analysis using Azure services.
-    This version uses a robust markdown-to-HTML parsing pipeline for clean output.
+    This version uses a robust markdown-to-HTML parsing pipeline for clean output
+    and supports analysis of both PDF and Excel files.
     """
     # --- Local imports (safe even if you already import these at top-level) ---
-    import io, re, html
+    import io, re, html, os
     import markdown, pdfplumber
+    import pandas as pd
     import streamlit as st
     from azure.core.credentials import AzureKeyCredential
     from azure.ai.documentintelligence import DocumentIntelligenceClient
@@ -3157,7 +3159,7 @@ def pe_agent_app_azure():
         st.error(f"Configuration error: Missing Azure secret: {e}. Please check your secrets.toml file.")
         st.stop()
 
-    # --- PROMPTS TO OUTPUT STRUCTURED MARKDOWN ---
+    # --- PROMPTS TO OUTPUT STRUCTURED MARKDOWN (Unchanged) ---
     ANALYSIS_PROMPTS = {
         "Investment Thesis": (
             "You are a top-tier private equity analyst. Generate a comprehensive investment thesis based on the provided context. "
@@ -3214,6 +3216,25 @@ def pe_agent_app_azure():
                 text.append(page.extract_text() or "")
         return "\n".join(text).strip()
 
+    def parse_excel_to_markdown(file_bytes: bytes, file_name: str) -> str:
+        """
+        Parses an Excel file and converts each sheet to a markdown table string.
+        """
+        try:
+            xls = pd.ExcelFile(io.BytesIO(file_bytes))
+            markdown_texts = []
+            for sheet_name in xls.sheet_names:
+                df = pd.read_excel(xls, sheet_name=sheet_name)
+                df.dropna(how='all', axis=0, inplace=True)
+                df.dropna(how='all', axis=1, inplace=True)
+                if not df.empty:
+                    markdown_texts.append(f"## Data from Sheet: {sheet_name}\n\n")
+                    markdown_texts.append(df.to_markdown(index=False))
+            return "\n\n".join(markdown_texts)
+        except Exception as e:
+            st.warning(f"Could not process Excel file {file_name}: {e}")
+            return ""
+
     def analyze_with_azure_openai(_context: str, _prompt: str) -> str:
         try:
             client = AzureOpenAI(
@@ -3238,7 +3259,6 @@ def pe_agent_app_azure():
         except Exception as e:
             return f"## Error\n\n**Error during Azure OpenAI analysis:** {e}"
 
-    # --- REVISED MARKDOWN-TO-HTML PARSER ---
     def parse_markdown_to_html(analysis_results: dict) -> tuple[str, str]:
         styles = """
         <style>
@@ -3249,47 +3269,65 @@ def pe_agent_app_azure():
             .analysis-container ul { list-style-position: outside; padding-left: 20px; margin-top: 1em; margin-bottom: 1em; }
             .analysis-container li { margin-bottom: 0.75em; line-height: 1.6; }
             .analysis-container strong, .analysis-container b { font-weight: normal; color: inherit; }
+            .analysis-container table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+            .analysis-container th, .analysis-container td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+            .analysis-container th { background-color: #f2f2f2; }
         </style>
         """
         full_html_body = ""
         for title, markdown_content in analysis_results.items():
             full_html_body += f"<h2>{html.escape(title)}</h2>"
-            html_from_md = markdown.markdown(markdown_content)
+            html_from_md = markdown.markdown(markdown_content, extensions=['tables'])
             processed_html = re.sub(r"<h2>(.*?)</h2>", r"<h3>\1</h3>", html_from_md)
             full_html_body += processed_html
         content_div = f"<div class='analysis-container'>{full_html_body}</div>"
         return styles, content_div
 
     # --- UI & WORKFLOW ---
-    st.subheader("1. Upload Confidential Document")
-    uploaded_file = st.file_uploader(
-        "Upload a Teaser, CIM, or Financial Statement (PDF)",
-        type="pdf",
+    st.subheader("1. Upload Confidential Documents")
+    uploaded_files = st.file_uploader(
+        "Upload Teasers, CIMs, or Financials (PDF, XLSX, XLS)",
+        type=["pdf", "xlsx", "xls"],
+        accept_multiple_files=True,
         key="pe_agent_uploader_azure",
     )
 
-    if uploaded_file and "pe_agent_text" not in st.session_state:
-        if st.button("Process Document", type="primary"):
-            with st.spinner("Processing document in secure Azure environment..."):
-                file_bytes = uploaded_file.getvalue()
-                MAX_BYTES = 45 * 1024 * 1024
-                if len(file_bytes) > MAX_BYTES:
-                    st.error("File is too large. Please upload a smaller or compressed PDF.")
-                    st.stop()
-                
-                full_text, _ = parse_pdf_with_azure_di(file_bytes)
-                if not full_text:
-                    st.warning("Falling back to local PDF text extraction.")
-                    full_text = fallback_pdf_text(file_bytes)
-                
-                if full_text:
-                    st.session_state.pe_agent_text = full_text
+    if uploaded_files and "pe_agent_text" not in st.session_state:
+        if st.button("Process Documents", type="primary"):
+            with st.spinner("Processing documents in secure Azure environment..."):
+                all_texts = []
+                for doc in uploaded_files:
+                    file_bytes = doc.getvalue()
+                    MAX_BYTES = 45 * 1024 * 1024 # 45MB
+                    if len(file_bytes) > MAX_BYTES:
+                        st.error(f"File '{doc.name}' is too large. Max size is 45MB.")
+                        continue
+
+                    st.write(f"Processing '{doc.name}'...")
+                    file_ext = os.path.splitext(doc.name)[1].lower()
+                    doc_content = ""
+
+                    if file_ext == ".pdf":
+                        text, _ = parse_pdf_with_azure_di(file_bytes)
+                        if not text:
+                            st.warning(f"Azure DI failed for '{doc.name}'. Falling back to local text extraction.")
+                            text = fallback_pdf_text(file_bytes)
+                        doc_content = text
+                    
+                    elif file_ext in [".xlsx", ".xls"]:
+                        doc_content = parse_excel_to_markdown(file_bytes, doc.name)
+                    
+                    if doc_content:
+                        all_texts.append(f"--- START OF DOCUMENT: {doc.name} ---\n\n{doc_content}\n\n--- END OF DOCUMENT: {doc.name} ---")
+
+                if all_texts:
+                    st.session_state.pe_agent_text = "\n\n".join(all_texts)
                     st.rerun()
                 else:
-                    st.error("Document parsing failed. Please try another document.")
+                    st.error("Document parsing failed for all uploaded files. Please try another document.")
 
     if "pe_agent_text" in st.session_state:
-        st.success("✅ Document processed successfully.")
+        st.success("✅ Documents processed successfully.")
         st.markdown("---")
         st.subheader("2. Select and Generate Analysis")
         analysis_choices = st.multiselect(
@@ -3313,17 +3351,13 @@ def pe_agent_app_azure():
 
     if "pe_agent_analysis_results" in st.session_state:
         st.markdown("---")
-        st.subheader("3. Generated Analysis") # Added a header
+        st.subheader("3. Generated Analysis")
         styles_html, content_html = parse_markdown_to_html(st.session_state.pe_agent_analysis_results)
         
-        # Render the CSS and content in the Streamlit app
         st.markdown(styles_html, unsafe_allow_html=True)
         st.markdown(content_html, unsafe_allow_html=True)
 
-        # --- START: ADDED DOWNLOAD FEATURE ---
         st.markdown("---")
-
-        # Create the full HTML document for download
         full_html_for_download = f"""
         <!DOCTYPE html>
         <html lang="en">
@@ -3341,8 +3375,6 @@ def pe_agent_app_azure():
         </body>
         </html>
         """
-
-        # Add the download button to the UI
         st.download_button(
             label="📥 Download Report as HTML",
             data=full_html_for_download,
