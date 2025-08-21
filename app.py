@@ -2360,6 +2360,8 @@ def portfolio_agent_app(user_id: str):
     # ❗ CHANGE: This function is no longer needed as we want to preserve markdown.
     # def sanitize_ai_output...
 
+    # ❗ REPLACE your existing call_deepseek_model function with this one
+
     def call_deepseek_model(prompt: str) -> str:
         try:
             if not DEEPSEEK_API_KEY:
@@ -2369,9 +2371,15 @@ def portfolio_agent_app(user_id: str):
             payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 8192}
             response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=240)
             response.raise_for_status()
-            # ❗ CHANGE: Removed sanitize_ai_output to preserve markdown.
+            
             raw_content = response.json()["choices"][0]["message"]["content"]
-            return raw_content
+            
+            # ✅ FIX: Clean the raw text as soon as it's received from the model.
+            # This is the most reliable place to apply the fix.
+            cleaned_content = add_spacing_to_run_on_text(raw_content)
+            
+            return cleaned_content
+
         except Exception as e:
             st.error(f"An unexpected error occurred: {e}")
             return f"Error: {e}"
