@@ -1547,44 +1547,12 @@ Repurchase pace, valuation support
             res = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=90)
             res.raise_for_status()
             response_json = json.loads(res.json()["choices"][0]["message"]["content"])
-            # Basic validation to ensure the response is usable
             if 'parent_co' in response_json and 'spin_co' in response_json:
                 return response_json
             return None
         except Exception as e:
             st.warning(f"Could not automatically extract structured financials: {e}")
             return None
-
-    # --- NEW: Automated Multiple Assignment ---
-    def get_valuation_multiples(sotp_financials: Dict) -> Dict:
-        """Assigns reasonable valuation multiples based on business characteristics."""
-        multiples = {}
-        
-        def get_multiple_for_segment(segment):
-            if not segment or segment.get('sales') is None:
-                return None
-                
-            margin = segment.get('ebit_margin')
-            
-            # Use EBIT multiple if profit is meaningful
-            if segment.get('ebit') and segment['ebit'] > 0.1:
-                # Higher margin, stable businesses get higher multiples
-                multiple_range = [7.0, 9.0] if margin < 10.0 else [8.0, 10.0]
-                return {"type": "EV/EBIT", "range": multiple_range, "metric": segment.get('ebit')}
-            # Fallback to Sales multiple if profit is low, zero, or negative
-            else:
-                return {"type": "EV/Sales", "range": [0.4, 0.6], "metric": segment.get('sales')}
-
-        if financials := sotp_financials.get('parent_co'):
-            multiples['parent_co'] = get_multiple_for_segment(financials)
-        if financials := sotp_financials.get('spin_co'):
-            multiples['spin_co'] = get_multiple_for_segment(financials)
-        
-        multiples['other_divestitures'] = []
-        for i, segment in enumerate(sotp_financials.get('other_divestitures', [])):
-             multiples[f'other_divestitures_{i}'] = get_multiple_for_segment(segment)
-             
-        return multiples
 
     # --- Financial Data Fetchers ---
     @st.cache_data(ttl=3600, show_spinner=False)
@@ -1687,7 +1655,12 @@ Repurchase pace, valuation support
 
     # --- Core Memo Generator ---
     def generate_special_situation_note(
-        company_name: str, situation_type: str, uploaded_files: list
+        company_name: str,
+        situation_type: str,
+        uploaded_files: list,
+        valuation_mode: str = "Automated SOTP Analysis",
+        parent_peers: str = "",
+        spinco_peers: str = ""
     ):
         # 1) Extract text from uploaded documents
         combined_text = ""
@@ -1700,42 +1673,50 @@ Repurchase pace, valuation support
         structure = REPORT_TEMPLATES.get(situation_type)
         if not structure: raise ValueError(f"Unsupported situation type: {situation_type}")
 
-        # 3) Build valuation section, now with automated SOTP analysis
+        # 3) Build valuation section for Spin-Offs
         valuation_section = ""
         if situation_type == "Spin-Off or Split-Up":
             try:
+                # --- MODIFIED: This block now orchestrates the new automated valuation ---
                 sotp_data = extract_financials_for_sotp(combined_text, company_name)
-                if not sotp_data or not sotp_data.get('parent_co') or not sotp_data.get('spin_co'):
-                    raise ValueError("Failed to extract necessary SOTP data from documents.")
-                
-                multiples = get_valuation_multiples(sotp_data)
-                
+                if not sotp_data: raise ValueError("Financial data for SOTP not found in documents.")
+
+                multiples = {}
+                # --- MODIFIED: Logic to handle user-provided peers ---
+                if valuation_mode == "Use Manual Peers":
+                    st.info("Using manually provided peers for valuation.")
+                    def process_peers(raw_peers):
+                        names = [n.strip() for n in raw_peers.split(",") if n.strip()]
+                        tickers = [resolve_company_to_ticker(n) for n in names]
+                        mults = [get_ev_ebitda_multiple(t, FMP_API_KEY) for t in tickers if t]
+                        return round(sum(mults) / len(mults), 2) if mults else None
+                    
+                    parent_multiple = process_peers(parent_peers) or 8.0 # Fallback
+                    spinco_multiple = process_peers(spinco_peers) or 8.0 # Fallback
+                    
+                    multiples['parent_co'] = {"type": "EV/EBITDA", "range": [parent_multiple, parent_multiple], "metric": sotp_data.get('parent_co',{}).get('ebit')}
+                    multiples['spin_co'] = {"type": "EV/EBITDA", "range": [spinco_multiple, spinco_multiple], "metric": sotp_data.get('spin_co',{}).get('ebit')}
+
+                else: # Default to Automated SOTP
+                    st.info("Attempting automated SOTP analysis.")
+                    multiples = get_valuation_multiples(sotp_data)
+
+                # --- SOTP Calculation Logic (as designed previously) ---
                 results, total_low, total_high = [], 0, 0
-                
                 def calculate_segment_value(segment_key, segment_data):
                     mult_info = multiples.get(segment_key)
                     if not mult_info or not mult_info.get('metric') or mult_info.get('metric') <= 0: return None, 0, 0
-                    
-                    low_val = mult_info['metric'] * mult_info['range'][0]
-                    high_val = mult_info['metric'] * mult_info['range'][1]
-                    
+                    low_val = mult_info['metric'] * mult_info['range'][0]; high_val = mult_info['metric'] * mult_info['range'][1]
                     results.append({
-                        "name": segment_data.get('name', 'N/A'),
-                        "metric_val": mult_info['metric'],
-                        "multiple_type": mult_info['type'],
-                        "multiple_range": f"{mult_info['range'][0]}x - {mult_info['range'][1]}x",
-                        "low_val": low_val, "high_val": high_val,
-                        "unit": sotp_data.get('unit', 'billion'),
-                        "currency": sotp_data.get('currency', '$')
-                    })
+                        "name": segment_data.get('name', 'N/A'), "metric_val": mult_info['metric'], "multiple_type": mult_info['type'],
+                        "multiple_range": f"{mult_info['range'][0]}x - {mult_info['range'][1]}x", "low_val": low_val, "high_val": high_val,
+                        "unit": sotp_data.get('unit', 'billion'), "currency": sotp_data.get('currency', '$')})
                     return True, low_val, high_val
                 
-                _, low, high = calculate_segment_value('parent_co', sotp_data['parent_co'])
+                _, low, high = calculate_segment_value('parent_co', sotp_data.get('parent_co'))
                 total_low += low; total_high += high
-                
-                _, low, high = calculate_segment_value('spin_co', sotp_data['spin_co'])
+                _, low, high = calculate_segment_value('spin_co', sotp_data.get('spin_co'))
                 total_low += low; total_high += high
-
                 for i, segment in enumerate(sotp_data.get('other_divestitures', [])):
                      _, low, high = calculate_segment_value(f'other_divestitures_{i}', segment)
                      total_low += low; total_high += high
@@ -1743,45 +1724,31 @@ Repurchase pace, valuation support
                 currency_symbol = '€' if sotp_data.get('currency') == 'EUR' else '$'
                 unit_label = sotp_data.get('unit', 'billion')
 
-                # Build the quantitative summary for the prompt
                 valuation_section += "## Valuation Analysis\n"
                 valuation_section += f"Based on a Sum-of-the-Parts (SOTP) analysis, the implied total enterprise value is **{currency_symbol}{total_low:.1f} to {currency_symbol}{total_high:.1f} {unit_label}**.\n\n"
-                valuation_section += "| Business Segment | Key Metric | Multiple | Implied Value Range |\n"
-                valuation_section += "|:---|:---|:---|:---|\n"
+                valuation_section += "| Business Segment | Key Metric | Multiple | Implied Value Range |\n|:---|:---|:---|:---|\n"
                 for res in results:
                     metric_str = f"{currency_symbol}{res['metric_val']:.1f} {unit_label} {res['multiple_type'].split('/')[1]}"
                     value_str = f"{currency_symbol}{res['low_val']:.1f} - {currency_symbol}{res['high_val']:.1f} {unit_label}"
                     valuation_section += f"| **{res['name']}** | {metric_str} | {res['multiple_range']} {res['multiple_type']} | {value_str} |\n"
-                
-                valuation_section += "\n[AI, please use this quantitative SOTP data to write a detailed narrative for the valuation analysis section. Explain how this analysis supports the value-unlock thesis of the spin-off, and discuss the assumptions made.]"
+                valuation_section += "\n[AI, please use this quantitative SOTP data to write a detailed narrative for the valuation analysis section.]"
 
             except Exception as e:
                 st.warning(f"Automated SOTP analysis failed ({e}). Falling back to qualitative analysis.")
-                valuation_section = (
-                    "## Valuation Analysis\n"
-                    "[AI, a quantitative SOTP was not possible. Please generate a qualitative discussion on the potential valuation of the SpinCo entity "
-                    "based on the provided documents. Discuss potential methodologies like Sum-of-the-Parts (SOTP), standalone valuation drivers, "
-                    "and any commentary on value unlocking or valuation arbitrage mentioned in the text.]"
-                )
+                valuation_section = ("## Valuation Analysis\n"
+                                     "[AI, please generate a qualitative discussion on the potential valuation based on the documents.]")
 
         # 4) Assemble the main prompt
         prompt = f"""You are an institutional investment analyst writing a professional memo on {company_name}'s {situation_type}.
-        
-        **CONTEXT DOCUMENTS:**
-        \"\"\"{truncate_safely(combined_text)}\"\"\"
-
-        **VALUATION DATA (If available):**
-        {valuation_section}
-
-        **CRITICAL INSTRUCTIONS:**
-        1. Generate a **detailed, well-written investment memo with comprehensive paragraphs.**
-        2. Elaborate on each point. Write in a narrative style. Each section should have at least 2-3 detailed paragraphs.
-        3. You **MUST** use the exact section titles from the structure below as markdown headings.
-        4. If quantitative 'Valuation Analysis' data is provided above, you **MUST** use it as the foundation for that section's narrative.
-
-        **STRUCTURE:**
-        {structure}
-        """
+        CONTEXT DOCUMENTS: \"\"\"{truncate_safely(combined_text)}\"\"\"
+        VALUATION DATA (If available): {valuation_section}
+        CRITICAL INSTRUCTIONS:
+        1. Generate a detailed, well-written memo with comprehensive paragraphs.
+        2. Write in a narrative style. Each section should have at least 2-3 detailed paragraphs.
+        3. You MUST use the exact section titles from the structure below as markdown headings.
+        4. If quantitative 'Valuation Analysis' data is provided, you MUST use it as the foundation for that section's narrative.
+        STRUCTURE:
+        {structure}"""
 
         # 5) Call LLM and process response
         response = requests.post(DEEPSEEK_API_URL, headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}, json={"model":"deepseek-chat","messages":[{"role":"user","content":prompt}],"temperature":0.3})
@@ -1859,8 +1826,23 @@ Section to Summarize:
     company_name_memo = st.text_input("Enter Company Name", key="company_name_memo")
     situation_type_memo = st.selectbox("Select Situation Type", options=list(REPORT_TEMPLATES.keys()), key="situation_type_memo")
     
+    # --- RESTORED & MODIFIED ---
+    valuation_mode = "Automated SOTP Analysis"
+    parent_peers_raw = ""
+    spinco_peers_raw = ""
+
     if situation_type_memo == "Spin-Off or Split-Up":
-        st.info("For Spin-Offs, the tool will automatically attempt a quantitative SOTP analysis from the documents.", icon="💡")
+        st.markdown("##### 🔍 Valuation Approach")
+        valuation_mode = st.radio(
+            "Choose a valuation approach for the SOTP analysis:",
+            options=["Automated SOTP Analysis", "Use Manual Peers"],
+            key="valuation_mode",
+            horizontal=True,
+            help="Automated analysis is the default. Choose manual to provide your own peer companies."
+        )
+        if valuation_mode == "Use Manual Peers":
+            parent_peers_raw = st.text_area("Enter ParentCo Peer Company Names (comma-separated)", key="parent_peers_raw")
+            spinco_peers_raw = st.text_area("Enter SpinCo Peer Company Names (comma-separated)", key="spinco_peers_raw")
 
     uploaded_files_memo = st.file_uploader("Upload Public Documents (PDF, DOCX)", accept_multiple_files=True, key="uploaded_files_memo")
 
@@ -1873,7 +1855,10 @@ Section to Summarize:
                     memo_path = generate_special_situation_note(
                         company_name=company_name_memo,
                         situation_type=situation_type_memo,
-                        uploaded_files=uploaded_files_memo
+                        uploaded_files=uploaded_files_memo,
+                        valuation_mode=valuation_mode,
+                        parent_peers=parent_peers_raw,
+                        spinco_peers=spinco_peers_raw
                     )
                     st.session_state.memo_path = memo_path
                     st.session_state.company_name = company_name_memo
