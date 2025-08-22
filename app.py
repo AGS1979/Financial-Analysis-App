@@ -2516,6 +2516,8 @@ def portfolio_agent_app(user_id: str):
 
     def format_analysis_as_html(markdown_text: str, title: str, sources: str) -> str:
         content_html = markdown.markdown(markdown_text, extensions=['tables'])
+        # Logic to prevent repeating the word "Analysis"
+        final_title = title if "analysis" in title.lower() else f"{title} Analysis"
         html_style = """
         <style>
             .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9f9f9; margin-top: 20px; }
@@ -2534,7 +2536,7 @@ def portfolio_agent_app(user_id: str):
         return f"""
         {html_style}
         <div class="analysis-container">
-            <h2>{title} Analysis</h2>
+            <h2>{final_title}</h2>
             {content_html}
             <div class="sources"><strong>Sources:</strong> {sources}</div>
         </div>
