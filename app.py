@@ -2313,6 +2313,7 @@ def portfolio_agent_app(user_id: str):
     A persistent agent to index and query company documents using Pinecone,
     with added capabilities for pre-defined, structured analysis.
     """
+    import xml.etree.ElementTree as ET
     st.markdown("### 🗂️ Agent Portfolio")
     st.markdown("Upload company-specific documents for indexation.")
 
@@ -2346,6 +2347,96 @@ def portfolio_agent_app(user_id: str):
         except Exception as e:
             st.error(f"An unexpected error occurred: {e}")
             return f"Error: {e}"
+
+    def parse_competitive_analysis_xml(xml_string: str) -> str:
+        """Parses the XML output from the Competitive Analysis prompt into formatted Markdown."""
+        match = re.search(r'<answer>.*</answer>', xml_string, re.DOTALL)
+        if not match:
+            # If no answer tag is found, return the original text assuming it might be an error or different format.
+            return xml_string
+        
+        clean_xml = match.group(0)
+        
+        try:
+            root = ET.fromstring(clean_xml)
+            md_parts = []
+
+            # --- Competitive Landscape ---
+            landscape = root.find('competitive_landscape')
+            if landscape is not None:
+                md_parts.append("## Competitive Landscape")
+                for child in landscape:
+                    if child.tag not in ['competitor', 'competitors']:
+                        title = child.tag.replace('_', ' ').title()
+                        md_parts.append(f"**{title}:** {child.text.strip() if child.text else ''}\n")
+                md_parts.append("\n---\n")
+                md_parts.append("## Key Competitors")
+                
+                direct_competitors, disruptors = [], []
+                for competitor in landscape.findall('.//competitor'):
+                    comp_name = competitor.find('name').text.strip()
+                    comp_type = competitor.find('type').text.strip()
+                    comp_pos = competitor.find('positioning').text.strip()
+                    comp_price = competitor.find('pricing').text.strip()
+                    comp_moves = competitor.find('recent_strategic_moves').text.strip()
+                    
+                    comp_md = (f"#### {comp_name}\n"
+                               f"**Positioning:** {comp_pos}\n\n"
+                               f"**Pricing & Strategy:** {comp_price}\n\n"
+                               f"**Recent Moves:** {comp_moves}\n")
+                    if 'Direct' in comp_type:
+                        direct_competitors.append(comp_md)
+                    else:
+                        disruptors.append(comp_md)
+
+                if direct_competitors:
+                    md_parts.append("### Direct Competitors")
+                    md_parts.extend(direct_competitors)
+                if disruptors:
+                    md_parts.append("### Adjacent-Space Disruptors")
+                    md_parts.extend(disruptors)
+
+            # --- Opportunity Gaps ---
+            gaps = root.find('opportunity_gaps')
+            if gaps is not None:
+                md_parts.append("\n---\n## Identified Opportunity Gaps")
+                for i, item in enumerate(list(gaps), 1):
+                    name_tag = item.find('name')
+                    desc_tag = item.find('description')
+                    # Find the last child element to represent the 'current tactic'
+                    tactic_tag = list(item)[-1] if list(item) else None
+
+                    name = name_tag.text.strip() if name_tag is not None and name_tag.text else f"Opportunity {i}"
+                    desc = desc_tag.text.strip() if desc_tag is not None and desc_tag.text else "No description provided."
+                    tactic = tactic_tag.text.strip() if tactic_tag is not None and tactic_tag.text and tactic_tag.tag != 'description' else "N/A"
+                    
+                    md_parts.append(f"### {i}. {name}")
+                    md_parts.append(desc)
+                    md_parts.append(f"\n**Current Approach:** {tactic}\n")
+
+            # --- Prioritized Actions ---
+            actions = root.find('prioritized_actions')
+            if actions is not None:
+                md_parts.append("\n---\n## Prioritized Strategic Actions")
+                md_parts.append("| Action | Impact (1-5) | Feasibility (1-5) | Rationale |")
+                md_parts.append("| :--- | :---: | :---: | :--- |")
+                for action in actions.findall('action'):
+                    name = action.find('name').text.strip()
+                    impact = next((action.find(tag).text.strip() for tag in ['impact_score', 'impact'] if action.find(tag) is not None), "N/A")
+                    feasibility = next((action.find(tag).text.strip() for tag in ['feasibility_score', 'feasibility'] if action.find(tag) is not None), "N/A")
+                    rationale = action.find('rationale').text.strip()
+                    md_parts.append(f"| **{name}** | {impact} | {feasibility} | {rationale} |")
+
+            # --- Sources ---
+            sources = root.find('sources')
+            if sources is not None:
+                md_parts.append("\n---\n## Sources")
+                for source in sources.findall('source'):
+                    md_parts.append(f"* {source.text.strip()}")
+            
+            return "\n".join(md_parts)
+        except ET.ParseError:
+            return xml_string # Return original string if parsing fails
 
     def parse_markdown_to_structure(markdown_text: str, analysis_type: str) -> list:
         if analysis_type == "Custom Query":
@@ -2779,10 +2870,14 @@ Structure your response with the following headings:
                         analysis_md, sources = agent.query(user_query, selected_companies)
                     else:
                         analysis_md, sources = agent.get_predefined_analysis(analysis_choice, selected_companies)
-
+                    
                     if "Error:" in analysis_md or "Could not find" in analysis_md or not analysis_md.strip():
                         st.error(analysis_md or "Failed to generate a response from the model.")
                     else:
+                        # If the analysis is Competitive Analysis, parse the XML output to Markdown
+                        if analysis_choice == "Competitive Analysis" and "<answer>" in analysis_md:
+                            analysis_md = parse_competitive_analysis_xml(analysis_md)
+
                         structured_report = parse_markdown_to_structure(analysis_md, analysis_choice)
                         company_name_for_doc = selected_companies[0] if len(selected_companies) == 1 else "Multiple Companies"
                         report_html = format_analysis_as_html(analysis_md, analysis_choice, sources)
