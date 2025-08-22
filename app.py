@@ -2348,27 +2348,48 @@ def portfolio_agent_app(user_id: str):
             st.error(f"An unexpected error occurred: {e}")
             return f"Error: {e}"
 
-    def parse_competitive_analysis_xml(xml_string: str) -> str:
+    def format_competitive_analysis_output(raw_text: str) -> str:
         """
-        Robustly parses the XML output from the Competitive Analysis prompt into formatted Markdown.
-        Handles variations in the XML schema.
+        Robustly formats the Competitive Analysis output.
+        Tries to parse as XML first, then falls back to heuristic HTML cleanup.
         """
-        match = re.search(r'<answer>.*</answer>', xml_string, re.DOTALL)
+        # --- Fallback Function for Messy HTML-like Text ---
+        def fallback_formatter(text: str) -> str:
+            # Remove the answer tags
+            text = re.sub(r'</?answer>', '', text, flags=re.IGNORECASE)
+            # Add headings for key sections
+            text = re.sub(r'^\s*<competitive_landscape>\s*', '## Competitive Landscape\n', text, flags=re.IGNORECASE)
+            text = re.sub(r'^\s*<opportunity_gaps>\s*', '## Opportunity Gaps\n', text, flags=re.IGNORECASE)
+            text = re.sub(r'^\s*<prioritized_actions>\s*', '## Prioritized Actions\n', text, flags=re.IGNORECASE)
+            text = re.sub(r'^\s*<sources>\s*', '## Sources\n', text, flags=re.IGNORECASE)
+            # Format strong tags and paragraphs
+            text = re.sub(r'<p><strong>(.*?)</strong>', r'\n### \1', text, flags=re.DOTALL)
+            text = re.sub(r'<strong>(.*?)</strong>', r'**\1**', text, flags=re.DOTALL)
+            text = re.sub(r'</?p>', '\n', text)
+            # Format lists
+            text = re.sub(r'<li>', '\n* ', text)
+            # Clean up all remaining tags
+            text = re.sub(r'<.*?>', '', text)
+            # Normalize whitespace
+            text = re.sub(r'\n\s*\n', '\n\n', text).strip()
+            return text
+
+        # --- Main Function Logic ---
+        match = re.search(r'<answer>(.*)</answer>', raw_text, re.DOTALL)
         if not match:
-            return xml_string
+            return fallback_formatter(raw_text) # Try fallback even if no answer tag
         
-        clean_xml = match.group(0)
+        content = match.group(1)
         
         try:
-            root = ET.fromstring(clean_xml)
+            # Try to parse as clean XML
+            root = ET.fromstring(f"<root>{content}</root>") # Wrap in root for safety
             md_parts = []
-
-            # --- Helper to safely get text from an element ---
-            def get_text(element, path, default='N/A'):
+            
+            def get_text(element, path, default=''):
                 node = element.find(path)
                 return node.text.strip() if node is not None and node.text else default
 
-            # --- Competitive Landscape ---
             landscape = root.find('competitive_landscape')
             if landscape is not None:
                 md_parts.append("## Competitive Landscape")
@@ -2376,54 +2397,52 @@ def portfolio_agent_app(user_id: str):
                     if child.tag not in ['competitors', 'adjacent_disruptors']:
                         title = child.tag.replace('_', ' ').title()
                         md_parts.append(f"**{title}:** {child.text.strip() if child.text else ''}\n")
-                md_parts.append("\n---\n")
-                md_parts.append("## Key Competitors")
+                md_parts.append("\n---\n## Key Competitors")
 
-                # Direct Competitors
-                competitors_section = landscape.find('competitors')
-                if competitors_section is not None:
+                if landscape.find('competitors') is not None:
                     md_parts.append("### Direct Competitors")
-                    for competitor in competitors_section.findall('competitor'):
-                        name = get_text(competitor, 'name')
-                        pos = get_text(competitor, 'positioning')
-                        price = get_text(competitor, 'pricing')
-                        moves = get_text(competitor, 'recent_moves')
+                    for comp in landscape.find('competitors').findall('competitor'):
+                        name = get_text(comp, 'name')
+                        pos = get_text(comp, 'positioning')
+                        price = get_text(comp, 'pricing')
+                        moves = get_text(comp, 'recent_strategic_moves')
                         md_parts.append(f"#### {name}\n**Positioning:** {pos}\n\n**Pricing:** {price}\n\n**Recent Moves:** {moves}\n")
                 
-                # Adjacent-Space Disruptors
-                disruptors_section = landscape.find('adjacent_disruptors')
-                if disruptors_section is not None:
+                if landscape.find('adjacent_disruptors') is not None:
                     md_parts.append("### Adjacent-Space Disruptors")
-                    for disruptor in disruptors_section.findall('disruptor'):
-                        name = get_text(disruptor, 'name')
-                        pos = get_text(disruptor, 'positioning')
-                        price = get_text(disruptor, 'pricing')
-                        moves = get_text(disruptor, 'recent_moves')
+                    for dis in landscape.find('adjacent_disruptors').findall('disruptor'):
+                        name = get_text(dis, 'name')
+                        pos = get_text(dis, 'positioning')
+                        price = get_text(dis, 'pricing')
+                        moves = get_text(dis, 'recent_strategic_moves')
                         md_parts.append(f"#### {name}\n**Positioning:** {pos}\n\n**Pricing:** {price}\n\n**Recent Moves:** {moves}\n")
 
-            # --- Opportunity Gaps ---
             gaps = root.find('opportunity_gaps')
             if gaps is not None:
                 md_parts.append("\n---\n## Identified Opportunity Gaps")
-                for i, gap in enumerate(gaps.findall('gap'), 1):
-                    lever = get_text(gap, 'lever')
-                    desc = get_text(gap, 'description')
-                    md_parts.append(f"### {i}. {lever}\n{desc}\n")
+                if gaps.find('comparison') is not None:
+                    md_parts.append(get_text(gaps, 'comparison') + '\n')
+                
+                levers = gaps.find('levers') if gaps.find('levers') is not None else gaps
+                for i, lever in enumerate(levers, 1):
+                    name = get_text(lever, 'name')
+                    desc = get_text(lever, 'description')
+                    exploit = get_text(lever, 'diageo_exploitation')
+                    md_parts.append(f"### {i}. {name}\n{desc}")
+                    if exploit: md_parts.append(f"\n**Current Exploitation:** {exploit}\n")
 
-            # --- Prioritized Actions ---
             actions = root.find('prioritized_actions')
             if actions is not None:
                 md_parts.append("\n---\n## Prioritized Strategic Actions")
                 md_parts.append("| Action | Impact (1-5) | Feasibility (1-5) | Rationale |")
                 md_parts.append("| :--- | :---: | :---: | :--- |")
                 for action in actions.findall('action'):
-                    lever = get_text(action, 'lever')
-                    impact = get_text(action, 'impact')
-                    feasibility = get_text(action, 'feasibility')
+                    name = get_text(action, 'name', get_text(action, 'description'))
+                    impact = get_text(action, 'impact', get_text(action, 'impact_score'))
+                    feasibility = get_text(action, 'feasibility', get_text(action, 'feasibility_score'))
                     rationale = get_text(action, 'rationale')
-                    md_parts.append(f"| **{lever}** | {impact} | {feasibility} | {rationale} |")
+                    md_parts.append(f"| **{name}** | {impact} | {feasibility} | {rationale} |")
 
-            # --- Sources ---
             sources = root.find('sources')
             if sources is not None:
                 md_parts.append("\n---\n## Sources")
@@ -2432,7 +2451,8 @@ def portfolio_agent_app(user_id: str):
             
             return "\n".join(md_parts)
         except ET.ParseError:
-            return xml_string
+            # If XML parsing fails, use the fallback formatter on the original text
+            return fallback_formatter(raw_text)
 
     def parse_markdown_to_structure(markdown_text: str, analysis_type: str) -> list:
         if analysis_type == "Custom Query":
@@ -2872,9 +2892,8 @@ Structure your response with the following headings:
                     if "Error:" in analysis_md or "Could not find" in analysis_md or not analysis_md.strip():
                         st.error(analysis_md or "Failed to generate a response from the model.")
                     else:
-                        # If the analysis is Competitive Analysis, parse the XML output to Markdown
-                        if analysis_choice == "Competitive Analysis" and "<answer>" in analysis_md:
-                            analysis_md = parse_competitive_analysis_xml(analysis_md)
+                        if analysis_choice == "Competitive Analysis":
+                            analysis_md = format_competitive_analysis_output(analysis_md)
 
                         structured_report = parse_markdown_to_structure(analysis_md, analysis_choice)
                         company_name_for_doc = selected_companies[0] if len(selected_companies) == 1 else "Multiple Companies"
