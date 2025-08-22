@@ -2589,6 +2589,20 @@ Structure your response with the following headings:
 (Write a short, concluding paragraph that synthesizes the key findings and provides a balanced view on the company's position.)
 """
                     },
+                    "Competitive Analysis": {
+                        "search_query": "High-level overview of the company, its industry, main products, and business strategy to provide initial context.",
+                        "system_prompt": """<instructions> You are a top-tier strategy consultant with deep expertise in competitive analysis, growth loops, pricing, and unit-economics-driven product strategy. If information is unavailable, state that explicitly. </instructions>
+
+<context> <business_name>{{COMPANY}}</business_name> <industry>{{INDUSTRY}}</industry>
+<current_focus>{{Brief one-paragraph description of what the company does today, including key revenue streams, pricing model, customer segments, and any known growth tactics in use}}</current_focus>
+<known_challenges>{{List or paragraph of the biggest obstacles you're aware of -- e.g., slowing user growth, rising CAC, regulatory pressure}}</known_challenges> </context>
+
+<task> 1. Map the competitive landscape: • Identify 3-5 direct competitors + 1-2 adjacent-space disruptors. • Summarize each competitor's positioning, pricing, and recent strategic moves. 2. Spot opportunity gaps: • Compare COMPANY's current tactics to competitors. • Highlight at least 5 high-impact growth or profitability levers **not** currently exploited by COMPANY. 3. Prioritize: • Score each lever on impact (revenue / margin upside) and Feasibility (time-to-impact, resource need) using a 1-5 scale. • Recommend the top 3 actions with the strongest Impact x Feasibility. </task>
+
+<approach> - Go VERY deep. Research far more than you normally would. Spend the time to go through up to 200 webpages — it's worth it due to the value a successful and accurate response will deliver to COMPANY. - Don't just look at articles, forums, etc. — anything is fair game... COMPANY/competitor websites, analytics platforms, etc. </approach>
+
+<output_format> Return ONLY the following XML: <answer> <competitive_landscape> </competitive_landscape> <opportunity_gaps> </opportunity_gaps> <prioritized_actions> </prioritized_actions> <sources> </sources> </answer> </output_format>"""
+                    },
                     "Cap Structure": {
                         "search_query": "Detailed information about the company's capital structure, including short-term and long-term debt instruments, maturity dates, coupon rates, leases, equity, and debt covenants.",
                         "system_prompt": """You are a senior credit analyst.
@@ -2660,7 +2674,26 @@ Structure your response with the following headings:
                 context_excerpts = [f"Excerpt from '{m.metadata['source_file']} (Year: {m.metadata.get('year', 'N/A')})':\n\"{m.metadata['original_text']}\"\n" for m in results.matches]
                 source_docs = sorted(list(set(m.metadata['source_file'] for m in results.matches)))
                 safe_context = truncate_context(context_excerpts)
-                prompt = f"{config['system_prompt']}\n\nBase your analysis *only* on the following context:\n--- DOCUMENT CONTEXT ---\n{safe_context}\n--- END CONTEXT ---\n\nProvide the analysis for '{', '.join(companies)}'."
+
+                system_prompt = config['system_prompt']
+                company_str = ', '.join(companies)
+
+                if analysis_type == "Competitive Analysis":
+                    system_prompt = system_prompt.replace('{{COMPANY}}', company_str)
+                    system_prompt = system_prompt.replace('COMPANY', company_str)
+                    system_prompt = system_prompt.replace('{{INDUSTRY}}', '(To be determined by your research)')
+                    system_prompt = system_prompt.replace(
+                        '{{Brief one-paragraph description of what the company does today, including key revenue streams, pricing model, customer segments, and any known growth tactics in use}}',
+                        '(To be determined by your research based on the company name provided)'
+                    )
+                    system_prompt = system_prompt.replace(
+                        '{{List or paragraph of the biggest obstacles you\'re aware of -- e.g., slowing user growth, rising CAC, regulatory pressure}}',
+                        '(To be determined by your research based on the company name provided)'
+                    )
+                    prompt = f"{system_prompt}\n\nYou can use the following internal document context as a potential starting point, but your primary instruction is to perform the deep external research as detailed in the prompt above.\n--- DOCUMENT CONTEXT ---\n{safe_context}\n--- END CONTEXT ---\n\nProvide the analysis for '{company_str}'."
+                else:
+                    prompt = f"{system_prompt}\n\nBase your analysis *only* on the following context:\n--- DOCUMENT CONTEXT ---\n{safe_context}\n--- END CONTEXT ---\n\nProvide the analysis for '{company_str}'."
+                
                 return call_deepseek_model(prompt), ", ".join(source_docs)
 
             def get_indexed_companies(self) -> List[str]:
@@ -2682,7 +2715,7 @@ Structure your response with the following headings:
                     st.success(f"Successfully deleted all data for **{company_name}**.")
                 except Exception as e:
                     st.error(f"Failed to delete data for {company_name}: {e}")
-        
+            
         try:
             return PortfolioAgent(user_id=user_id)
         except Exception as e:
@@ -2718,7 +2751,7 @@ Structure your response with the following headings:
         selected_companies = st.multiselect("Select Company/Companies to Analyze", options=indexed_companies, default=indexed_companies[0] if indexed_companies else [])
         
         analysis_options = [
-            "Quick Company Note", "Compare Investment Ideas", "Investment Story (Positives & Risks)",
+            "Quick Company Note", "Competitive Analysis", "Compare Investment Ideas", "Investment Story (Positives & Risks)",
             "Cap Structure", "Debt Details", "Litigations and Court Cases/Claims",
             "Company Strategy", "Custom Query"
         ]
