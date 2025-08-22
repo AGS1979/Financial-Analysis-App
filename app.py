@@ -1379,18 +1379,10 @@ def special_situations_app():
         "Spin-Off or Split-Up": """
 Transaction Overview
 ParentCo and SpinCo details
-Rationale (regulatory, strategic unlock, valuation arbitrage)
-Distribution terms (ratio, eligibility, tax treatment)
 ParentCo Post-Spin Outlook
-Strategic focus
-Financial profile and valuation
 SpinCo Investment Case
-Business model, growth drivers
-Historical and pro forma financials
-Independent valuation (e.g., Sum-of-the-Parts)
 Valuation Analysis
 Risks and Overhangs
-Forced selling, low float, governance concerns
 """,
         "Mergers & Acquisitions": """
 Deal Summary
@@ -1693,7 +1685,7 @@ Repurchase pace, valuation support
         section.left_margin, section.right_margin, section.top_margin, section.bottom_margin = (Inches(0.75),)*4
         return doc
 
-    # --- Core Memo Generator (HEAVILY UPDATED) ---
+    # --- Core Memo Generator ---
     def generate_special_situation_note(
         company_name: str, situation_type: str, uploaded_files: list
     ):
@@ -1878,7 +1870,6 @@ Section to Summarize:
         else:
             with st.spinner("Generating memo with automated analysis... This may take a moment."):
                 try:
-                    # NOTE: Removed valuation_mode, parent_peers, spinco_peers as they are no longer needed for the automated flow
                     memo_path = generate_special_situation_note(
                         company_name=company_name_memo,
                         situation_type=situation_type_memo,
