@@ -2349,10 +2349,12 @@ def portfolio_agent_app(user_id: str):
             return f"Error: {e}"
 
     def parse_competitive_analysis_xml(xml_string: str) -> str:
-        """Parses the XML output from the Competitive Analysis prompt into formatted Markdown."""
+        """
+        Robustly parses the XML output from the Competitive Analysis prompt into formatted Markdown.
+        Handles variations in the XML schema.
+        """
         match = re.search(r'<answer>.*</answer>', xml_string, re.DOTALL)
         if not match:
-            # If no answer tag is found, return the original text assuming it might be an error or different format.
             return xml_string
         
         clean_xml = match.group(0)
@@ -2361,58 +2363,52 @@ def portfolio_agent_app(user_id: str):
             root = ET.fromstring(clean_xml)
             md_parts = []
 
+            # --- Helper to safely get text from an element ---
+            def get_text(element, path, default='N/A'):
+                node = element.find(path)
+                return node.text.strip() if node is not None and node.text else default
+
             # --- Competitive Landscape ---
             landscape = root.find('competitive_landscape')
             if landscape is not None:
                 md_parts.append("## Competitive Landscape")
                 for child in landscape:
-                    if child.tag not in ['competitor', 'competitors']:
+                    if child.tag not in ['competitors', 'adjacent_disruptors']:
                         title = child.tag.replace('_', ' ').title()
                         md_parts.append(f"**{title}:** {child.text.strip() if child.text else ''}\n")
                 md_parts.append("\n---\n")
                 md_parts.append("## Key Competitors")
-                
-                direct_competitors, disruptors = [], []
-                for competitor in landscape.findall('.//competitor'):
-                    comp_name = competitor.find('name').text.strip()
-                    comp_type = competitor.find('type').text.strip()
-                    comp_pos = competitor.find('positioning').text.strip()
-                    comp_price = competitor.find('pricing').text.strip()
-                    comp_moves = competitor.find('recent_strategic_moves').text.strip()
-                    
-                    comp_md = (f"#### {comp_name}\n"
-                               f"**Positioning:** {comp_pos}\n\n"
-                               f"**Pricing & Strategy:** {comp_price}\n\n"
-                               f"**Recent Moves:** {comp_moves}\n")
-                    if 'Direct' in comp_type:
-                        direct_competitors.append(comp_md)
-                    else:
-                        disruptors.append(comp_md)
 
-                if direct_competitors:
+                # Direct Competitors
+                competitors_section = landscape.find('competitors')
+                if competitors_section is not None:
                     md_parts.append("### Direct Competitors")
-                    md_parts.extend(direct_competitors)
-                if disruptors:
+                    for competitor in competitors_section.findall('competitor'):
+                        name = get_text(competitor, 'name')
+                        pos = get_text(competitor, 'positioning')
+                        price = get_text(competitor, 'pricing')
+                        moves = get_text(competitor, 'recent_moves')
+                        md_parts.append(f"#### {name}\n**Positioning:** {pos}\n\n**Pricing:** {price}\n\n**Recent Moves:** {moves}\n")
+                
+                # Adjacent-Space Disruptors
+                disruptors_section = landscape.find('adjacent_disruptors')
+                if disruptors_section is not None:
                     md_parts.append("### Adjacent-Space Disruptors")
-                    md_parts.extend(disruptors)
+                    for disruptor in disruptors_section.findall('disruptor'):
+                        name = get_text(disruptor, 'name')
+                        pos = get_text(disruptor, 'positioning')
+                        price = get_text(disruptor, 'pricing')
+                        moves = get_text(disruptor, 'recent_moves')
+                        md_parts.append(f"#### {name}\n**Positioning:** {pos}\n\n**Pricing:** {price}\n\n**Recent Moves:** {moves}\n")
 
             # --- Opportunity Gaps ---
             gaps = root.find('opportunity_gaps')
             if gaps is not None:
                 md_parts.append("\n---\n## Identified Opportunity Gaps")
-                for i, item in enumerate(list(gaps), 1):
-                    name_tag = item.find('name')
-                    desc_tag = item.find('description')
-                    # Find the last child element to represent the 'current tactic'
-                    tactic_tag = list(item)[-1] if list(item) else None
-
-                    name = name_tag.text.strip() if name_tag is not None and name_tag.text else f"Opportunity {i}"
-                    desc = desc_tag.text.strip() if desc_tag is not None and desc_tag.text else "No description provided."
-                    tactic = tactic_tag.text.strip() if tactic_tag is not None and tactic_tag.text and tactic_tag.tag != 'description' else "N/A"
-                    
-                    md_parts.append(f"### {i}. {name}")
-                    md_parts.append(desc)
-                    md_parts.append(f"\n**Current Approach:** {tactic}\n")
+                for i, gap in enumerate(gaps.findall('gap'), 1):
+                    lever = get_text(gap, 'lever')
+                    desc = get_text(gap, 'description')
+                    md_parts.append(f"### {i}. {lever}\n{desc}\n")
 
             # --- Prioritized Actions ---
             actions = root.find('prioritized_actions')
@@ -2421,11 +2417,11 @@ def portfolio_agent_app(user_id: str):
                 md_parts.append("| Action | Impact (1-5) | Feasibility (1-5) | Rationale |")
                 md_parts.append("| :--- | :---: | :---: | :--- |")
                 for action in actions.findall('action'):
-                    name = action.find('name').text.strip()
-                    impact = next((action.find(tag).text.strip() for tag in ['impact_score', 'impact'] if action.find(tag) is not None), "N/A")
-                    feasibility = next((action.find(tag).text.strip() for tag in ['feasibility_score', 'feasibility'] if action.find(tag) is not None), "N/A")
-                    rationale = action.find('rationale').text.strip()
-                    md_parts.append(f"| **{name}** | {impact} | {feasibility} | {rationale} |")
+                    lever = get_text(action, 'lever')
+                    impact = get_text(action, 'impact')
+                    feasibility = get_text(action, 'feasibility')
+                    rationale = get_text(action, 'rationale')
+                    md_parts.append(f"| **{lever}** | {impact} | {feasibility} | {rationale} |")
 
             # --- Sources ---
             sources = root.find('sources')
@@ -2436,7 +2432,7 @@ def portfolio_agent_app(user_id: str):
             
             return "\n".join(md_parts)
         except ET.ParseError:
-            return xml_string # Return original string if parsing fails
+            return xml_string
 
     def parse_markdown_to_structure(markdown_text: str, analysis_type: str) -> list:
         if analysis_type == "Custom Query":
