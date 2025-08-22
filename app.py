@@ -1552,9 +1552,7 @@ Repurchase pace, valuation support
 
     # --- Text & Document Processors ---
     def clean_markdown(text):
-        # This function is now safe because it's called on section content, not the whole memo.
         text = re.sub(r'^[ \t\-]{3,}$', '', text, flags=re.MULTILINE)
-        # The line that removed headings is no longer needed here.
         text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
         text = re.sub(r'\*(.*?)\*', r'\1', text)
         text = re.sub(r'`{1,3}(.*?)`{1,3}', r'\1', text)
@@ -1567,7 +1565,6 @@ Repurchase pace, valuation support
     def truncate_safely(text, limit=20000):
         return text[:limit]
 
-    # --- FIXED: Robust section splitting ---
     def split_into_sections(raw_text: str, template: str) -> Dict[str, str]:
         """
         Splits raw AI-generated text into a dictionary of sections based on markdown headings.
@@ -1577,7 +1574,6 @@ Repurchase pace, valuation support
         if not titles:
             return {"Investment Memo": raw_text.strip()}
 
-        # Pattern to find markdown headings that match our template titles.
         pattern = re.compile(
             r"^#+\s*(" + "|".join(map(re.escape, titles)) + r")\s*$",
             re.MULTILINE | re.IGNORECASE
@@ -1590,7 +1586,6 @@ Repurchase pace, valuation support
 
         for i, match in enumerate(matches):
             title_from_text = match.group(1).strip()
-            # Find the canonical title from our list to handle case differences.
             canonical_title = next((t for t in titles if t.lower() == title_from_text.lower()), title_from_text)
             
             start_of_content = match.end()
@@ -1638,7 +1633,7 @@ Repurchase pace, valuation support
         
         return doc
 
-    # --- Core Memo Generator ---
+    # --- Core Memo Generator (IMPROVED) ---
     def generate_special_situation_note(
         company_name: str,
         situation_type: str,
@@ -1647,7 +1642,7 @@ Repurchase pace, valuation support
         parent_peers: str = "",
         spinco_peers: str = ""
     ):
-        # 1) Extract text
+        # 1) Extract text from uploaded documents
         combined_text = ""
         for file in uploaded_files:
             if file.name.endswith(".pdf"):
@@ -1657,14 +1652,14 @@ Repurchase pace, valuation support
             else:
                 combined_text += f"[Unsupported file: {file.name}]\n"
 
-        # 2) Select template
+        # 2) Select the appropriate report structure/template
         structure = REPORT_TEMPLATES.get(situation_type)
         if not structure:
             raise ValueError(f"Unsupported situation type: {situation_type}")
 
-        # 3) Build valuation_section only for spin-offs
+        # 3) (IMPROVED) Build valuation section for Spin-Offs, ensuring it's always present
         valuation_section = ""
-        if situation_type == "Spin-Off or Split-Up" and valuation_mode:
+        if situation_type == "Spin-Off or Split-Up":
             def process_peers(raw: str):
                 names = [n.strip() for n in raw.split(",") if n.strip()]
                 tickers = [resolve_company_to_ticker(n) for n in names]
@@ -1673,15 +1668,8 @@ Repurchase pace, valuation support
                 return names, tickers, mults, avg
 
             if valuation_mode == "Let AI choose peers":
-                prompt_peers = (
-                    f"List 5 large, publicly-traded companies most comparable to the business segments of {company_name}, "
-                    "separated by commas."
-                )
-                resp = requests.post(
-                    DEEPSEEK_API_URL,
-                    headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"},
-                    json={"model":"deepseek-chat","messages":[{"role":"user","content":prompt_peers}],"temperature":0}
-                )
+                prompt_peers = f"List 5 large, publicly-traded companies most comparable to the business segments of {company_name}, separated by commas."
+                resp = requests.post(DEEPSEEK_API_URL, headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}, json={"model":"deepseek-chat","messages":[{"role":"user","content":prompt_peers}],"temperature":0})
                 resp.raise_for_status()
                 body = resp.json().get("choices", [])
                 ai_text = body[0].get("message",{}).get("content","") if body else ""
@@ -1697,7 +1685,6 @@ Repurchase pace, valuation support
                 equity_est = ev_est - debt
                 upside_pct = ((equity_est / actual_mc) - 1) * 100 if actual_mc else None
 
-                # *** CHANGE HERE: Standardized the heading to match the template ***
                 valuation_section = f"""
 ## Valuation Analysis
 **AI-Selected Peers**: {', '.join(peer_names)}
@@ -1713,7 +1700,6 @@ Repurchase pace, valuation support
             elif valuation_mode == "I'll enter peer company names":
                 p_names, _, p_mults, p_avg = process_peers(parent_peers)
                 s_names, _, s_mults, s_avg = process_peers(spinco_peers)
-                # *** CHANGE HERE: Standardized the heading to match the template ***
                 valuation_section = f"""
 ## Valuation Analysis
 **ParentCo Peers**: {', '.join(p_names)}
@@ -1721,8 +1707,15 @@ EV/EBITDA multiples: {p_mults} (avg {p_avg or 'N/A'})
 **SpinCo Peers**: {', '.join(s_names)}
 EV/EBITDA multiples: {s_mults} (avg {s_avg or 'N/A'})
 """
-        
-        # 4) --- FIXED: Assemble a more robust prompt ---
+            else: # Catches "None" or any other case
+                valuation_section = (
+                    "## Valuation Analysis\n"
+                    "[AI, please generate a qualitative discussion on the potential valuation of the SpinCo entity "
+                    "based on the provided documents. Discuss potential methodologies like Sum-of-the-Parts (SOTP), "
+                    "standalone valuation drivers, and any commentary on value unlocking or valuation arbitrage mentioned in the text.]"
+                )
+
+        # 4) (IMPROVED) Assemble a more robust prompt for detailed, narrative content
         prompt = f"""You are an institutional investment analyst writing a professional memo on a special situation involving {company_name}.
 The situation is: **{situation_type}**
 
@@ -1731,20 +1724,23 @@ Below is the internal company information extracted from various files:
 
 {valuation_section}
 
-**CRITICAL INSTRUCTION:** Using the structure below, generate a well-written investment memo. You MUST use the exact section titles from the structure as markdown headings (e.g., "## Transaction Overview", "## ParentCo Post-Spin Outlook"). Do not create your own section titles. **If a 'Valuation Analysis' section is provided above, you MUST use it directly for that part of the memo.**
+**CRITICAL INSTRUCTIONS:**
+1.  Using the structure below, generate a **detailed, well-written investment memo with comprehensive paragraphs.**
+2.  Elaborate on each point. Avoid overly concise or purely bullet-pointed sections where a narrative is more appropriate. Each section should contain at least 2-3 detailed paragraphs.
+3.  You **MUST** use the exact section titles from the structure as markdown headings (e.g., "## Transaction Overview"). Do not create your own section titles.
+4.  If a 'Valuation Analysis' section is provided above with specific data or instructions, you **MUST** use it directly and expand upon it for that part of the memo.
 
 Structure:
 {structure}
 """
 
-        # 5) Call DeepSeek
+        # 5) Call DeepSeek API
         response = requests.post(
             DEEPSEEK_API_URL,
             headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"},
             json={"model":"deepseek-chat","messages":[{"role":"user","content":prompt}],"temperature":0.3}
         )
         response.raise_for_status()
-        # --- FIXED: Process raw text first, then clean ---
         raw_memo_text = response.json()["choices"][0]["message"]["content"]
 
         # 6) Split the raw text into sections using markdown headings
@@ -1771,7 +1767,6 @@ Structure:
         current_heading = None
         current_text = []
 
-        # Find all bolded paragraphs as potential headings
         all_headings = [p.text.strip() for p in doc.paragraphs if p.runs and all(r.bold for r in p.runs if r.text.strip())]
 
         for para in doc.paragraphs:
@@ -1779,7 +1774,6 @@ Structure:
             if not text:
                 continue
             
-            # Check if the paragraph text is a likely heading
             is_heading = text in all_headings and text.lower() in expected_titles
             
             if is_heading:
@@ -1887,13 +1881,14 @@ Section to Summarize:
             "Choose a valuation approach:",
             options=["Let AI choose peers", "I'll enter peer company names", "None"],
             key="valuation_mode",
-            horizontal=True
+            horizontal=True,
+            help="Select 'None' to have the AI generate a qualitative valuation summary based on the document text."
         )
         if valuation_mode == "I'll enter peer company names":
             parent_peers_raw = st.text_area("Enter ParentCo Peer Company Names (comma-separated)", key="parent_peers_raw")
             spinco_peers_raw = st.text_area("Enter SpinCo Peer Company Names (comma-separated)", key="spinco_peers_raw")
         elif valuation_mode == "Let AI choose peers":
-            st.info("AI will select peers, fetch financials, and generate valuation logic automatically.")
+            st.info("AI will select peers, fetch financials, and generate a quantitative valuation analysis.")
 
     uploaded_files_memo = st.file_uploader("Upload Public Documents (PDF, DOCX)", accept_multiple_files=True, key="uploaded_files_memo")
 
