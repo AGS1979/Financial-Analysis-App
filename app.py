@@ -1502,7 +1502,7 @@ Repurchase pace, valuation support
         except Exception as e:
             return f"[ERROR extracting DOCX: {e}]"
 
-    # --- NEW: Automated Financial Data Extraction for SOTP ---
+    # --- Automated Financial Data Extraction for SOTP ---
     @st.cache_data(ttl=3600, show_spinner=False)
     def extract_financials_for_sotp(text: str, company_name: str) -> Dict:
         """Uses an LLM to extract structured financial data for SOTP analysis."""
@@ -1553,6 +1553,36 @@ Repurchase pace, valuation support
         except Exception as e:
             st.warning(f"Could not automatically extract structured financials: {e}")
             return None
+
+    # --- NEWLY ADDED: Automated Multiple Assignment ---
+    def get_valuation_multiples(sotp_financials: Dict) -> Dict:
+        """Assigns reasonable valuation multiples based on business characteristics."""
+        multiples = {}
+        
+        def get_multiple_for_segment(segment):
+            if not segment or segment.get('sales') is None:
+                return None
+                
+            margin = segment.get('ebit_margin')
+            
+            # Use EBIT multiple if profit is meaningful (e.g., > 100 million or >1% margin)
+            if segment.get('ebit') and segment['ebit'] > 0.1:
+                # Higher margin, stable businesses get higher multiples
+                multiple_range = [7.0, 9.0] if margin and margin < 10.0 else [8.0, 10.0]
+                return {"type": "EV/EBIT", "range": multiple_range, "metric": segment.get('ebit')}
+            # Fallback to Sales multiple if profit is low, zero, or negative
+            else:
+                return {"type": "EV/Sales", "range": [0.4, 0.6], "metric": segment.get('sales')}
+
+        if financials := sotp_financials.get('parent_co'):
+            multiples['parent_co'] = get_multiple_for_segment(financials)
+        if financials := sotp_financials.get('spin_co'):
+            multiples['spin_co'] = get_multiple_for_segment(financials)
+        
+        for i, segment in enumerate(sotp_financials.get('other_divestitures', [])):
+             multiples[f'other_divestitures_{i}'] = get_multiple_for_segment(segment)
+             
+        return multiples
 
     # --- Financial Data Fetchers ---
     @st.cache_data(ttl=3600, show_spinner=False)
@@ -1677,16 +1707,15 @@ Repurchase pace, valuation support
         valuation_section = ""
         if situation_type == "Spin-Off or Split-Up":
             try:
-                # --- MODIFIED: This block now orchestrates the new automated valuation ---
                 sotp_data = extract_financials_for_sotp(combined_text, company_name)
                 if not sotp_data: raise ValueError("Financial data for SOTP not found in documents.")
 
                 multiples = {}
-                # --- MODIFIED: Logic to handle user-provided peers ---
                 if valuation_mode == "Use Manual Peers":
                     st.info("Using manually provided peers for valuation.")
                     def process_peers(raw_peers):
                         names = [n.strip() for n in raw_peers.split(",") if n.strip()]
+                        if not names: return None
                         tickers = [resolve_company_to_ticker(n) for n in names]
                         mults = [get_ev_ebitda_multiple(t, FMP_API_KEY) for t in tickers if t]
                         return round(sum(mults) / len(mults), 2) if mults else None
@@ -1694,14 +1723,13 @@ Repurchase pace, valuation support
                     parent_multiple = process_peers(parent_peers) or 8.0 # Fallback
                     spinco_multiple = process_peers(spinco_peers) or 8.0 # Fallback
                     
-                    multiples['parent_co'] = {"type": "EV/EBITDA", "range": [parent_multiple, parent_multiple], "metric": sotp_data.get('parent_co',{}).get('ebit')}
-                    multiples['spin_co'] = {"type": "EV/EBITDA", "range": [spinco_multiple, spinco_multiple], "metric": sotp_data.get('spin_co',{}).get('ebit')}
-
+                    # For manual mode, we assume user wants an EV/EBITDA or EV/EBIT like multiple
+                    multiples['parent_co'] = {"type": "EV/EBIT", "range": [parent_multiple, parent_multiple], "metric": sotp_data.get('parent_co',{}).get('ebit')}
+                    multiples['spin_co'] = {"type": "EV/EBIT", "range": [spinco_multiple, spinco_multiple], "metric": sotp_data.get('spin_co',{}).get('ebit')}
                 else: # Default to Automated SOTP
                     st.info("Attempting automated SOTP analysis.")
                     multiples = get_valuation_multiples(sotp_data)
 
-                # --- SOTP Calculation Logic (as designed previously) ---
                 results, total_low, total_high = [], 0, 0
                 def calculate_segment_value(segment_key, segment_data):
                     mult_info = multiples.get(segment_key)
@@ -1826,7 +1854,6 @@ Section to Summarize:
     company_name_memo = st.text_input("Enter Company Name", key="company_name_memo")
     situation_type_memo = st.selectbox("Select Situation Type", options=list(REPORT_TEMPLATES.keys()), key="situation_type_memo")
     
-    # --- RESTORED & MODIFIED ---
     valuation_mode = "Automated SOTP Analysis"
     parent_peers_raw = ""
     spinco_peers_raw = ""
@@ -1850,7 +1877,7 @@ Section to Summarize:
         if not company_name_memo or not situation_type_memo or not uploaded_files_memo:
             st.warning("Please fill in all fields and upload at least one document.")
         else:
-            with st.spinner("Generating memo with automated analysis... This may take a moment."):
+            with st.spinner("Generating memo... This may take a moment."):
                 try:
                     memo_path = generate_special_situation_note(
                         company_name=company_name_memo,
@@ -1878,7 +1905,7 @@ Section to Summarize:
     st.markdown("\n\n---\n\n")
 
     st.header("Step 2: Generate Infographic from Memo")
-    st.info("This will use the memo you just generated, or you can upload a different one.")
+    st.info("After generating the memo, you can either upload it below or, if you just generated it, the app will use it automatically.")
     uploaded_memo_infographic = st.file_uploader("Upload the generated Memo (.docx)", type=["docx"], key="uploaded_memo_infographic")
 
     if st.button("Generate Infographic", type="primary"):
