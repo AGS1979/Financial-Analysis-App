@@ -2349,59 +2349,108 @@ def esg_analyzer_app():
 def portfolio_agent_app(user_id: str):
     """
     A persistent agent to index and query company documents using Pinecone,
-    with added capabilities for pre-defined, structured analysis including visual risk snapshots.
+    with a direct-to-download workflow and visual risk snapshots stored in Supabase.
     """
     import xml.etree.ElementTree as ET
     import json
     import html
+    import uuid
 
     st.markdown("### 🗂️ Agent Portfolio")
     st.markdown("Upload company-specific documents for indexation.")
 
-    # --- NEW HELPER: Generates a visual snapshot from a PDF ---
-    def generate_risk_snapshot(file_bytes: bytes, quote: str) -> bytes | None:
+    # --- MODIFICATION: Rewritten snapshot generator to be more robust ---
+    def generate_risk_snapshot(file_bytes: bytes, page_num: int, key_phrases: list) -> bytes | None:
         """
-        Finds a quote in a PDF, highlights it, and returns the page as a PNG image.
+        Goes to a specific PDF page, highlights key phrases, and returns a PNG image.
         """
-        if not quote or not file_bytes:
+        if not file_bytes or not key_phrases or page_num < 1:
             return None
         try:
             doc = fitz.open(stream=file_bytes, filetype="pdf")
-            for page in doc:
-                # Search for the quote on the page. Using quads=True gives precise coordinates.
-                text_instances = page.search_for(quote, quads=True)
+            if page_num > len(doc):
+                st.warning(f"AI requested page {page_num}, but PDF only has {len(doc)} pages.")
+                doc.close()
+                return None
+            
+            page = doc.load_page(page_num - 1)  # fitz is 0-indexed
+            
+            found_something = False
+            for phrase in key_phrases:
+                text_instances = page.search_for(phrase, quads=True)
                 if text_instances:
-                    # Add a highlight annotation for each found instance
+                    found_something = True
                     for inst in text_instances:
                         highlight = page.add_highlight_annot(inst)
-                        highlight.update() # Apply the change
-                    
-                    # Render the page with the highlight into an image
-                    pix = page.get_pixmap(dpi=150) # Use a good DPI for readability
-                    img_bytes = pix.tobytes("png")
-                    
-                    doc.close()
-                    return img_bytes
+                        highlight.update(stroke=(1, 0, 0))  # Red color for visibility
+            
+            if not found_something:
+                st.warning(f"Could not find key phrases on page {page_num} to highlight.")
+            
+            pix = page.get_pixmap(dpi=200)  # Higher DPI for clarity
+            img_bytes = pix.tobytes("png")
             doc.close()
-            return None # Quote not found in the entire document
+            return img_bytes
         except Exception as e:
-            st.warning(f"Could not generate PDF snapshot: {e}")
+            st.error(f"Error generating PDF snapshot: {e}")
             return None
 
-    # --- HELPER FUNCTIONS ---
-    def truncate_context(excerpts: list, max_chars: int = 120000) -> str:
-        full_context = ""
-        for excerpt in excerpts:
-            if len(full_context) + len(excerpt) > max_chars:
-                break
-            full_context += excerpt
-        return full_context
+    # --- MODIFICATION: New function to generate the final HTML report for risks ---
+    def generate_risk_assessment_html(risks_data: list, company_name: str, sources_str: str) -> str:
+        """Creates a self-contained HTML report for the risk assessment with embedded images."""
+        styles = """
+        <style>
+            body { font-family: 'Poppins', sans-serif; background-color: #f9fafb; color: #333; margin: 0; padding: 20px; }
+            .container { max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+            h1, h2, h3 { color: #1e1e1e; }
+            h1 { font-size: 2.2em; text-align: center; margin-bottom: 10px; }
+            h2 { font-size: 1.1em; text-align: center; font-weight: 400; color: #666; margin-top: 0; margin-bottom: 40px; }
+            .risk-card { border: 1px solid #e0e0e0; border-left: 5px solid #c0392b; border-radius: 8px; margin-bottom: 25px; overflow: hidden; }
+            .risk-card-header { background-color: #fcf1f1; padding: 15px 20px; border-bottom: 1px solid #e0e0e0; }
+            .risk-card-header h3 { margin: 0; font-size: 1.3em; color: #a1332a; }
+            .risk-card-body { padding: 20px; }
+            .risk-card-body h4 { font-size: 0.9em; color: #333; margin-top: 0; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.8px; font-weight: 600; }
+            .risk-card-body p { font-size: 1em; line-height: 1.7; color: #555; margin: 0 0 15px 0; }
+            .snapshot-container { margin-top: 20px; }
+            .snapshot-container img { max-width: 100%; border: 1px solid #ddd; border-radius: 4px; }
+            .sources-footer { font-size: 0.8em; color: #777; margin-top: 30px; text-align: center; }
+        </style>
+        """
+        cards_html = ""
+        for i, risk in enumerate(risks_data, 1):
+            snapshot_html = ""
+            if risk.get("snapshot_url"):
+                snapshot_html = f"""
+                <div class="snapshot-container">
+                    <h4>Source Snapshot from <i>{html.escape(risk.get('source_file', 'N/A'))}</i> (Page {risk.get('page_number', 'N/A')})</h4>
+                    <img src="{risk['snapshot_url']}" alt="Source document snapshot">
+                </div>
+                """
+            else:
+                 snapshot_html = f"<p><i>(Visual snapshot could not be generated for this risk).</i></p>"
 
-    def add_spacing_to_run_on_text(text: str) -> str:
-        text = re.sub(r'(\d)([a-zA-Z])', r'\1 \2', text)
-        text = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', text)
-        text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)
-        return text
+            cards_html += f"""
+            <div class="risk-card">
+                <div class="risk-card-header"><h3>Risk #{i}: {html.escape(risk.get('risk_title', 'Untitled Risk'))}</h3></div>
+                <div class="risk-card-body">
+                    <h4>Summary</h4>
+                    <p>{html.escape(risk.get('risk_summary', 'N/A'))}</p>
+                    <h4>Potential Impact</h4>
+                    <p>{html.escape(risk.get('potential_impact', 'N/A'))}</p>
+                    {snapshot_html}
+                </div>
+            </div>
+            """
+        
+        return f"""
+        <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Risk Assessment Report</title>{styles}</head>
+        <body><div class="container">
+            <h1>Risk Assessment Report</h1>
+            <h2>For: {html.escape(company_name)}</h2>
+            {cards_html}
+            <div class="sources-footer"><strong>Source Documents Analyzed:</strong> {html.escape(sources_str)}</div>
+        </div></body></html>
+        """
 
     def call_deepseek_model(prompt: str, is_json: bool = False) -> str:
         try:
@@ -2505,123 +2554,30 @@ def portfolio_agent_app(user_id: str):
         except ET.ParseError:
             return fallback_formatter(raw_text)
 
-    def parse_markdown_to_structure(markdown_text: str, analysis_type: str) -> list:
-        if analysis_type == "Custom Query":
-            return [("Custom Query Response", markdown_text)]
-        structure = []
-        heading_pattern = re.compile(r'^#+\s+.*$', re.MULTILINE)
-        matches = list(heading_pattern.finditer(markdown_text))
-        if not matches:
-            if markdown_text.strip(): structure.append(("Overview", markdown_text.strip()))
-            return structure
-        for i, match in enumerate(matches):
-            heading_text = match.group(0).strip()
-            start_of_content = match.end()
-            end_of_content = matches[i + 1].start() if (i + 1) < len(matches) else len(markdown_text)
-            content_text = markdown_text[start_of_content:end_of_content].strip()
-            structure.append((heading_text, content_text))
-        return structure
-
-    def markdown_to_word_bytes(structured_data: list, company_name: str, analysis_type: str) -> bytes:
-        doc = Document()
-        styles = doc.styles
-        def define_style(style_name, style_type, font_name, font_size, is_bold=False):
-            try:
-                style = styles[style_name]
-            except KeyError:
-                style = styles.add_style(style_name, style_type)
-            font = style.font
-            font.name = font_name
-            font.size = Pt(font_size)
-            font.bold = is_bold
-            if style_type == WD_STYLE_TYPE.PARAGRAPH:
-                style.base_style = styles['Normal']
-            return style
-        title_style = define_style('DocTitle', WD_STYLE_TYPE.PARAGRAPH, 'Aptos Display', 16, True)
-        heading_style = define_style('DocHeading', WD_STYLE_TYPE.PARAGRAPH, 'Aptos Display', 12, True)
-        body_style = define_style('DocBody', WD_STYLE_TYPE.PARAGRAPH, 'Aptos Display', 9, False)
-        title_style.paragraph_format.space_after = Pt(18)
-        heading_style.paragraph_format.space_before = Pt(12)
-        heading_style.paragraph_format.space_after = Pt(6)
-        body_style.paragraph_format.line_spacing = 1.15
-        doc.add_paragraph(f"{analysis_type} - {company_name}", style=title_style)
-        for heading, content in structured_data:
-            cleaned_heading = re.sub(r'^#+\s*', '', heading).strip()
-            doc.add_paragraph(cleaned_heading, style=heading_style)
-            is_table = False
-            lines = content.strip().split('\n')
-            if len(lines) > 1 and '|' in lines[0] and re.match(r'^\s*\|?(:?-+:?\|)+(:?-+:?)?\s*$', lines[1]):
-                is_table = True
-            if is_table:
-                headers = [h.strip() for h in lines[0].strip('|').split('|')]
-                table = doc.add_table(rows=1, cols=len(headers))
-                table.style = 'Table Grid'
-                hdr_cells = table.rows[0].cells
-                for i, h in enumerate(headers):
-                    hdr_cells[i].text = h
-                for row_line in lines[2:]:
-                    row_cells = table.add_row().cells
-                    cells = [c.strip() for c in row_line.strip('|').split('|')]
-                    for i, c in enumerate(cells):
-                        if i < len(row_cells): row_cells[i].text = c
-            else:
-                for para in content.split('\n'):
-                    para = para.strip()
-                    if not para: continue
-                    if para.startswith(('* ', '- ')):
-                        doc.add_paragraph(para[2:], style='List Bullet')
-                    else:
-                        doc.add_paragraph(para.replace('**', ''), style=body_style)
-        buffer = io.BytesIO()
-        doc.save(buffer)
-        buffer.seek(0)
-        return buffer.getvalue()
-
     def format_analysis_as_html(markdown_text: str, title: str, sources: str) -> str:
         content_html = markdown.markdown(markdown_text, extensions=['tables'])
         final_title = title if "analysis" in title.lower() else f"{title} Analysis"
         html_style = """
         <style>
-            .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9f9f9; margin-top: 20px; }
+            body { font-family: 'Poppins', sans-serif; background-color: #f9fafb; padding: 20px; }
+            .analysis-container { max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
             .analysis-container h1, .analysis-container h2, .analysis-container h3, .analysis-container h4 { color: #00416A; }
             .analysis-container h2 {font-size: 1.5em; border-bottom: 2px solid #00416A; padding-bottom: 10px; margin-top: 0;}
             .analysis-container h3 {font-size: 1.2em; padding-bottom: 5px; margin-top: 25px; border-bottom: 1px solid #e6f1f6;}
             .analysis-container table { width: 100%; border-collapse: collapse; margin: 15px 0; }
             .analysis-container th, .analysis-container td { border: 1px solid #ddd; padding: 10px 14px; text-align: left; }
             .analysis-container th { background-color: #e6f1f6; font-weight: 600; }
-            .analysis-container p { margin-bottom: 1em; line-height: 1.6; }
-            .analysis-container ul, .analysis-container ol { padding-left: 1.5em; }
-            .analysis-container li { margin-bottom: 0.75em; line-height: 1.6;}
             .analysis-container .sources { font-size: 0.85em; color: #555; margin-top: 25px; text-align: right; }
         </style>
         """
         return f"""
-        {html_style}
+        <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>{final_title}</title>{html_style}</head><body>
         <div class="analysis-container">
             <h2>{final_title}</h2>
             {content_html}
             <div class="sources"><strong>Sources:</strong> {sources}</div>
-        </div>
+        </div></body></html>
         """
-        
-    def risk_assessment_to_word_bytes(risks_data: list, company_name: str) -> bytes:
-        doc = Document()
-        doc.add_heading(f"Risk Assessment: {company_name}", 0)
-        doc.add_paragraph("Note: This document contains the text summary. For visual snapshots of source pages, please refer to the web UI.")
-        for i, risk in enumerate(risks_data, 1):
-            doc.add_heading(f"Risk #{i}: {risk.get('risk_title', 'Untitled Risk')}", level=1)
-            doc.add_heading("Summary", level=2)
-            doc.add_paragraph(risk.get('risk_summary', 'N/A'))
-            doc.add_heading("Potential Impact", level=2)
-            doc.add_paragraph(risk.get('potential_impact', 'N/A'))
-            doc.add_heading("Source Quote", level=2)
-            p = doc.add_paragraph()
-            p.add_run(risk.get('source_quote', 'N/A')).italic = True
-            doc.add_paragraph()
-        buffer = io.BytesIO()
-        doc.save(buffer)
-        buffer.seek(0)
-        return buffer.getvalue()
 
     @st.cache_resource
     def load_agent(user_id):
@@ -2722,36 +2678,38 @@ def portfolio_agent_app(user_id: str):
                     else:
                         st.warning("No new content was indexed.")
 
-            def get_predefined_analysis(self, analysis_type: str, companies: List[str], k: int = 40) -> Tuple[str, str, object]:
-                ANALYSIS_CONFIG = self._get_analysis_config()
-                config = ANALYSIS_CONFIG.get(analysis_type)
-                if not config: return "Invalid analysis type selected.", "", None
-                query_vector = self.embedding_model.encode(config["search_query"]).tolist()
-                query_filter = {"company": {"$in": [self.sanitize_filename(c) for c in companies]}}
-                
-                if analysis_type == "Risk Assessment": k = 60
-
-                results = self.index.query(vector=query_vector, top_k=k, filter=query_filter, include_metadata=True, namespace=self.namespace)
-
-                if not results.matches: return f"Could not find any documents for this analysis.", "", None
-                
-                if analysis_type == "Risk Assessment":
-                    results.matches.sort(key=lambda m: m.metadata.get('year', 0))
-
-                context_excerpts = [f"Excerpt from '{m.metadata['source_file']} (Year: {m.metadata.get('year', 'N/A')})':\n\"{m.metadata['original_text']}\"\n" for m in results.matches]
-                source_docs = sorted(list(set(m.metadata['source_file'] for m in results.matches)))
-                safe_context = truncate_context(context_excerpts)
-
-                system_prompt = config['system_prompt'].replace('{COMPANY_NAME}', ', '.join(companies))
-                prompt = f"{system_prompt}\n\nBase your analysis *only* on the following context:\n--- DOCUMENT CONTEXT ---\n{safe_context}\n--- END CONTEXT ---"
-                
-                is_json_output = analysis_type == "Risk Assessment"
-                response_text = call_deepseek_model(prompt, is_json=is_json_output)
-                
-                return response_text, ", ".join(source_docs), results.matches
-
             def _get_analysis_config(self):
+                # --- MODIFICATION: Heavily revised Risk Assessment prompt ---
                 return {
+                    "Risk Assessment": {
+                        "search_query": "All mentions of risk factors, potential risks, challenges, threats, contingent liabilities, legal proceedings, and uncertainties.",
+                        "system_prompt": """You are an expert risk analyst. Your task is to analyze the provided document excerpts for {COMPANY_NAME}.
+**CRITICAL INSTRUCTIONS:**
+1.  Identify **4-5 of the most significant COMPANY-SPECIFIC risks**.
+2.  You MUST differentiate between company-specific risks (e.g., reliance on a single supplier, a major lawsuit) and generic industry/market risks (e.g., economic downturns). **Focus exclusively on the company-specific ones.**
+3.  For each identified risk, you must provide the **page number** where the risk is detailed and a list of a few **short, key phrases** from that page that can be used to locate it.
+4.  Return a single, valid JSON object. The root key should be "risks", and its value should be a list of objects.
+5.  Each object in the list must have these four keys:
+    - "risk_title": A short, descriptive title for the risk.
+    - "risk_summary": A concise one-paragraph summary explaining the risk.
+    - "potential_impact": A one-paragraph analysis of the potential impact on the company.
+    - "source_details": An object containing "page_number" (as an integer) and "key_phrases" (as a list of strings).
+**EXAMPLE JSON OUTPUT STRUCTURE:**
+{
+  "risks": [
+    {
+      "risk_title": "Reliance on a Single Product Line",
+      "risk_summary": "The company derives over 85% of its total revenue from the 'InnovateX' product, creating significant concentration risk...",
+      "potential_impact": "A decline in InnovateX sales could lead to a sharp fall in revenue and profitability...",
+      "source_details": {
+        "page_number": 12,
+        "key_phrases": ["InnovateX product line", "accounted for approximately 87%", "net product revenues"]
+      }
+    }
+  ]
+}
+"""
+                    },
                     "Quick Company Note": {
                         "search_query": "Comprehensive company profile including business overview, products, services, market position, key financial data like revenue, profit, margins, cash flow, EPS, balance sheet items (debt, cash), industry trends, competitive landscape, investment highlights, strengths, weaknesses, opportunities, threats, risk factors, and any red flags like impairments or governance issues.",
                         "system_prompt": """You are an expert equity research analyst from a top-tier investment bank. Your task is to generate a professional 'Quick Company Note' based ONLY on the provided document excerpts.
@@ -2806,32 +2764,6 @@ Under this heading, write a plain text paragraph summarizing the debt maturity p
                     "Litigations and Court Cases/Claims": { "search_query": "Details on litigations, legal proceedings, lawsuits, court cases, regulatory investigations, and contingent liabilities.", "system_prompt": """You are a legal analyst.
 **CRITICAL INSTRUCTION: The entire output must be plain text. Do NOT use any asterisks (`*`) for formatting. Ensure proper spacing between all words and numbers.**
 From the context provided, compile a report on all legal and regulatory matters. For each distinct case, write a paragraph detailing the nature of the claim, its status, and any potential financial impact. Prioritize information from documents with the most recent year if there are conflicts.""" },
-                    "Risk Assessment": {
-                        "search_query": "All mentions of risk factors, potential risks, challenges, threats, contingent liabilities, legal proceedings, and uncertainties.",
-                        "system_prompt": """You are an expert risk analyst. Your task is to analyze the provided document excerpts for {COMPANY_NAME} in chronological order.
-**CRITICAL INSTRUCTIONS:**
-1.  Identify **4-5 of the most significant COMPANY-SPECIFIC risks**.
-2.  You MUST differentiate between company-specific risks (e.g., reliance on a single supplier, a major lawsuit) and generic industry/market risks (e.g., economic downturns, general competition). **Focus exclusively on the company-specific ones.**
-3.  For each identified risk, you must extract the **exact verbatim quote** from the source text that best describes it.
-4.  Return a single, valid JSON object. The root key should be "risks", and its value should be a list of objects.
-5.  Each object in the list must have these four keys:
-    - "risk_title": A short, descriptive title for the risk (e.g., "Dependency on Key Personnel").
-    - "risk_summary": A concise one-paragraph summary explaining the risk.
-    - "potential_impact": A one-paragraph analysis of the potential financial or operational impact on the company.
-    - "source_quote": The exact, verbatim quote from the document that describes the risk.
-**EXAMPLE JSON OUTPUT STRUCTURE:**
-{
-  "risks": [
-    {
-      "risk_title": "Reliance on a Single Product Line",
-      "risk_summary": "The company derives over 85% of its total revenue from the 'InnovateX' product, creating significant concentration risk. Any downturn in this product's market could severely affect financial performance.",
-      "potential_impact": "A decline in InnovateX sales could lead to a sharp fall in revenue and profitability. It also makes the company vulnerable to new competitors targeting this specific niche. This could impact stock valuation and the ability to fund future R&D.",
-      "source_quote": "Our InnovateX product line accounted for approximately 87% and 85% of our net product revenues in fiscal 2024 and 2023, respectively."
-    }
-  ]
-}
-"""
-                    },
                     "Company Strategy": { "search_query": "Information on corporate strategy, business objectives, future plans, growth initiatives, market expansion, product development, and strategic priorities.", "system_prompt": """You are a strategy consultant.
 **CRITICAL INSTRUCTION: The entire output must be plain text. Do NOT use any asterisks (`*`) for formatting. Ensure proper spacing between all words and numbers.**
 Outline the company's core strategy. Use paragraphs for sections like 'Vision & Mission', 'Strategic Pillars', and 'Growth Initiatives'. Prioritize information from documents with the most recent year if there are conflicts.""" },
@@ -2864,6 +2796,26 @@ Please use primarily the documents provided and any documents directly from the 
 Approach this analysis without bias. Remain completely objective and do not become influenced by any of these statements or anything that is biased to be bullish or bearish. The goal is to provide clues towards the future trajectory of the company's stock price, informed by the evolution of fundamentals and the narrative.
 """ }
                 }
+
+            def get_predefined_analysis(self, analysis_type: str, companies: List[str], k: int = 40) -> Tuple[str, str, object]:
+                ANALYSIS_CONFIG = self._get_analysis_config()
+                config = ANALYSIS_CONFIG.get(analysis_type)
+                if not config: return "Invalid analysis type selected.", "", None
+                query_vector = self.embedding_model.encode(config["search_query"]).tolist()
+                query_filter = {"company": {"$in": [self.sanitize_filename(c) for c in companies]}}
+                if analysis_type == "Risk Assessment": k = 60
+                results = self.index.query(vector=query_vector, top_k=k, filter=query_filter, include_metadata=True, namespace=self.namespace)
+                if not results.matches: return f"Could not find any documents for this analysis.", "", None
+                if analysis_type == "Risk Assessment":
+                    results.matches.sort(key=lambda m: m.metadata.get('year', 0))
+                context_excerpts = [f"Excerpt from '{m.metadata['source_file']} (Year: {m.metadata.get('year', 'N/A')})':\n\"{m.metadata['original_text']}\"\n" for m in results.matches]
+                source_docs = sorted(list(set(m.metadata['source_file'] for m in results.matches)))
+                safe_context = truncate_context(context_excerpts)
+                system_prompt = config['system_prompt'].replace('{COMPANY_NAME}', ', '.join(companies))
+                prompt = f"{system_prompt}\n\nBase your analysis *only* on the following context:\n--- DOCUMENT CONTEXT ---\n{safe_context}\n--- END CONTEXT ---"
+                is_json_output = analysis_type == "Risk Assessment"
+                response_text = call_deepseek_model(prompt, is_json=is_json_output)
+                return response_text, ", ".join(source_docs), results.matches
 
             def get_indexed_companies(self) -> List[str]:
                 all_companies = set()
@@ -2899,6 +2851,11 @@ Approach this analysis without bias. Remain completely objective and do not beco
     if not agent:
         st.stop()
 
+    # --- MODIFICATION: Initialize session state for download ---
+    if 'download_content' not in st.session_state:
+        st.session_state.download_content = None
+        st.session_state.download_filename = ""
+
     st.subheader("📁 Index New Company Documents")
     
     with st.form("indexing_form"):
@@ -2913,140 +2870,99 @@ Approach this analysis without bias. Remain completely objective and do not beco
                 st.warning("Please provide a company name and at least one document.")
 
     st.markdown("---")
-    st.subheader("🔍 Analyze & Manage Companies")
+    st.subheader("🔍 Analyze & Generate Report")
 
     indexed_companies = agent.get_indexed_companies()
     if not indexed_companies:
-        st.info("No companies have been indexed. Please index documents to run an analysis.")
+        st.info("Please index documents to run an analysis.")
+    else:
+        analysis_options = [ "Risk Assessment", "Quick Company Note", "Competitive Analysis", "Management Meeting Prep", "Compare Investment Ideas", "Cap Structure", "Debt Details", "Litigations and Court Cases/Claims", "Company Strategy", "Custom Query" ]
+        analysis_choice = st.selectbox("Select Analysis Type", options=analysis_options)
+        selected_companies = st.multiselect("Select Company/Companies", options=indexed_companies, default=indexed_companies[0] if indexed_companies else [])
+        
+        # MODIFICATION: Changed button text for clarity on the new workflow
+        if st.button("🚀 Generate & Prepare for Download", use_container_width=True, type="primary"):
+            proceed = False
+            if not selected_companies:
+                st.warning("Please select at least one company.")
+            elif analysis_choice == "Compare Investment Ideas" and len(selected_companies) < 2:
+                st.warning("Please select at least two companies for comparison.")
+            else:
+                proceed = True
 
-    analysis_options = [
-        "Quick Company Note", "Competitive Analysis", "Management Meeting Prep", 
-        "Compare Investment Ideas", "Risk Assessment",
-        "Cap Structure", "Debt Details", "Litigations and Court Cases/Claims",
-        "Company Strategy", "Custom Query"
-    ]
-    analysis_choice = st.selectbox("Select Analysis Type", options=analysis_options)
-    
-    selected_companies = st.multiselect("Select Company/Companies to Analyze", options=indexed_companies, default=indexed_companies[0] if indexed_companies else [])
-    
-    user_query = ""
-    if analysis_choice == "Custom Query":
-        user_query = st.text_area("Ask a question about the selected companies' documents")
+            if proceed:
+                with st.spinner(f"Running '{analysis_choice}'... This may take several minutes."):
+                    st.session_state.download_content = None # Reset download state
+                    
+                    # Custom Query is handled separately as it doesn't fit the predefined flow
+                    if analysis_choice == "Custom Query":
+                         # Since there's no UI for custom query input anymore in this flow,
+                         # we'll just show a message. This can be re-enabled if needed.
+                         st.info("Custom Query requires a text input. Please select another analysis type for direct download.")
 
-    if st.button("🚀 Run Analysis", use_container_width=True):
-        proceed = False
-        if not selected_companies:
-            st.warning("Please select at least one company.")
-        elif analysis_choice == "Compare Investment Ideas" and len(selected_companies) < 2:
-            st.warning("Please select at least two companies for comparison.")
-        elif analysis_choice == "Custom Query" and not user_query.strip():
-            st.warning("Please enter a question for the custom query.")
-        else:
-            proceed = True
-
-        if proceed:
-            with st.spinner(f"Running '{analysis_choice}'..."):
-                if 'risk_assessment_output' in st.session_state: del st.session_state.risk_assessment_output
-                if 'markdown_output' in st.session_state: del st.session_state.markdown_output
-
-                analysis_result, sources, pinecone_matches = agent.get_predefined_analysis(analysis_choice, selected_companies)
-                
-                if "Error:" in analysis_result or "Could not find" in analysis_result or not analysis_result.strip():
-                    st.error(analysis_result or "Failed to generate a response from the model.")
-                else:
-                    company_name_for_doc = selected_companies[0] if len(selected_companies) == 1 else "Multiple Companies"
-                    if analysis_choice == "Risk Assessment":
-                        try:
-                            data = json.loads(analysis_result)
-                            risks = data.get("risks", [])
-                            for risk in risks:
-                                quote = risk.get("source_quote", "")
-                                risk['source_file'] = "Unknown"
-                                for match in pinecone_matches:
-                                    if quote in match.metadata['original_text']:
-                                        risk['source_file'] = match.metadata['source_file']
-                                        break
-                            st.session_state.risk_assessment_output = {
-                                "risks": risks, "company_name": company_name_for_doc, "analysis_type": "Risk Assessment"
-                            }
-                        except json.JSONDecodeError:
-                            st.error("AI failed to return valid JSON for Risk Assessment.")
-                            st.text_area("Raw AI Response:", analysis_result, height=200)
                     else:
-                        st.session_state.markdown_output = {
-                            "markdown": analysis_result, "sources": sources, "company_name": company_name_for_doc, "analysis_type": analysis_choice
-                        }
-
-    # --- NEW: Separate, dedicated display areas ---
-    if 'risk_assessment_output' in st.session_state:
-        output = st.session_state.risk_assessment_output
-        st.success("✅ Analysis complete.")
-        st.subheader(f"Risk Assessment for {output['company_name']}")
-        
-        file_cache = st.session_state.get('file_cache', {})
-        
-        for i, risk in enumerate(output['risks'], 1):
-            with st.expander(f"**Risk #{i}: {risk.get('risk_title', 'Untitled')}**", expanded=(i==1)):
-                st.markdown("#### Summary")
-                st.write(risk.get('risk_summary', 'N/A'))
-                st.markdown("#### Potential Impact")
-                st.write(risk.get('potential_impact', 'N/A'))
-                
-                source_file_name = risk.get('source_file')
-                if source_file_name and source_file_name != "Unknown":
-                    st.markdown(f"#### Source Snapshot from `{source_file_name}`")
-                    if source_file_name.lower().endswith('.pdf') and source_file_name in file_cache:
-                        file_bytes = file_cache[source_file_name]
-                        snapshot_image = generate_risk_snapshot(file_bytes, risk.get('source_quote', ''))
-                        if snapshot_image:
-                            st.image(snapshot_image, caption="Highlighted source text.", use_column_width=True)
+                        analysis_result, sources, pinecone_matches = agent.get_predefined_analysis(analysis_choice, selected_companies)
+                        
+                        if "Error:" in analysis_result or not analysis_result.strip():
+                            st.error(analysis_result or "Failed to generate a response.")
                         else:
-                            st.warning("Could not generate a visual snapshot. The exact quote may not be present in the PDF text.")
-                            st.code(risk.get('source_quote', ''), language=None)
-                    elif source_file_name in file_cache:
-                         st.info("Snapshots are only available for PDF documents.")
-                         st.code(risk.get('source_quote', ''), language=None)
-                    else:
-                        st.error(f"Source file '{source_file_name}' not found in cache. Please re-index the file to generate snapshots.")
-                        st.code(risk.get('source_quote', ''), language=None)
-                else:
-                    st.warning("Could not identify the source file for this risk.")
-                    st.code(risk.get('source_quote', ''), language=None)
+                            company_name_for_doc = selected_companies[0] if len(selected_companies) == 1 else "Multiple Companies"
+                            
+                            if analysis_choice == "Risk Assessment":
+                                try:
+                                    data = json.loads(analysis_result)
+                                    risks = data.get("risks", [])
+                                    file_cache = st.session_state.get('file_cache', {})
+                                    conn = st.connection("supabase", type=SupabaseConnection)
 
+                                    for risk in risks:
+                                        source_details = risk.get("source_details", {})
+                                        page_num = source_details.get("page_number")
+                                        key_phrases = source_details.get("key_phrases")
+                                        
+                                        source_file_name = "Unknown"
+                                        if pinecone_matches and key_phrases:
+                                            for match in pinecone_matches:
+                                                if all(phrase.lower() in match.metadata['original_text'].lower() for phrase in key_phrases):
+                                                    source_file_name = match.metadata['source_file']
+                                                    break
+                                        risk['source_file'] = source_file_name
+                                        risk['page_number'] = page_num
+
+                                        if source_file_name in file_cache and source_file_name.lower().endswith('.pdf'):
+                                            img_bytes = generate_risk_snapshot(file_cache[source_file_name], page_num, key_phrases)
+                                            if img_bytes:
+                                                file_path = f"snapshots/{uuid.uuid4()}.png"
+                                                conn.client.storage.from_("risk_snapshots").upload(file=img_bytes, path=file_path, file_options={"content-type": "image/png"})
+                                                public_url = conn.client.storage.from_("risk_snapshots").get_public_url(file_path)
+                                                risk['snapshot_url'] = public_url
+                                    
+                                    html_content = generate_risk_assessment_html(risks, company_name_for_doc, sources)
+                                    st.session_state.download_content = html_content
+                                    st.session_state.download_filename = f"Risk_Assessment_{company_name_for_doc.replace(' ', '_')}.html"
+                                    st.success("Report is ready for download below.")
+
+                                except (json.JSONDecodeError, Exception) as e:
+                                    st.error(f"Failed to process Risk Assessment response: {e}")
+                                    st.text_area("Raw AI Response:", analysis_result, height=200)
+                            
+                            else: # All other markdown-based reports
+                                final_md = analysis_result
+                                if analysis_choice == "Competitive Analysis":
+                                    final_md = format_competitive_analysis_output(analysis_result)
+                                
+                                html_content = format_analysis_as_html(final_md, analysis_choice, sources)
+                                st.session_state.download_content = html_content
+                                st.session_state.download_filename = f"{analysis_choice.replace(' ', '_')}_{company_name_for_doc.replace(' ', '_')}.html"
+                                st.success("Report is ready for download below.")
+
+    # --- MODIFICATION: Centralized download button display ---
+    if st.session_state.download_content:
         st.download_button(
-            label="📥 Download as Word (.docx)",
-            data=risk_assessment_to_word_bytes(output['risks'], output['company_name']),
-            file_name=f"Risk_Assessment_{output['company_name'].replace(' ', '_')}.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            use_container_width=True
-        )
-
-    if 'markdown_output' in st.session_state:
-        output = st.session_state.markdown_output
-        st.success("✅ Analysis complete.")
-        
-        final_md = output['markdown']
-        if output['analysis_type'] == "Competitive Analysis":
-            final_md = format_competitive_analysis_output(output['markdown'])
-            
-        report_html = format_analysis_as_html(final_md, output['analysis_type'], output['sources'])
-        st.markdown(report_html, unsafe_allow_html=True)
-        
-        structured_report = parse_markdown_to_structure(final_md, output['analysis_type'])
-        word_bytes = markdown_to_word_bytes(structured_report, output['company_name'], output['analysis_type'])
-        
-        d1, d2 = st.columns(2)
-        safe_filename = re.sub(r'[\s/]', '_', output["analysis_type"])
-        doc_name = output["company_name"].replace(' ', '_')
-        d1.download_button(
-            label="📥 Download as Word (.docx)", data=word_bytes,
-            file_name=f"{safe_filename}_{doc_name}.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            use_container_width=True
-        )
-        d2.download_button(
-            label="📥 Download as HTML (.html)", data=report_html.encode("utf-8"),
-            file_name=f"{safe_filename}_{doc_name}.html", mime="text/html",
+            label="📥 Download Report",
+            data=st.session_state.download_content,
+            file_name=st.session_state.download_filename,
+            mime="text/html",
             use_container_width=True
         )
 
@@ -3060,8 +2976,6 @@ Approach this analysis without bias. Remain completely objective and do not beco
                 agent.delete_company_data(company_to_delete)
                 st.cache_resource.clear()
                 st.rerun()
-            else:
-                st.warning("Please select a company to delete.")
 
 
 
