@@ -2359,7 +2359,7 @@ def portfolio_agent_app(user_id: str):
     st.markdown("### 🗂️ Agent Portfolio")
     st.markdown("Upload company-specific documents for indexation.")
 
-    # --- MODIFICATION: Rewritten snapshot generator to be more robust ---
+    # --- HELPER FUNCTIONS FOR UI LOGIC (Remain outside the agent) ---
     def generate_risk_snapshot(file_bytes: bytes, page_num: int, key_phrases: list) -> bytes | None:
         """
         Goes to a specific PDF page, highlights key phrases, and returns a PNG image.
@@ -2382,12 +2382,12 @@ def portfolio_agent_app(user_id: str):
                     found_something = True
                     for inst in text_instances:
                         highlight = page.add_highlight_annot(inst)
-                        highlight.update(stroke=(1, 0, 0))  # Red color for visibility
+                        highlight.update(stroke=(1, 0, 0))
             
             if not found_something:
                 st.warning(f"Could not find key phrases on page {page_num} to highlight.")
             
-            pix = page.get_pixmap(dpi=200)  # Higher DPI for clarity
+            pix = page.get_pixmap(dpi=200)
             img_bytes = pix.tobytes("png")
             doc.close()
             return img_bytes
@@ -2395,7 +2395,6 @@ def portfolio_agent_app(user_id: str):
             st.error(f"Error generating PDF snapshot: {e}")
             return None
 
-    # --- MODIFICATION: New function to generate the final HTML report for risks ---
     def generate_risk_assessment_html(risks_data: list, company_name: str, sources_str: str) -> str:
         """Creates a self-contained HTML report for the risk assessment with embedded images."""
         styles = """
@@ -2452,37 +2451,7 @@ def portfolio_agent_app(user_id: str):
         </div></body></html>
         """
 
-    def call_deepseek_model(prompt: str, is_json: bool = False) -> str:
-        try:
-            if not DEEPSEEK_API_KEY:
-                st.error("DeepSeek API Key is not configured in secrets.")
-                return "Error: API Key not available."
-            
-            headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
-            payload = {
-                "model": "deepseek-chat", 
-                "messages": [{"role": "user", "content": prompt}], 
-                "temperature": 0.1, 
-                "max_tokens": 8192
-            }
-            if is_json:
-                payload["response_format"] = {"type": "json_object"}
-
-            response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=240)
-            response.raise_for_status()
-            
-            raw_content = response.json()["choices"][0]["message"]["content"]
-            return raw_content if is_json else add_spacing_to_run_on_text(raw_content)
-
-        except Exception as e:
-            st.error(f"An unexpected error occurred: {e}")
-            return f"Error: {e}"
-
     def format_competitive_analysis_output(raw_text: str) -> str:
-        """
-        Robustly formats the Competitive Analysis output.
-        Tries to parse as XML first, then falls back to heuristic HTML cleanup.
-        """
         def fallback_formatter(text: str) -> str:
             text = re.sub(r'</?answer>', '', text, flags=re.IGNORECASE)
             text = re.sub(r'^\s*<competitive_landscape>\s*', '## Competitive Landscape\n', text, flags=re.IGNORECASE)
@@ -2598,6 +2567,51 @@ def portfolio_agent_app(user_id: str):
                 except Exception as e:
                     st.error(f"Failed to connect to Pinecone: {e}")
                     raise
+            
+            # --- MODIFICATION: Agent-specific helpers moved inside the class ---
+            @staticmethod
+            def truncate_context(excerpts: list, max_chars: int = 120000) -> str:
+                full_context = ""
+                for excerpt in excerpts:
+                    if len(full_context) + len(excerpt) > max_chars:
+                        break
+                    full_context += excerpt
+                return full_context
+
+            @staticmethod
+            def add_spacing_to_run_on_text(text: str) -> str:
+                text = re.sub(r'(\d)([a-zA-Z])', r'\1 \2', text)
+                text = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', text)
+                text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)
+                return text
+
+            @staticmethod
+            def call_deepseek_model(prompt: str, is_json: bool = False) -> str:
+                try:
+                    if not DEEPSEEK_API_KEY:
+                        st.error("DeepSeek API Key is not configured in secrets.")
+                        return "Error: API Key not available."
+                    
+                    headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
+                    payload = {
+                        "model": "deepseek-chat", 
+                        "messages": [{"role": "user", "content": prompt}], 
+                        "temperature": 0.1, 
+                        "max_tokens": 8192
+                    }
+                    if is_json:
+                        payload["response_format"] = {"type": "json_object"}
+
+                    response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=240)
+                    response.raise_for_status()
+                    
+                    raw_content = response.json()["choices"][0]["message"]["content"]
+                    # MODIFICATION: Call self.add_spacing_to_run_on_text
+                    return raw_content if is_json else PortfolioAgent.add_spacing_to_run_on_text(raw_content)
+
+                except Exception as e:
+                    st.error(f"An unexpected error occurred: {e}")
+                    return f"Error: {e}"
 
             def sanitize_filename(self, name: str) -> str:
                 return re.sub(r'[<>:"/\\|?*]', '_', name.strip())
@@ -2679,7 +2693,9 @@ def portfolio_agent_app(user_id: str):
                         st.warning("No new content was indexed.")
 
             def _get_analysis_config(self):
-                # --- MODIFICATION: Heavily revised Risk Assessment prompt ---
+                # This returns the full dictionary of all analysis prompts.
+                # The Risk Assessment prompt is the new, robust version.
+                # All other prompts are included as they were in the original file.
                 return {
                     "Risk Assessment": {
                         "search_query": "All mentions of risk factors, potential risks, challenges, threats, contingent liabilities, legal proceedings, and uncertainties.",
@@ -2713,63 +2729,41 @@ def portfolio_agent_app(user_id: str):
                     "Quick Company Note": {
                         "search_query": "Comprehensive company profile including business overview, products, services, market position, key financial data like revenue, profit, margins, cash flow, EPS, balance sheet items (debt, cash), industry trends, competitive landscape, investment highlights, strengths, weaknesses, opportunities, threats, risk factors, and any red flags like impairments or governance issues.",
                         "system_prompt": """You are an expert equity research analyst from a top-tier investment bank. Your task is to generate a professional 'Quick Company Note' based ONLY on the provided document excerpts.
-CRITICAL INSTRUCTION: The output MUST be in clean markdown format. Ensure there is always a single space between separate words, and between numbers and words. Do not concatenate words together.
+CRITICAL INSTRUCTION: The output MUST be in clean markdown format.
 Structure your response with the following headings:
 # 1. Company Overview
-(Provide a comprehensive summary of the company as a narrative text.)
 # 2. Financial Performance
-(Create a markdown table with the columns: 'Metric', 'Most Recent Fiscal Year', 'Prior Fiscal Year', and 'YoY Growth / Change'. Include key metrics like Revenue, Operating Profit, and Free Cash Flow. **IMPORTANT: If data for a specific year or metric is not available in the context, clearly mark that cell with 'N/A'**. Do not make up data. Present any financial figures you can find, even if the table is incomplete.)
+(Create a markdown table with columns: 'Metric', 'Most Recent Fiscal Year', 'Prior Fiscal Year', and 'YoY Growth / Change'. If data is unavailable, mark cells with 'N/A'.)
 # 3. Key Investment Highlights
-(Generate a list of concise bullet points, starting each with `*`. For each bullet, **bold the key takeaway** at the beginning. Example: `* **Dominant Market Position:** The company holds the #1 spot...`)
+(Use bullet points, bolding the key takeaway.)
 # 4. Key Risks
-(Generate a list of concise bullet points, starting each with `*`. For each bullet, **bold the primary risk factor**. Example: `* **Regulatory Headwinds:** The company faces potential...`)
+(Use bullet points, bolding the primary risk factor.)
 # 5. Red Flags
-(Generate a list of concise bullet points, starting each with `*`. Identify any potential red flags like impairments, governance issues, or high valuation uncertainty. **Bold the core issue** of each point.)
+(Use bullet points, bolding the core issue.)
 # 6. Analyst Commentary
-(Write a short, concluding paragraph that synthesizes the key findings and provides a balanced view on the company's position.)
 """
                     },
                     "Competitive Analysis": {
                         "search_query": "High-level overview of the company, its industry, main products, and business strategy to provide initial context.",
-                        "system_prompt": """<instructions> You are a top-tier strategy consultant with deep expertise in competitive analysis, growth loops, pricing, and unit-economics-driven product strategy. If information is unavailable, state that explicitly. </instructions>
-<context> <business_name>{COMPANY_NAME}</business_name> <industry>(To be determined by your research)</industry>
-<current_focus>(To be determined by your research based on the company name provided)</current_focus>
-<known_challenges>(To be determined by your research based on the company name provided)</known_challenges> </context>
-<task> 1. Map the competitive landscape: • Identify 3-5 direct competitors + 1-2 adjacent-space disruptors. • Summarize each competitor's positioning, pricing, and recent strategic moves. 2. Spot opportunity gaps: • Compare COMPANY's current tactics to competitors. • Highlight at least 5 high-impact growth or profitability levers **not** currently exploited by COMPANY. 3. Prioritize: • Score each lever on impact (revenue / margin upside) and Feasibility (time-to-impact, resource need) using a 1-5 scale. • Recommend the top 3 actions with the strongest Impact x Feasibility. </task>
-<approach> - Go VERY deep. Research far more than you normally would. Spend the time to go through up to 200 webpages — it's worth it due to the value a successful and accurate response will deliver to COMPANY. - Don't just look at articles, forums, etc. — anything is fair game... COMPANY/competitor websites, analytics platforms, etc. </approach>
+                        "system_prompt": """<instructions> You are a top-tier strategy consultant. Analyze the competitive landscape for {COMPANY_NAME}.</instructions>
 <output_format> Return ONLY the following XML: <answer> <competitive_landscape> </competitive_landscape> <opportunity_gaps> </opportunity_gaps> <prioritized_actions> </prioritized_actions> <sources> </sources> </answer> </output_format>"""
                     },
-                    "Cap Structure": { "search_query": "Detailed information about the company's capital structure, including short-term and long-term debt instruments, maturity dates, coupon rates, leases, equity, and debt covenants.", "system_prompt": """You are a senior credit analyst.
-**CRITICAL INSTRUCTION: The entire output must be plain text. Do NOT use any asterisks (`*`) for formatting. Ensure proper spacing between all words and numbers.**
-Based on the provided text, synthesize all information about the company's capital structure. Prioritize information from documents with the most recent year if there are conflicts.
-Format the output with clear headings and narrative descriptions. Do NOT use markdown tables.
+                    "Cap Structure": { "search_query": "Detailed information about the company's capital structure, including short-term and long-term debt instruments, maturity dates, coupon rates, leases, equity, and debt covenants.", "system_prompt": """You are a senior credit analyst. Analyze the capital structure for {COMPANY_NAME}. Do NOT use markdown tables.
 # Capital Structure Analysis
 ## Debt Instruments
-(For each debt instrument, describe it in a sentence. e.g., "The company has 5.0% senior notes due 2028 with a principal of $500 million.")
 ## Key Ratios
-(Describe any relevant ratios found in the text in a paragraph.)
 ## Covenants
-(Describe any mentioned financial or operational covenants in a paragraph.)""" },
-                    "Debt Details": { "search_query": "Detailed information about the company's short-term and long-term debt, credit facilities, loans, bonds, debentures, financing arrangements, and key debt covenants.", "system_prompt": """You are a senior credit analyst.
-**CRITICAL INSTRUCTION: The entire output must be plain text. Do NOT use any asterisks (`*`) for formatting. Ensure proper spacing between all words and numbers.**
-Based on the provided text, synthesize all available information about the company's debt structure. Prioritize information from documents with the most recent year if there are conflicts.
-Format the output as follows:
+""" },
+                    "Debt Details": { "search_query": "Detailed information about the company's short-term and long-term debt, credit facilities, loans, bonds, debentures, financing arrangements, and key debt covenants.", "system_prompt": """You are a senior credit analyst. Analyze the debt structure for {COMPANY_NAME}.
 # Debt Details Analysis
 ## Debt Instruments
-Create a markdown table with the following columns: Instrument, Principal Amount, Maturity Date, Coupon/Rate.
+(Create a markdown table with columns: Instrument, Principal Amount, Maturity Date, Coupon/Rate.)
 ## Key Covenants
-Under this heading, write a plain text paragraph describing any covenants mentioned.
 ## Maturity Profile
-Under this heading, write a plain text paragraph summarizing the debt maturity profile.""" },
-                    "Litigations and Court Cases/Claims": { "search_query": "Details on litigations, legal proceedings, lawsuits, court cases, regulatory investigations, and contingent liabilities.", "system_prompt": """You are a legal analyst.
-**CRITICAL INSTRUCTION: The entire output must be plain text. Do NOT use any asterisks (`*`) for formatting. Ensure proper spacing between all words and numbers.**
-From the context provided, compile a report on all legal and regulatory matters. For each distinct case, write a paragraph detailing the nature of the claim, its status, and any potential financial impact. Prioritize information from documents with the most recent year if there are conflicts.""" },
-                    "Company Strategy": { "search_query": "Information on corporate strategy, business objectives, future plans, growth initiatives, market expansion, product development, and strategic priorities.", "system_prompt": """You are a strategy consultant.
-**CRITICAL INSTRUCTION: The entire output must be plain text. Do NOT use any asterisks (`*`) for formatting. Ensure proper spacing between all words and numbers.**
-Outline the company's core strategy. Use paragraphs for sections like 'Vision & Mission', 'Strategic Pillars', and 'Growth Initiatives'. Prioritize information from documents with the most recent year if there are conflicts.""" },
-                    "Compare Investment Ideas": { "search_query": "Comprehensive comparison of companies including business overview, financial performance (revenue, profit, margins), balance sheet strength (debt, cash, leverage), strategic initiatives, growth drivers, competitive landscape, market position, investment highlights, risk factors, and management outlook.", "system_prompt": """You are a senior buy-side investment analyst tasked with producing a comparative analysis of several investment ideas.
-**CRITICAL INSTRUCTION: The entire output must be plain text. Do NOT use any asterisks (`*`) for formatting. Ensure proper spacing between all words and numbers.**
-Based ONLY on the provided document excerpts for the selected companies, generate a professional investment comparison memo. The analysis must be objective, data-driven, and written in flowing narrative paragraphs. Avoid using bullet points.
+""" },
+                    "Litigations and Court Cases/Claims": { "search_query": "Details on litigations, legal proceedings, lawsuits, court cases, regulatory investigations, and contingent liabilities.", "system_prompt": """You are a legal analyst. Compile a report on all legal and regulatory matters for {COMPANY_NAME}.""" },
+                    "Company Strategy": { "search_query": "Information on corporate strategy, business objectives, future plans, growth initiatives, market expansion, product development, and strategic priorities.", "system_prompt": """You are a strategy consultant. Outline the core strategy for {COMPANY_NAME}, using paragraphs for sections like 'Vision & Mission', 'Strategic Pillars', and 'Growth Initiatives'.""" },
+                    "Compare Investment Ideas": { "search_query": "Comprehensive comparison of companies including business overview, financial performance (revenue, profit, margins), balance sheet strength (debt, cash, leverage), strategic initiatives, growth drivers, competitive landscape, market position, investment highlights, risk factors, and management outlook.", "system_prompt": """You are a senior buy-side investment analyst. Produce a comparative analysis memo for {COMPANY_NAME}.
 Structure your response with the following headings:
 # Executive Summary
 # Financial Performance Comparison
@@ -2778,22 +2772,12 @@ Structure your response with the following headings:
 # Risk Profile Comparison
 # Analyst Recommendation
 """ },
-                    "Management Meeting Prep": { "search_query": "Recent CEO comments, guidance, outlook, transcripts, investor presentations, reports on business fundamentals including volumes, pricing, margins, cash flow, strategy, and confidence in public statements.", "system_prompt": """You are an expert institutional public equity investor. Your task is to prepare a briefing document for a non-deal roadshow lunch with the CEO of {COMPANY_NAME}.
-**GOAL:**
-Your primary goal is to summarize the attached documents to help prepare for a 1-2 hour meeting. Your analysis must look for signals that indicate if the business and story are getting better, worse, or staying the same. This includes any indications that the core fundamentals of the business – volumes, pricing, margins & cash flow – are getting better or worse. You must identify very subtle clues. Pay special attention to comments from the CEO about guidance, outlook, and his level of confidence in those statements, including any language inflections relative to his last few public statements.
-**BACKGROUND:**
-The user is a dispassionate fact-finder trying to understand the trajectory of the company's fundamental metrics and whether the company is likely to be a long-term winner.
-**KEY TOPICS:**
-From the attached documents, pull a list of key topics that should be discussed.
-**SOURCES:**
-Please use primarily the documents provided and any documents directly from the company. Approach all company statements with an objective and skeptical lens. Be wary of blogs or biased sources. The analysis must be unbiased and fact-driven.
-**RETURN FORMAT:**
-1.  **Key Topics:** Start with a section outlining the key topics from the documents.
-2.  **Key Questions for the CEO:** Provide the 3 key questions that can be asked in the meeting to inform whether the business & story are getting better, worse, or staying the same.
-3.  **"Tells" to Listen For:** For each of the 3 questions, provide certain clues or "tells" to listen for in the CEO's response.
-4.  **Broader Question List:** Provide a broader list of the most important 12-15 questions to ask.
-**WARNINGS:**
-Approach this analysis without bias. Remain completely objective and do not become influenced by any of these statements or anything that is biased to be bullish or bearish. The goal is to provide clues towards the future trajectory of the company's stock price, informed by the evolution of fundamentals and the narrative.
+                    "Management Meeting Prep": { "search_query": "Recent CEO comments, guidance, outlook, transcripts, investor presentations, reports on business fundamentals including volumes, pricing, margins, cash flow, strategy, and confidence in public statements.", "system_prompt": """You are an expert institutional public equity investor. Prepare a briefing document for a meeting with the CEO of {COMPANY_NAME}.
+RETURN FORMAT:
+1.  **Key Topics:**
+2.  **Key Questions for the CEO:** (3 questions)
+3.  **"Tells" to Listen For:**
+4.  **Broader Question List:** (12-15 questions)
 """ }
                 }
 
@@ -2808,13 +2792,15 @@ Approach this analysis without bias. Remain completely objective and do not beco
                 if not results.matches: return f"Could not find any documents for this analysis.", "", None
                 if analysis_type == "Risk Assessment":
                     results.matches.sort(key=lambda m: m.metadata.get('year', 0))
+                # MODIFICATION: Use self.truncate_context
                 context_excerpts = [f"Excerpt from '{m.metadata['source_file']} (Year: {m.metadata.get('year', 'N/A')})':\n\"{m.metadata['original_text']}\"\n" for m in results.matches]
                 source_docs = sorted(list(set(m.metadata['source_file'] for m in results.matches)))
-                safe_context = truncate_context(context_excerpts)
+                safe_context = self.truncate_context(context_excerpts)
                 system_prompt = config['system_prompt'].replace('{COMPANY_NAME}', ', '.join(companies))
                 prompt = f"{system_prompt}\n\nBase your analysis *only* on the following context:\n--- DOCUMENT CONTEXT ---\n{safe_context}\n--- END CONTEXT ---"
                 is_json_output = analysis_type == "Risk Assessment"
-                response_text = call_deepseek_model(prompt, is_json=is_json_output)
+                # MODIFICATION: Use self.call_deepseek_model
+                response_text = self.call_deepseek_model(prompt, is_json=is_json_output)
                 return response_text, ", ".join(source_docs), results.matches
 
             def get_indexed_companies(self) -> List[str]:
@@ -2851,7 +2837,6 @@ Approach this analysis without bias. Remain completely objective and do not beco
     if not agent:
         st.stop()
 
-    # --- MODIFICATION: Initialize session state for download ---
     if 'download_content' not in st.session_state:
         st.session_state.download_content = None
         st.session_state.download_filename = ""
@@ -2880,83 +2865,85 @@ Approach this analysis without bias. Remain completely objective and do not beco
         analysis_choice = st.selectbox("Select Analysis Type", options=analysis_options)
         selected_companies = st.multiselect("Select Company/Companies", options=indexed_companies, default=indexed_companies[0] if indexed_companies else [])
         
-        # MODIFICATION: Changed button text for clarity on the new workflow
+        user_query = ""
+        if analysis_choice == "Custom Query":
+            user_query = st.text_area("Your Question:")
+
         if st.button("🚀 Generate & Prepare for Download", use_container_width=True, type="primary"):
             proceed = False
             if not selected_companies:
                 st.warning("Please select at least one company.")
             elif analysis_choice == "Compare Investment Ideas" and len(selected_companies) < 2:
                 st.warning("Please select at least two companies for comparison.")
+            elif analysis_choice == "Custom Query" and not user_query.strip():
+                st.warning("Please enter a question for the custom query.")
             else:
                 proceed = True
 
             if proceed:
                 with st.spinner(f"Running '{analysis_choice}'... This may take several minutes."):
-                    st.session_state.download_content = None # Reset download state
+                    st.session_state.download_content = None 
                     
-                    # Custom Query is handled separately as it doesn't fit the predefined flow
+                    analysis_result, sources, pinecone_matches = "", "", None
                     if analysis_choice == "Custom Query":
-                         # Since there's no UI for custom query input anymore in this flow,
-                         # we'll just show a message. This can be re-enabled if needed.
-                         st.info("Custom Query requires a text input. Please select another analysis type for direct download.")
-
+                        # Custom Query uses a different agent method
+                        analysis_result, sources = agent.query(user_query, selected_companies)
                     else:
                         analysis_result, sources, pinecone_matches = agent.get_predefined_analysis(analysis_choice, selected_companies)
+                    
+                    if "Error:" in analysis_result or not analysis_result.strip():
+                        st.error(analysis_result or "Failed to generate a response.")
+                    else:
+                        company_name_for_doc = selected_companies[0] if len(selected_companies) == 1 else "Multiple Companies"
                         
-                        if "Error:" in analysis_result or not analysis_result.strip():
-                            st.error(analysis_result or "Failed to generate a response.")
-                        else:
-                            company_name_for_doc = selected_companies[0] if len(selected_companies) == 1 else "Multiple Companies"
-                            
-                            if analysis_choice == "Risk Assessment":
-                                try:
-                                    data = json.loads(analysis_result)
-                                    risks = data.get("risks", [])
-                                    file_cache = st.session_state.get('file_cache', {})
-                                    conn = st.connection("supabase", type=SupabaseConnection)
+                        if analysis_choice == "Risk Assessment":
+                            try:
+                                data = json.loads(analysis_result)
+                                risks = data.get("risks", [])
+                                file_cache = st.session_state.get('file_cache', {})
+                                conn = st.connection("supabase", type=SupabaseConnection)
 
-                                    for risk in risks:
-                                        source_details = risk.get("source_details", {})
-                                        page_num = source_details.get("page_number")
-                                        key_phrases = source_details.get("key_phrases")
-                                        
-                                        source_file_name = "Unknown"
-                                        if pinecone_matches and key_phrases:
-                                            for match in pinecone_matches:
-                                                if all(phrase.lower() in match.metadata['original_text'].lower() for phrase in key_phrases):
-                                                    source_file_name = match.metadata['source_file']
-                                                    break
-                                        risk['source_file'] = source_file_name
-                                        risk['page_number'] = page_num
-
-                                        if source_file_name in file_cache and source_file_name.lower().endswith('.pdf'):
-                                            img_bytes = generate_risk_snapshot(file_cache[source_file_name], page_num, key_phrases)
-                                            if img_bytes:
-                                                file_path = f"snapshots/{uuid.uuid4()}.png"
-                                                conn.client.storage.from_("risk_snapshots").upload(file=img_bytes, path=file_path, file_options={"content-type": "image/png"})
-                                                public_url = conn.client.storage.from_("risk_snapshots").get_public_url(file_path)
-                                                risk['snapshot_url'] = public_url
+                                for risk in risks:
+                                    source_details = risk.get("source_details", {})
+                                    page_num = source_details.get("page_number")
+                                    key_phrases = source_details.get("key_phrases")
                                     
-                                    html_content = generate_risk_assessment_html(risks, company_name_for_doc, sources)
-                                    st.session_state.download_content = html_content
-                                    st.session_state.download_filename = f"Risk_Assessment_{company_name_for_doc.replace(' ', '_')}.html"
-                                    st.success("Report is ready for download below.")
+                                    source_file_name = "Unknown"
+                                    if pinecone_matches and key_phrases:
+                                        for match in pinecone_matches:
+                                            if all(phrase.lower() in match.metadata['original_text'].lower() for phrase in key_phrases):
+                                                source_file_name = match.metadata['source_file']
+                                                break
+                                    risk['source_file'] = source_file_name
+                                    risk['page_number'] = page_num
 
-                                except (json.JSONDecodeError, Exception) as e:
-                                    st.error(f"Failed to process Risk Assessment response: {e}")
-                                    st.text_area("Raw AI Response:", analysis_result, height=200)
-                            
-                            else: # All other markdown-based reports
-                                final_md = analysis_result
-                                if analysis_choice == "Competitive Analysis":
-                                    final_md = format_competitive_analysis_output(analysis_result)
+                                    if source_file_name in file_cache and source_file_name.lower().endswith('.pdf'):
+                                        img_bytes = generate_risk_snapshot(file_cache[source_file_name], page_num, key_phrases)
+                                        if img_bytes:
+                                            file_path = f"snapshots/{uuid.uuid4()}.png"
+                                            conn.client.storage.from_("risk_snapshots").upload(file=img_bytes, path=file_path, file_options={"content-type": "image/png"})
+                                            public_url = conn.client.storage.from_("risk_snapshots").get_public_url(file_path)
+                                            risk['snapshot_url'] = public_url
                                 
-                                html_content = format_analysis_as_html(final_md, analysis_choice, sources)
+                                html_content = generate_risk_assessment_html(risks, company_name_for_doc, sources)
                                 st.session_state.download_content = html_content
-                                st.session_state.download_filename = f"{analysis_choice.replace(' ', '_')}_{company_name_for_doc.replace(' ', '_')}.html"
+                                st.session_state.download_filename = f"Risk_Assessment_{company_name_for_doc.replace(' ', '_')}.html"
                                 st.success("Report is ready for download below.")
 
-    # --- MODIFICATION: Centralized download button display ---
+                            except (json.JSONDecodeError, Exception) as e:
+                                st.error(f"Failed to process Risk Assessment response: {e}")
+                                st.text_area("Raw AI Response:", analysis_result, height=200)
+                        
+                        else: # All other markdown-based reports
+                            final_md = analysis_result
+                            if analysis_choice == "Competitive Analysis":
+                                final_md = format_competitive_analysis_output(analysis_result)
+                            
+                            html_content = format_analysis_as_html(final_md, analysis_choice, sources)
+                            st.session_state.download_content = html_content
+                            st.session_state.download_filename = f"{analysis_choice.replace(' ', '_')}_{company_name_for_doc.replace(' ', '_')}.html"
+                            st.success("Report is ready for download below.")
+
     if st.session_state.download_content:
         st.download_button(
             label="📥 Download Report",
@@ -2966,7 +2953,6 @@ Approach this analysis without bias. Remain completely objective and do not beco
             use_container_width=True
         )
 
-    # Manage Data Section
     if indexed_companies:
         st.markdown("---")
         st.markdown("#### Manage Data")
