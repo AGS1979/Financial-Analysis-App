@@ -2598,6 +2598,7 @@ def portfolio_agent_app(user_id: str):
 
     @st.cache_resource
     def load_agent(user_id):
+        import tiktoken
         class PortfolioAgent:
             def __init__(self, user_id: str, index_name: str = "portfolio-agent"):
                 self.namespace = user_id
@@ -2708,8 +2709,21 @@ CRITICAL INSTRUCTION: Ensure there is always a single space between separate wor
 """
                 return call_deepseek_model(prompt), ", ".join(source_docs)
 
-            def get_predefined_analysis(self, analysis_type: str, companies: List[str], k: int = 40) -> Tuple[str, str]:
-                ANALYSIS_CONFIG = {
+            def get_unindexed_analysis(self, analysis_type: str, company: str, context: str) -> str:
+                """Generates analysis from provided text without querying Pinecone."""
+                ANALYSIS_CONFIG = self._get_analysis_config()
+                config = ANALYSIS_CONFIG.get(analysis_type)
+                if not config:
+                    return "Invalid analysis type selected."
+
+                system_prompt = config['system_prompt'].replace('{COMPANY_NAME}', company)
+                prompt = f"{system_prompt}\n\nBase your analysis *only* on the following context:\n--- DOCUMENT CONTEXT ---\n{context}\n--- END CONTEXT ---"
+                
+                return call_deepseek_model(prompt)
+
+            def _get_analysis_config(self):
+                """Centralized configuration for all analysis types."""
+                return {
                     "Quick Company Note": {
                         "search_query": "Comprehensive company profile including business overview, products, services, market position, key financial data like revenue, profit, margins, cash flow, EPS, balance sheet items (debt, cash), industry trends, competitive landscape, investment highlights, strengths, weaknesses, opportunities, threats, risk factors, and any red flags like impairments or governance issues.",
                         "system_prompt": """You are an expert equity research analyst from a top-tier investment bank. Your task is to generate a professional 'Quick Company Note' based ONLY on the provided document excerpts.
@@ -2810,8 +2824,37 @@ Structure your response with the following headings:
 # Risk Profile Comparison
 # Analyst Recommendation
 """
+                    },
+                    "Management Meeting Prep": {
+                        "search_query": "Recent CEO comments, guidance, outlook, transcripts, investor presentations, reports on business fundamentals including volumes, pricing, margins, cash flow, strategy, and confidence in public statements.",
+                        "system_prompt": """You are an expert institutional public equity investor. Your task is to prepare a briefing document for a non-deal roadshow lunch with the CEO of {COMPANY_NAME}.
+
+**GOAL:**
+Your primary goal is to summarize the attached documents to help prepare for a 1-2 hour meeting. Your analysis must look for signals that indicate if the business and story are getting better, worse, or staying the same. This includes any indications that the core fundamentals of the business – volumes, pricing, margins & cash flow – are getting better or worse. You must identify very subtle clues. Pay special attention to comments from the CEO about guidance, outlook, and his level of confidence in those statements, including any language inflections relative to his last few public statements.
+
+**BACKGROUND:**
+The user is a dispassionate fact-finder trying to understand the trajectory of the company's fundamental metrics and whether the company is likely to be a long-term winner.
+
+**KEY TOPICS:**
+From the attached documents, pull a list of key topics that should be discussed.
+
+**SOURCES:**
+Please use primarily the documents provided and any documents directly from the company. Approach all company statements with an objective and skeptical lens. Be wary of blogs or biased sources. The analysis must be unbiased and fact-driven.
+
+**RETURN FORMAT:**
+1.  **Key Topics:** Start with a section outlining the key topics from the documents.
+2.  **Key Questions for the CEO:** Provide the 3 key questions that can be asked in the meeting to inform whether the business & story are getting better, worse, or staying the same.
+3.  **"Tells" to Listen For:** For each of the 3 questions, provide certain clues or "tells" to listen for in the CEO's response.
+4.  **Broader Question List:** Provide a broader list of the most important 12-15 questions to ask.
+
+**WARNINGS:**
+Approach this analysis without bias. Remain completely objective and do not become influenced by any of these statements or anything that is biased to be bullish or bearish. The goal is to provide clues towards the future trajectory of the company's stock price, informed by the evolution of fundamentals and the narrative.
+"""
                     }
                 }
+
+            def get_predefined_analysis(self, analysis_type: str, companies: List[str], k: int = 40) -> Tuple[str, str]:
+                ANALYSIS_CONFIG = self._get_analysis_config()
                 config = ANALYSIS_CONFIG.get(analysis_type)
                 if not config: return "Invalid analysis type selected.", ""
                 query_vector = self.embedding_model.encode(config["search_query"]).tolist()
@@ -2839,6 +2882,8 @@ Structure your response with the following headings:
                     )
                     prompt = f"{system_prompt}\n\nYou can use the following internal document context as a potential starting point, but your primary instruction is to perform the deep external research as detailed in the prompt above.\n--- DOCUMENT CONTEXT ---\n{safe_context}\n--- END CONTEXT ---\n\nProvide the analysis for '{company_str}'."
                 else:
+                    # Generic replacement for all other prompts, including the new one
+                    system_prompt = system_prompt.replace('{COMPANY_NAME}', company_str)
                     prompt = f"{system_prompt}\n\nBase your analysis *only* on the following context:\n--- DOCUMENT CONTEXT ---\n{safe_context}\n--- END CONTEXT ---\n\nProvide the analysis for '{company_str}'."
                 
                 return call_deepseek_model(prompt), ", ".join(source_docs)
@@ -2846,6 +2891,7 @@ Structure your response with the following headings:
             def get_indexed_companies(self) -> List[str]:
                 all_companies = set()
                 try:
+                    # Query a small number of vectors just to get metadata
                     response = self.index.query(vector=[0.0]*384, top_k=1000, include_metadata=True, namespace=self.namespace)
                     for match in response.matches:
                         company = match.metadata.get("company")
@@ -2882,7 +2928,7 @@ Structure your response with the following headings:
         if st.form_submit_button("Index Documents", type="primary"):
             if new_company and new_docs:
                 agent.add_documents(new_company, new_docs)
-                st.cache_resource.clear()
+                st.cache_resource.clear() # Clear cache to refresh company list
                 st.rerun()
             else:
                 st.warning("Please provide a company name and at least one document.")
@@ -2892,80 +2938,171 @@ Structure your response with the following headings:
 
     indexed_companies = agent.get_indexed_companies()
     if not indexed_companies:
-        st.info("No companies have been indexed for your account yet.")
-    else:
-        st.markdown("#### Run Analysis")
-        selected_companies = st.multiselect("Select Company/Companies to Analyze", options=indexed_companies, default=indexed_companies[0] if indexed_companies else [])
-        
-        analysis_options = [
-            "Quick Company Note", "Competitive Analysis", "Compare Investment Ideas", "Investment Story (Positives & Risks)",
-            "Cap Structure", "Debt Details", "Litigations and Court Cases/Claims",
-            "Company Strategy", "Custom Query"
-        ]
-        analysis_choice = st.selectbox("Select Analysis Type", options=analysis_options)
+        st.info("No companies have been indexed for your account yet. You can still use 'Management Meeting Prep' by uploading temporary documents.")
 
-        user_query = ""
-        if analysis_choice == "Custom Query":
-            user_query = st.text_area("Ask a question about the selected companies' documents")
-
-        if st.button("🚀 Run Analysis", use_container_width=True):
-            proceed = False
-            if not selected_companies:
-                st.warning("Please select at least one company.")
-            elif analysis_choice == "Compare Investment Ideas" and len(selected_companies) < 2:
-                st.warning("Please select at least two companies for comparison.")
-            elif analysis_choice == "Custom Query" and not user_query.strip():
-                st.warning("Please enter a question for the custom query.")
-            else:
-                proceed = True
-
-            if proceed:
-                with st.spinner(f"Running '{analysis_choice}' analysis for {', '.join(selected_companies)}..."):
-                    analysis_md, sources = "", ""
-                    if analysis_choice == "Custom Query":
-                        analysis_md, sources = agent.query(user_query, selected_companies)
-                    else:
-                        analysis_md, sources = agent.get_predefined_analysis(analysis_choice, selected_companies)
-                    
-                    if "Error:" in analysis_md or "Could not find" in analysis_md or not analysis_md.strip():
-                        st.error(analysis_md or "Failed to generate a response from the model.")
-                    else:
-                        if analysis_choice == "Competitive Analysis":
-                            analysis_md = format_competitive_analysis_output(analysis_md)
-
-                        structured_report = parse_markdown_to_structure(analysis_md, analysis_choice)
-                        company_name_for_doc = selected_companies[0] if len(selected_companies) == 1 else "Multiple Companies"
-                        report_html = format_analysis_as_html(analysis_md, analysis_choice, sources)
-                        word_bytes = markdown_to_word_bytes(structured_report, company_name_for_doc, analysis_choice)
-                        
-                        st.success("✅ Analysis complete. You can now download the report.")
-
-                        d1, d2 = st.columns(2)
-                        safe_filename = re.sub(r'[\s/]', '_', analysis_choice)
-                        d1.download_button(
-                            label="📥 Download as Word (.docx)",
-                            data=word_bytes,
-                            file_name=f"{safe_filename}_{company_name_for_doc}.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                        )
-                        d2.download_button(
-                            label="📥 Download as HTML (.html)",
-                            data=report_html.encode("utf-8"),
-                            file_name=f"{safe_filename}_{company_name_for_doc}.html",
-                            mime="text/html"
-                        )
-
-    st.markdown("---")
-    st.markdown("#### Manage Data")
+    st.markdown("#### Run Analysis")
     
-    company_to_delete = st.selectbox("Select Company to Delete", options=[""] + indexed_companies, key="delete_select")
-    if st.button("🗑️ Delete All Data for This Company", type="secondary"):
-        if company_to_delete:
-            agent.delete_company_data(company_to_delete)
-            st.cache_resource.clear()
-            st.rerun()
+    analysis_options = [
+        "Quick Company Note", "Competitive Analysis", "Management Meeting Prep", "Compare Investment Ideas", "Investment Story (Positives & Risks)",
+        "Cap Structure", "Debt Details", "Litigations and Court Cases/Claims",
+        "Company Strategy", "Custom Query"
+    ]
+    analysis_choice = st.selectbox("Select Analysis Type", options=analysis_options)
+
+    # --- NEW: Special UI for Management Meeting Prep ---
+    if analysis_choice == "Management Meeting Prep":
+        st.markdown("##### Management Meeting Preparation")
+        with st.form("meeting_prep_form"):
+            prep_company_name = st.text_input("Company Name for Analysis", help="The name of the company you are meeting with.")
+            
+            source_choice = st.radio(
+                "Select Document Source",
+                ("Use Indexed Documents", "Upload Temporary Documents"),
+                horizontal=True, key="prep_source"
+            )
+
+            indexed_selection = None
+            temp_docs = None
+
+            if source_choice == "Use Indexed Documents":
+                indexed_selection = st.multiselect("Select Indexed Company", options=indexed_companies)
+            else:
+                temp_docs = st.file_uploader(
+                    "Upload Documents for this analysis only (will not be indexed)",
+                    type=["pdf", "docx", "txt"], accept_multiple_files=True
+                )
+
+            submitted = st.form_submit_button("🚀 Generate Meeting Prep", use_container_width=True)
+
+            if submitted:
+                if not prep_company_name:
+                    st.error("Please enter the Company Name for the analysis.")
+                elif source_choice == "Use Indexed Documents" and not indexed_selection:
+                    st.error("Please select at least one indexed company.")
+                elif source_choice == "Upload Temporary Documents" and not temp_docs:
+                    st.error("Please upload at least one temporary document.")
+                else:
+                    with st.spinner(f"Preparing briefing for {prep_company_name}..."):
+                        analysis_md, sources = "", ""
+                        
+                        if source_choice == "Use Indexed Documents":
+                            analysis_md, sources = agent.get_predefined_analysis(
+                                analysis_choice, companies=indexed_selection
+                            )
+                        else: # Upload Temporary Documents
+                            context_list = []
+                            source_names = []
+                            for doc in temp_docs:
+                                text = agent._extract_text(doc.getvalue(), doc.name)
+                                if text:
+                                    context_list.append(text)
+                                    source_names.append(doc.name)
+                            full_context = "\n\n---\n\n".join(context_list)
+                            analysis_md = agent.get_unindexed_analysis(
+                                analysis_choice, prep_company_name, full_context
+                            )
+                            sources = ", ".join(source_names)
+                        
+                        # --- Display Logic (reused from below) ---
+                        if "Error:" in analysis_md or "Could not find" in analysis_md or not analysis_md.strip():
+                            st.error(analysis_md or "Failed to generate a response from the model.")
+                        else:
+                            structured_report = parse_markdown_to_structure(analysis_md, analysis_choice)
+                            report_html = format_analysis_as_html(analysis_md, analysis_choice, sources)
+                            word_bytes = markdown_to_word_bytes(structured_report, prep_company_name, analysis_choice)
+                            
+                            st.session_state['analysis_output'] = {
+                                "html": report_html,
+                                "word": word_bytes,
+                                "company_name": prep_company_name,
+                                "analysis_type": analysis_choice
+                            }
+
+    # --- Existing UI for other analysis types ---
+    else:
+        if not indexed_companies:
+            st.info("Please index documents for a company to run this analysis type.")
         else:
-            st.warning("Please select a company to delete.")
+            selected_companies = st.multiselect("Select Company/Companies to Analyze", options=indexed_companies, default=indexed_companies[0] if indexed_companies else [])
+            
+            user_query = ""
+            if analysis_choice == "Custom Query":
+                user_query = st.text_area("Ask a question about the selected companies' documents")
+
+            if st.button("🚀 Run Analysis", use_container_width=True):
+                proceed = False
+                if not selected_companies:
+                    st.warning("Please select at least one company.")
+                elif analysis_choice == "Compare Investment Ideas" and len(selected_companies) < 2:
+                    st.warning("Please select at least two companies for comparison.")
+                elif analysis_choice == "Custom Query" and not user_query.strip():
+                    st.warning("Please enter a question for the custom query.")
+                else:
+                    proceed = True
+
+                if proceed:
+                    with st.spinner(f"Running '{analysis_choice}' analysis for {', '.join(selected_companies)}..."):
+                        analysis_md, sources = "", ""
+                        if analysis_choice == "Custom Query":
+                            analysis_md, sources = agent.query(user_query, selected_companies)
+                        else:
+                            analysis_md, sources = agent.get_predefined_analysis(analysis_choice, selected_companies)
+                        
+                        if "Error:" in analysis_md or "Could not find" in analysis_md or not analysis_md.strip():
+                            st.error(analysis_md or "Failed to generate a response from the model.")
+                        else:
+                            if analysis_choice == "Competitive Analysis":
+                                analysis_md = format_competitive_analysis_output(analysis_md)
+
+                            structured_report = parse_markdown_to_structure(analysis_md, analysis_choice)
+                            company_name_for_doc = selected_companies[0] if len(selected_companies) == 1 else "Multiple Companies"
+                            report_html = format_analysis_as_html(analysis_md, analysis_choice, sources)
+                            word_bytes = markdown_to_word_bytes(structured_report, company_name_for_doc, analysis_choice)
+                            
+                            st.session_state['analysis_output'] = {
+                                "html": report_html,
+                                "word": word_bytes,
+                                "company_name": company_name_for_doc,
+                                "analysis_type": analysis_choice
+                            }
+
+    # --- Shared Output Display Area ---
+    if 'analysis_output' in st.session_state:
+        output = st.session_state.pop('analysis_output') # Get and remove to prevent re-display on rerun
+        st.success("✅ Analysis complete. You can now view and download the report.")
+        
+        st.markdown(output["html"], unsafe_allow_html=True)
+        
+        d1, d2 = st.columns(2)
+        safe_filename = re.sub(r'[\s/]', '_', output["analysis_type"])
+        doc_name = output["company_name"]
+        d1.download_button(
+            label="📥 Download as Word (.docx)",
+            data=output["word"],
+            file_name=f"{safe_filename}_{doc_name}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True
+        )
+        d2.download_button(
+            label="📥 Download as HTML (.html)",
+            data=output["html"].encode("utf-8"),
+            file_name=f"{safe_filename}_{doc_name}.html",
+            mime="text/html",
+            use_container_width=True
+        )
+
+    if indexed_companies:
+        st.markdown("---")
+        st.markdown("#### Manage Data")
+        
+        company_to_delete = st.selectbox("Select Company to Delete", options=[""] + indexed_companies, key="delete_select")
+        if st.button("🗑️ Delete All Data for This Company", type="secondary"):
+            if company_to_delete:
+                agent.delete_company_data(company_to_delete)
+                st.cache_resource.clear()
+                st.rerun()
+            else:
+                st.warning("Please select a company to delete.")
 
 
 
