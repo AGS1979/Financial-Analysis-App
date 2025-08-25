@@ -1,3 +1,4 @@
+import uuid
 from azure.ai.documentintelligence.models import ContentFormat, AnalyzeDocumentRequest
 from azure.core.credentials import AzureKeyCredential
 from azure.ai.documentintelligence import DocumentIntelligenceClient
@@ -402,8 +403,20 @@ def authentication_ui():
                 if not user_db.empty and email in user_db["email"].values:
                     user_data = user_db[user_db["email"] == email].iloc[0]
                     if verify_password(user_data["password_hash"], password):
+                        
+                        # --- START: MODIFIED SESSION LOGIC ---
+                        # 1. Generate a new unique session token.
+                        session_token = str(uuid.uuid4())
+                        
+                        # 2. Store the new token in the database, overwriting any old one.
+                        conn.client.table("users").update({"active_session_token": session_token}).eq("email", email).execute()
+
+                        # 3. Store user details and the new token in the session state.
                         st.session_state['logged_in'] = True
                         st.session_state['username'] = email
+                        st.session_state['session_token'] = session_token 
+                        # --- END: MODIFIED SESSION LOGIC ---
+                        
                         st.rerun()
                     else:
                         st.error("Incorrect password.")
@@ -436,8 +449,33 @@ def authentication_ui():
     
     return st.session_state.get('logged_in', False)
 
+
+def validate_session():
+    """Checks if the current session_token matches the one in the database."""
+    if not st.session_state.get('logged_in'):
+        return False # Not logged in, no session to validate
+
+    try:
+        email = st.session_state['username']
+        local_token = st.session_state.get('session_token')
+
+        # Fetch the current token from the database
+        result = conn.client.table("users").select("active_session_token").eq("email", email).single().execute()
+        
+        db_token = result.data.get('active_session_token')
+
+        # If tokens don't match, the session is invalid
+        if local_token != db_token:
+            return False
+        return True
+
+    except Exception as e:
+        # If any error occurs (e.g., user deleted), invalidate the session
+        st.error(f"Session validation error: {e}")
+        return False
+
 # --- Whitelist Management UI (for Admins) ---
-# --- Whitelist Management UI (for Admins) ---
+
 def whitelist_manager_ui():
     """Renders a UI in the sidebar for admins to manage the email whitelist in Supabase."""
     try:
@@ -3510,9 +3548,22 @@ def main():
     """
     Main function to run the Streamlit app with authentication and routing.
     """
-    # This must be the first command for the page to render correctly
+    
     if not authentication_ui():
         st.stop()  # Stop the app if the user is not logged in
+    
+
+    # --- START: NEW SESSION VALIDATION STEP ---
+    if not validate_session():
+        st.warning("Your session has expired or another session has been started with your credentials.")
+        st.info("Please log in again.")
+        # Clear potentially stale session state
+        for key in ['logged_in', 'username', 'session_token']:
+            if key in st.session_state:
+                del st.session_state[key]
+        st.button("Reload") # Gives user a button to click to refresh to login
+        st.stop() # Halt execution for this invalid session
+    # --- END: NEW SESSION VALIDATION STEP ---
 
     # --- Sidebar Definition ---
     with st.sidebar:
@@ -3543,6 +3594,7 @@ def main():
 
         if st.button("Logout"):
             # Clear all session state on logout
+            conn.client.table("users").update({"active_session_token": None}).eq("email", st.session_state['username']).execute()
             for key in st.session_state.keys():
                 del st.session_state[key]
             st.rerun()
