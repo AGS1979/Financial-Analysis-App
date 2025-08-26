@@ -2742,57 +2742,8 @@ def portfolio_agent_app(user_id: str):
             st.warning(f"Snapshot generation failed for {source_file} (Page {page_number}): {e}")
             return None
 
-    # --- In the "Run Analysis" button logic, inside the "Risk Assessment" block ---
-    if analysis_choice == "Risk Assessment":
-        try:
-            from thefuzz import fuzz
-            # +++ Add Supabase client initialization +++
-            supabase_client = agent._init_supabase()
-
-            data = json.loads(analysis_md)
-            risks = data.get("risks", [])
-            
-            # --- REVISED LOGIC FOR ENRICHING QUOTES ---
-            for risk in risks:
-                quote = risk.get("source_quote", "")
-                risk['snapshot_url'] = None # Initialize key
-
-                if not quote or not pinecone_matches or not supabase_client:
-                    risk['highlighted_quote'] = "Source text not available."
-                    continue
-
-                best_match_meta = None
-                highest_score = 0
-                
-                for match in pinecone_matches:
-                    score = fuzz.partial_ratio(quote.lower(), match.metadata['original_text'].lower())
-                    if score > highest_score:
-                        highest_score = score
-                        best_match_meta = match.metadata
-                
-                MIN_MATCH_SCORE = 75
-                if highest_score >= MIN_MATCH_SCORE and best_match_meta:
-                    # Generate snapshot using metadata from the best match
-                    snapshot_url = create_and_upload_snapshot(
-                        supabase_client=supabase_client,
-                        namespace=user_id, # Assumes user_id is the namespace
-                        company=company_name_for_doc,
-                        source_file=best_match_meta.get('source_file'),
-                        page_number=best_match_meta.get('page_number'),
-                        quote=quote
-                    )
-                    risk['snapshot_url'] = snapshot_url
-                else:
-                    # Fallback if no good match is found
-                    risk['highlighted_quote'] = (
-                        f"<i>(Could not find a high-confidence match for the quote in source documents.)</i><br>"
-                        f"<b>LLM-Generated Quote:</b> {html.escape(quote)}"
-                    )
-
-            report_html = format_risk_assessment_html(risks, company_name_for_doc, sources)
-            # ... rest of the code is the same ...    
-
-
+    # --- THIS IS THE ERRONEOUS BLOCK THAT HAS BEEN REMOVED ---
+    
     @st.cache_resource
     def load_agent(user_id):
         import tiktoken
@@ -3166,9 +3117,9 @@ Approach this analysis without bias. Remain completely objective and do not beco
                 # For Risk Assessment, sort by year
                 sort_order = None
                 if analysis_type == "Risk Assessment":
-                     # This is a conceptual sort; Pinecone doesn't directly support sorting by metadata.
-                     # We fetch more results and sort them client-side.
-                     k = 60 # Fetch more to get a better chronological view
+                        # This is a conceptual sort; Pinecone doesn't directly support sorting by metadata.
+                        # We fetch more results and sort them client-side.
+                        k = 60 # Fetch more to get a better chronological view
 
                 results = self.index.query(vector=query_vector, top_k=k, filter=query_filter, include_metadata=True, namespace=self.namespace)
 
