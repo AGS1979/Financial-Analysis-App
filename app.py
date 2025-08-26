@@ -2792,25 +2792,6 @@ def portfolio_agent_app(user_id: str):
             report_html = format_risk_assessment_html(risks, company_name_for_doc, sources)
             # ... rest of the code is the same ...    
 
-    def risk_assessment_to_word_bytes(risks_data: list, company_name: str) -> bytes:
-        """Creates a simple Word document for the risk assessment."""
-        doc = Document()
-        doc.add_heading(f"Risk Assessment: {company_name}", 0)
-        for i, risk in enumerate(risks_data, 1):
-            doc.add_heading(f"Risk #{i}: {risk.get('risk_title', 'Untitled Risk')}", level=1)
-            doc.add_heading("Summary", level=2)
-            doc.add_paragraph(risk.get('risk_summary', 'N/A'))
-            doc.add_heading("Potential Impact", level=2)
-            doc.add_paragraph(risk.get('potential_impact', 'N/A'))
-            doc.add_heading("Source Quote", level=2)
-            p = doc.add_paragraph()
-            p.add_run(risk.get('source_quote', 'N/A')).italic = True
-            doc.add_paragraph() # Spacer
-        
-        buffer = io.BytesIO()
-        doc.save(buffer)
-        buffer.seek(0)
-        return buffer.getvalue()
 
     @st.cache_resource
     def load_agent(user_id):
@@ -3441,7 +3422,6 @@ Approach this analysis without bias. Remain completely objective and do not beco
 
                                     report_html = format_risk_assessment_html(risks, company_name_for_doc, sources)
                                     # This line was missing the assignment
-                                    word_bytes = risk_assessment_to_word_bytes(risks, company_name_for_doc)
 
                                 except json.JSONDecodeError:
                                     st.error("Failed to parse the Risk Assessment response from the AI. The format was not valid JSON.")
