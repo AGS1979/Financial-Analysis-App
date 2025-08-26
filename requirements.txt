@@ -35,3 +35,5 @@ azure-ai-documentintelligence==1.0.0b2
 xlrd
 Pillow
 tabulate
+thefuzz
+python-Levenshtein

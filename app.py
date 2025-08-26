@@ -3205,19 +3205,40 @@ Approach this analysis without bias. Remain completely objective and do not beco
                             # --- NEW: Custom workflow for Risk Assessment ---
                             if analysis_choice == "Risk Assessment":
                                 try:
+                                    from thefuzz import fuzz
                                     data = json.loads(analysis_md)
                                     risks = data.get("risks", [])
                                     
                                     # Enrich risks data with highlighted quotes
                                     for risk in risks:
                                         quote = risk.get("source_quote", "")
-                                        full_context = "Source not found."
-                                        # Find the full context from pinecone results
+                                        if not quote or not pinecone_matches:
+                                            risk['highlighted_quote'] = "Source text not available."
+                                            continue
+
+                                        best_match_text = ""
+                                        highest_score = 0
+
+                                        # Find the best source chunk using fuzzy matching
                                         for match in pinecone_matches:
-                                            if quote in match.metadata['original_text']:
-                                                full_context = match.metadata['original_text']
-                                                break
-                                        risk['highlighted_quote'] = highlight_text(full_context, quote)
+                                            # Use partial_ratio to find the best substring-like match
+                                            score = fuzz.partial_ratio(quote.lower(), match.metadata['original_text'].lower())
+                                            if score > highest_score:
+                                                highest_score = score
+                                                best_match_text = match.metadata['original_text']
+
+                                        # Set a confidence threshold for the match
+                                        MIN_MATCH_SCORE = 75
+                                        if highest_score >= MIN_MATCH_SCORE:
+                                            # If we found a good match, use it to highlight the quote
+                                            risk['highlighted_quote'] = highlight_text(best_match_text, quote)
+                                        else:
+                                            # Otherwise, provide a clear fallback message
+                                            risk['highlighted_quote'] = (
+                                                f"<i>(Could not find a high-confidence match for the quote in source documents. "
+                                                f"Score: {highest_score})</i><br><br>"
+                                                f"<b>LLM-Generated Quote:</b> {html.escape(quote)}"
+                                            )
 
                                     report_html = format_risk_assessment_html(risks, company_name_for_doc, sources)
                                     word_bytes = risk_assessment_to_word_bytes(risks, company_name_for_doc)
@@ -3246,9 +3267,13 @@ Approach this analysis without bias. Remain completely objective and do not beco
     # --- Shared Output Display Area ---
     if 'analysis_output' in st.session_state:
         output = st.session_state.pop('analysis_output') # Get and remove to prevent re-display on rerun
-        st.success("✅ Analysis complete. You can now view and download the report.")
-        
-        st.markdown(output["html"], unsafe_allow_html=True)
+        # Display a custom message for Risk Assessment and skip rendering the HTML
+        if output["analysis_type"] == "Risk Assessment":
+            st.success("✅ Risk Assessment complete. The report is available for download below.")
+        else:
+            # For all other types, show the original message and render the HTML
+            st.success("✅ Analysis complete. You can now view and download the report.")
+            st.markdown(output["html"], unsafe_allow_html=True)
         
         d1, d2 = st.columns(2)
         safe_filename = re.sub(r'[\s/]', '_', output["analysis_type"])
