@@ -2654,6 +2654,13 @@ def portfolio_agent_app(user_id: str):
         """
         cards_html = ""
         for i, risk in enumerate(risks_data, 1):
+            # +++ NEW LOGIC for snapshot display +++
+            snapshot_content = ""
+            if risk.get('snapshot_url'):
+                snapshot_content = f'<img src="{risk["snapshot_url"]}" alt="Source Snapshot" style="width:100%; border-radius: 4px;">'
+            else:
+                snapshot_content = risk.get('highlighted_quote', 'Source text not available.')
+
             cards_html += f"""
             <div class="risk-card">
                 <div class="risk-card-header"><h3>Risk #{i}: {html.escape(risk.get('risk_title', 'Untitled Risk'))}</h3></div>
@@ -2663,7 +2670,7 @@ def portfolio_agent_app(user_id: str):
                     <h4>Potential Impact</h4>
                     <p>{html.escape(risk.get('potential_impact', 'N/A'))}</p>
                     <h4>Source Snapshot</h4>
-                    <div class="risk-source-snapshot">{risk.get('highlighted_quote', 'Source text not available.')}</div>
+                    <div class="risk-source-snapshot">{snapshot_content}</div>
                 </div>
             </div>
             """
@@ -2676,6 +2683,114 @@ def portfolio_agent_app(user_id: str):
             <div class="risk-sources-footer"><strong>Source Documents:</strong> {sources_str}</div>
         </div>
         """
+
+    # --- Add this NEW helper function inside the main portfolio_agent_app function ---
+
+    def create_and_upload_snapshot(supabase_client, namespace: str, company: str, source_file: str, page_number: int, quote: str) -> str:
+        """
+        Downloads a source PDF, creates a highlighted image of the relevant page,
+        and uploads it to Supabase, returning the public URL.
+        """
+        import uuid
+        if not source_file.lower().endswith('.pdf'):
+            return None # Can only generate snapshots for PDFs
+
+        source_bucket = "source-documents"
+        snapshot_bucket = "risk_snapshots"
+        source_path = f"{namespace}/{company}/{source_file}"
+        
+        try:
+            # 1. Download the source PDF from Supabase
+            file_bytes = supabase_client.storage.from_(source_bucket).download(path=source_path)
+            
+            with fitz.open(stream=file_bytes, filetype="pdf") as doc:
+                if page_number > len(doc):
+                    return None # Page number out of bounds
+                
+                page = doc.load_page(page_number - 1) # fitz is 0-indexed
+                
+                # 2. Find and highlight the quote on the page
+                text_instances = page.search_for(quote, quads=True)
+                if not text_instances:
+                    # Fuzzy search if exact match fails
+                    words = quote.split()
+                    if len(words) > 5:
+                        short_quote = " ".join(words[:5])
+                        text_instances = page.search_for(short_quote, quads=True)
+
+                for inst in text_instances:
+                    page.add_highlight_annot(inst)
+
+                # 3. Render the page as an image
+                pix = page.get_pixmap(dpi=150) # Increase DPI for better quality
+                img_bytes = pix.tobytes("png")
+                
+                # 4. Upload the image to the snapshots bucket
+                snapshot_filename = f"{uuid.uuid4()}.png"
+                snapshot_path = f"{namespace}/{company}/{snapshot_filename}"
+                
+                supabase_client.storage.from_(snapshot_bucket).upload(
+                    path=snapshot_path,
+                    file=img_bytes,
+                    file_options={"content-type": "image/png", "upsert": "true"}
+                )
+                
+                # 5. Get the public URL
+                return supabase_client.storage.from_(snapshot_bucket).get_public_url(snapshot_path)
+
+        except Exception as e:
+            st.warning(f"Snapshot generation failed for {source_file} (Page {page_number}): {e}")
+            return None
+
+    # --- In the "Run Analysis" button logic, inside the "Risk Assessment" block ---
+    if analysis_choice == "Risk Assessment":
+        try:
+            from thefuzz import fuzz
+            # +++ Add Supabase client initialization +++
+            supabase_client = agent._init_supabase()
+
+            data = json.loads(analysis_md)
+            risks = data.get("risks", [])
+            
+            # --- REVISED LOGIC FOR ENRICHING QUOTES ---
+            for risk in risks:
+                quote = risk.get("source_quote", "")
+                risk['snapshot_url'] = None # Initialize key
+
+                if not quote or not pinecone_matches or not supabase_client:
+                    risk['highlighted_quote'] = "Source text not available."
+                    continue
+
+                best_match_meta = None
+                highest_score = 0
+                
+                for match in pinecone_matches:
+                    score = fuzz.partial_ratio(quote.lower(), match.metadata['original_text'].lower())
+                    if score > highest_score:
+                        highest_score = score
+                        best_match_meta = match.metadata
+                
+                MIN_MATCH_SCORE = 75
+                if highest_score >= MIN_MATCH_SCORE and best_match_meta:
+                    # Generate snapshot using metadata from the best match
+                    snapshot_url = create_and_upload_snapshot(
+                        supabase_client=supabase_client,
+                        namespace=user_id, # Assumes user_id is the namespace
+                        company=company_name_for_doc,
+                        source_file=best_match_meta.get('source_file'),
+                        page_number=best_match_meta.get('page_number'),
+                        quote=quote
+                    )
+                    risk['snapshot_url'] = snapshot_url
+                else:
+                    # Fallback if no good match is found
+                    risk['highlighted_quote'] = (
+                        f"<i>(Could not find a high-confidence match for the quote in source documents.)</i><br>"
+                        f"<b>LLM-Generated Quote:</b> {html.escape(quote)}"
+                    )
+
+            report_html = format_risk_assessment_html(risks, company_name_for_doc, sources)
+            # ... rest of the code is the same ...    
 
     def risk_assessment_to_word_bytes(risks_data: list, company_name: str) -> bytes:
         """Creates a simple Word document for the risk assessment."""
@@ -2717,6 +2832,16 @@ def portfolio_agent_app(user_id: str):
                     st.error(f"Failed to connect to Pinecone: {e}")
                     raise
 
+            def _init_supabase(self):
+                from supabase import create_client, Client
+                url = st.secrets.get("supabase", {}).get("url")
+                key = st.secrets.get("supabase", {}).get("anon_key")
+                if not url or not key:
+                    st.error("Supabase URL or Anon Key is not configured in secrets.")
+                    return None
+                return create_client(url, key)
+
+
             def sanitize_filename(self, name: str) -> str:
                 return re.sub(r'[<>:"/\\|?*]', '_', name.strip())
 
@@ -2734,19 +2859,53 @@ def portfolio_agent_app(user_id: str):
                     st.warning(f"Could not read {filename}: {e}")
                 return ""
 
-            def _chunk_text(self, text: str, max_tokens: int = 512, overlap_tokens: int = 50) -> List[str]:
+            def _chunk_text(self, file_content: bytes, filename: str, max_tokens: int = 512, overlap_tokens: int = 50) -> List[dict]:
+                """Chunks text page by page and returns a list of dictionaries with text and page number."""
+                if not filename.lower().endswith(".pdf"):
+                    # For non-PDFs, treat as a single page
+                    full_text = self._extract_text(file_content, filename)
+                    # This part remains similar to before but for a single block
+                    try:
+                        enc = tiktoken.get_encoding("cl100k_base")
+                    except Exception:
+                        enc = tiktoken.get_encoding("gpt2")
+                    tokens = enc.encode(full_text)
+                    chunks = []
+                    start = 0
+                    while start < len(tokens):
+                        end = start + max_tokens
+                        chunk_text = enc.decode(tokens[start:end]).strip()
+                        if chunk_text:
+                            chunks.append({"text": chunk_text, "page_number": 1})
+                        start += (max_tokens - overlap_tokens)
+                    return chunks
+
+                # PDF-specific page-by-page chunking
+                chunks_with_pages = []
                 try:
-                    enc = tiktoken.get_encoding("cl100k_base")
-                except Exception:
-                    enc = tiktoken.get_encoding("gpt2")
-                tokens = enc.encode(text)
-                chunks = []
-                start = 0
-                while start < len(tokens):
-                    end = start + max_tokens
-                    chunks.append(enc.decode(tokens[start:end]).strip())
-                    start += (max_tokens - overlap_tokens)
-                return [chunk for chunk in chunks if chunk]
+                    with fitz.open(stream=file_content, filetype="pdf") as doc:
+                        try:
+                            enc = tiktoken.get_encoding("cl100k_base")
+                        except Exception:
+                            enc = tiktoken.get_encoding("gpt2")
+                        
+                        for page_num, page in enumerate(doc, start=1):
+                            page_text = page.get_text()
+                            if not page_text.strip():
+                                continue
+                            
+                            tokens = enc.encode(page_text)
+                            start = 0
+                            while start < len(tokens):
+                                end = start + max_tokens
+                                chunk_text = enc.decode(tokens[start:end]).strip()
+                                if chunk_text:
+                                    chunks_with_pages.append({"text": chunk_text, "page_number": page_num})
+                                start += (max_tokens - overlap_tokens)
+                except Exception as e:
+                    st.warning(f"Error chunking PDF {filename}: {e}")
+
+                return chunks_with_pages
 
             def _get_year_from_filename(self, filename: str) -> int:
                 matches = re.findall(r'\b(20\d{2})\b', filename)
@@ -2754,37 +2913,73 @@ def portfolio_agent_app(user_id: str):
 
             def add_documents(self, company: str, uploaded_files: list):
                 safe_company_name = self.sanitize_filename(company)
+                
+                # Initialize Supabase client
+                supabase_client = self._init_supabase()
+                if not supabase_client:
+                    return
+
                 with st.status(f"Processing documents for {safe_company_name}...", expanded=True) as status:
                     total_vectors_processed = 0
                     for file in uploaded_files:
-                        status.write(f"Clearing old entries for {file.name}...")
+                        # 1. Upload original document to Supabase Storage
+                        status.write(f"Uploading {file.name} to source document storage...")
+                        file_bytes = file.getvalue()
+                        supabase_path = f"{self.namespace}/{safe_company_name}/{file.name}"
+                        
+                        try:
+                            # Use upsert=True to overwrite if it already exists
+                            supabase_client.storage.from_("source-documents").upload(
+                                path=supabase_path,
+                                file=file_bytes,
+                                file_options={"content-type": file.type, "upsert": "true"}
+                            )
+                        except Exception as e:
+                            st.error(f"Failed to upload {file.name} to Supabase: {e}")
+                            continue # Skip this file if upload fails
+
+                        # 2. Clear old entries from Pinecone
+                        status.write(f"Clearing old Pinecone entries for {file.name}...")
                         self.index.delete(
                             filter={"company": {"$eq": safe_company_name}, "source_file": {"$eq": file.name}},
                             namespace=self.namespace
                         )
+
+                        # 3. Chunk text page by page
                         file_year = self._get_year_from_filename(file.name)
-                        if file_year == 0:
-                            st.warning(f"Could not extract year from '{file.name}'.")
-                        status.write(f"Extracting text from {file.name}...")
-                        text = self._extract_text(file.getvalue(), file.name)
-                        if not text:
-                            st.write(f"Skipping {file.name}: no text could be extracted.")
-                            continue
                         status.write(f"Chunking and embedding {file.name}...")
-                        chunks = self._chunk_text(text)
-                        vectors = self.embedding_model.encode(chunks).tolist()
+                        # Pass file_bytes to the new chunking function
+                        chunks_with_pages = self._chunk_text(file_bytes, file.name)
+                        
+                        if not chunks_with_pages:
+                            st.write(f"Skipping {file.name}: no text could be extracted or chunked.")
+                            continue
+
+                        # 4. Create vectors and upsert to Pinecone with page_number metadata
+                        chunk_texts = [item['text'] for item in chunks_with_pages]
+                        vectors = self.embedding_model.encode(chunk_texts).tolist()
+                        
                         vectors_to_upsert = []
-                        for i, chunk in enumerate(chunks):
-                            chunk_id = f"{safe_company_name}-{self.sanitize_filename(file.name)}-{i}"
-                            metadata = {"company": safe_company_name, "source_file": file.name, "original_text": chunk, "year": file_year}
+                        for i, item in enumerate(chunks_with_pages):
+                            chunk_id = f"{safe_company_name}-{self.sanitize_filename(file.name)}-p{item['page_number']}-{i}"
+                            metadata = {
+                                "company": safe_company_name, 
+                                "source_file": file.name, 
+                                "original_text": item['text'], 
+                                "year": file_year,
+                                "page_number": item['page_number'] # <<< CRITICAL ADDITION
+                            }
                             vectors_to_upsert.append({"id": chunk_id, "values": vectors[i], "metadata": metadata})
+
                         if not vectors_to_upsert:
                             continue
+
                         status.write(f"Upserting {len(vectors_to_upsert)} chunks to Pinecone...")
                         batch_size = 100
                         for i in range(0, len(vectors_to_upsert), batch_size):
                             self.index.upsert(vectors=vectors_to_upsert[i:i + batch_size], namespace=self.namespace)
                         total_vectors_processed += len(vectors_to_upsert)
+
                     if total_vectors_processed > 0:
                         st.success(f"Successfully indexed {total_vectors_processed} new document chunks for **{company}**.")
                     else:
