@@ -2766,10 +2766,11 @@ def portfolio_agent_app(user_id: str):
 
             def _init_supabase(self):
                 from supabase import create_client, Client
-                url = st.secrets.get("supabase", {}).get("url")
-                key = st.secrets.get("supabase", {}).get("anon_key")
+                # CORRECTED: Access secrets under the 'connections.supabase' structure
+                url = st.secrets.get("connections", {}).get("supabase", {}).get("SUPABASE_URL")
+                key = st.secrets.get("connections", {}).get("supabase", {}).get("SUPABASE_KEY")
                 if not url or not key:
-                    st.error("Supabase URL or Anon Key is not configured in secrets.")
+                    st.error("Supabase URL or Key is not configured in secrets for the agent. Please check [connections.supabase].")
                     return None
                 return create_client(url, key)
 
