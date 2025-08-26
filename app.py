@@ -50,7 +50,7 @@ from jinja2 import Template
 
 # --- Must be the first st.* command ---
 st.set_page_config(
-    page_title="Aranca Financial Suite",
+    page_title="aranca-ai",
     page_icon="📈",  # Adds a browser tab icon
     layout="wide"
 )
@@ -331,7 +331,7 @@ logo_base64 = get_base64_logo_image("logo.png")
 st.markdown(
     f"""
     <div class="aranca-header">
-        <div class="aranca-title">Welcome to the Aranca Financial Suite</div>
+        <div class="aranca-title">Welcome to the aranca-ai</div>
         <div class="aranca-logo">
             <img src="data:image/png;base64,{logo_base64}" alt="Aranca Logo">
         </div>
@@ -4060,7 +4060,7 @@ def main():
 
     # --- Sidebar Definition ---
     with st.sidebar:
-        st.title("Aranca Financial Suite")
+        st.title("aranca-ai")
         # Display the user's email, which is stored in 'username' of session_state
         st.write(f"Welcome, **{st.session_state.username}**")
         st.markdown("---")
