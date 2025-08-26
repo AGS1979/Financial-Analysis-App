@@ -263,7 +263,7 @@ h1 {
 }
 
 .aranca-title {
-    font-size: 2.0rem;
+    font-size: 3.0rem !important;
     font-weight: 700;
     color: #1e1e1e;
     margin: 0;
@@ -4079,9 +4079,7 @@ def main():
         )
         st.markdown("---")
 
-        # --- NEW: Whitelist Manager UI ---
-        whitelist_manager_ui()
-        st.markdown("---")
+        
 
         if st.button("Logout"):
             # Clear all session state on logout
