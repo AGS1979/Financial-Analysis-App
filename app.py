@@ -331,7 +331,7 @@ logo_base64 = get_base64_logo_image("logo.png")
 st.markdown(
     f"""
     <div class="aranca-header">
-        <div class="aranca-title">Welcome to the aranca-ai</div>
+        <div class="aranca-title">Welcome to aranca-ai</div>
         <div class="aranca-logo">
             <img src="data:image/png;base64,{logo_base64}" alt="Aranca Logo">
         </div>
