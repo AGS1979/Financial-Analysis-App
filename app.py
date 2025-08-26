@@ -1887,7 +1887,7 @@ Section to Summarize:
     # STREAMLIT UI & APP LOGIC
     # ==========================
     st.markdown("### 🔀 Agent Special Situations")
-    st.header("Step 1: Generate Investment Memo")
+    st.subheader("Step 1: Generate Investment Memo")
 
     company_name_memo = st.text_input("Enter Company Name", key="company_name_memo")
     situation_type_memo = st.selectbox("Select Situation Type", options=list(REPORT_TEMPLATES.keys()), key="situation_type_memo")
@@ -1942,7 +1942,7 @@ Section to Summarize:
 
     st.markdown("\n\n---\n\n")
 
-    st.header("Step 2: Generate Infographic from Memo")
+    st.subheader("Step 2: Generate Infographic from Memo")
     st.info("After generating the memo, you can either upload it below or, if you just generated it, the app will use it automatically.")
     uploaded_memo_infographic = st.file_uploader("Upload the generated Memo (.docx)", type=["docx"], key="uploaded_memo_infographic")
 
