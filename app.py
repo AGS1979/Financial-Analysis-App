@@ -3350,6 +3350,7 @@ Approach this analysis without bias. Remain completely objective and do not beco
                                     risks = data.get("risks", [])
                                     
                                     for risk in risks:
+                                        # ... (your existing loop for creating snapshots is correct) ...
                                         quote = risk.get("source_quote", "")
                                         risk['snapshot_url'] = None
 
@@ -3384,7 +3385,16 @@ Approach this analysis without bias. Remain completely objective and do not beco
                                             )
 
                                     report_html = format_risk_assessment_html(risks, company_name_for_doc, sources)
-                                    # This line was missing the assignment
+                                    
+                                    # THIS IS THE CRITICAL FIX: The next 6 lines are added to save the result
+                                    # We create a placeholder for the Word doc since the HTML is the primary output.
+                                    word_bytes = b"" 
+                                    st.session_state['analysis_output'] = {
+                                        "html": report_html,
+                                        "word": word_bytes,
+                                        "company_name": company_name_for_doc,
+                                        "analysis_type": analysis_choice
+                                    }
 
                                 except json.JSONDecodeError:
                                     st.error("Failed to parse the Risk Assessment response from the AI. The format was not valid JSON.")
@@ -3398,13 +3408,14 @@ Approach this analysis without bias. Remain completely objective and do not beco
                                 report_html = format_analysis_as_html(analysis_md, analysis_choice, sources)
                                 word_bytes = markdown_to_word_bytes(structured_report, company_name_for_doc, analysis_choice)
                             
-                            if report_html and word_bytes:
-                                st.session_state['analysis_output'] = {
-                                    "html": report_html,
-                                    "word": word_bytes,
-                                    "company_name": company_name_for_doc,
-                                    "analysis_type": analysis_choice
-                                }
+                                # This block now correctly handles only the 'else' cases
+                                if report_html and word_bytes:
+                                    st.session_state['analysis_output'] = {
+                                        "html": report_html,
+                                        "word": word_bytes,
+                                        "company_name": company_name_for_doc,
+                                        "analysis_type": analysis_choice
+                                    }
 
 
     # --- Shared Output Display Area ---
