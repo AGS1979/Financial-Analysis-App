@@ -2692,27 +2692,41 @@ def portfolio_agent_app(user_id: str):
         and uploads it to Supabase, returning the public URL.
         """
         import uuid
+
+        # --- FIX 1: Add validation for missing or non-numeric page_number ---
+        if page_number is None:
+            st.warning(f"Snapshot skipped for '{source_file}': Page number was missing from metadata.")
+            return None
+        
+        try:
+            # Ensure page_number is an integer for library compatibility
+            page_number = int(page_number)
+            if page_number <= 0: raise ValueError("Page number must be positive.")
+        except (ValueError, TypeError):
+            st.warning(f"Snapshot skipped for '{source_file}': Invalid page number format ('{page_number}').")
+            return None
+
         if not source_file.lower().endswith('.pdf'):
-            return None # Can only generate snapshots for PDFs
+            return None
 
         source_bucket = "source-documents"
         snapshot_bucket = "risk_snapshots"
-        source_path = f"{namespace}/{company}/{source_file}"
+        safe_company_name = re.sub(r'[<>:"/\\|?*]', '_', company.strip())
+        source_path = f"{namespace}/{safe_company_name}/{source_file}"
         
         try:
-            # 1. Download the source PDF from Supabase
             file_bytes = supabase_client.storage.from_(source_bucket).download(path=source_path)
             
             with fitz.open(stream=file_bytes, filetype="pdf") as doc:
+                # --- FIX 2: Validate that the page number exists in the document ---
                 if page_number > len(doc):
-                    return None # Page number out of bounds
+                    st.warning(f"Snapshot generation failed for {source_file}: Requested page {page_number}, but the document only has {len(doc)} pages.")
+                    return None
                 
-                page = doc.load_page(page_number - 1) # fitz is 0-indexed
+                page = doc.load_page(page_number - 1)
                 
-                # 2. Find and highlight the quote on the page
                 text_instances = page.search_for(quote, quads=True)
                 if not text_instances:
-                    # Fuzzy search if exact match fails
                     words = quote.split()
                     if len(words) > 5:
                         short_quote = " ".join(words[:5])
@@ -2721,13 +2735,11 @@ def portfolio_agent_app(user_id: str):
                 for inst in text_instances:
                     page.add_highlight_annot(inst)
 
-                # 3. Render the page as an image
-                pix = page.get_pixmap(dpi=150) # Increase DPI for better quality
+                pix = page.get_pixmap(dpi=150)
                 img_bytes = pix.tobytes("png")
                 
-                # 4. Upload the image to the snapshots bucket
                 snapshot_filename = f"{uuid.uuid4()}.png"
-                snapshot_path = f"{namespace}/{company}/{snapshot_filename}"
+                snapshot_path = f"{namespace}/{safe_company_name}/{snapshot_filename}"
                 
                 supabase_client.storage.from_(snapshot_bucket).upload(
                     path=snapshot_path,
@@ -2735,7 +2747,6 @@ def portfolio_agent_app(user_id: str):
                     file_options={"content-type": "image/png", "upsert": "true"}
                 )
                 
-                # 5. Get the public URL
                 return supabase_client.storage.from_(snapshot_bucket).get_public_url(snapshot_path)
 
         except Exception as e:
