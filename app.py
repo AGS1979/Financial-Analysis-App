@@ -3401,41 +3401,46 @@ Approach this analysis without bias. Remain completely objective and do not beco
                             if analysis_choice == "Risk Assessment":
                                 try:
                                     from thefuzz import fuzz
+                                    supabase_client = agent._init_supabase()
                                     data = json.loads(analysis_md)
                                     risks = data.get("risks", [])
                                     
-                                    # Enrich risks data with highlighted quotes
                                     for risk in risks:
                                         quote = risk.get("source_quote", "")
-                                        if not quote or not pinecone_matches:
+                                        risk['snapshot_url'] = None
+
+                                        if not quote or not pinecone_matches or not supabase_client:
                                             risk['highlighted_quote'] = "Source text not available."
                                             continue
 
-                                        best_match_text = ""
+                                        best_match_meta = None
                                         highest_score = 0
-
-                                        # Find the best source chunk using fuzzy matching
+                                        
                                         for match in pinecone_matches:
-                                            # Use partial_ratio to find the best substring-like match
                                             score = fuzz.partial_ratio(quote.lower(), match.metadata['original_text'].lower())
                                             if score > highest_score:
                                                 highest_score = score
-                                                best_match_text = match.metadata['original_text']
-
-                                        # Set a confidence threshold for the match
+                                                best_match_meta = match.metadata
+                                        
                                         MIN_MATCH_SCORE = 75
-                                        if highest_score >= MIN_MATCH_SCORE:
-                                            # If we found a good match, use it to highlight the quote
-                                            risk['highlighted_quote'] = highlight_text(best_match_text, quote)
+                                        if highest_score >= MIN_MATCH_SCORE and best_match_meta:
+                                            snapshot_url = create_and_upload_snapshot(
+                                                supabase_client=supabase_client,
+                                                namespace=user_id,
+                                                company=company_name_for_doc,
+                                                source_file=best_match_meta.get('source_file'),
+                                                page_number=best_match_meta.get('page_number'),
+                                                quote=quote
+                                            )
+                                            risk['snapshot_url'] = snapshot_url
                                         else:
-                                            # Otherwise, provide a clear fallback message
                                             risk['highlighted_quote'] = (
-                                                f"<i>(Could not find a high-confidence match for the quote in source documents. "
-                                                f"Score: {highest_score})</i><br><br>"
+                                                f"<i>(Could not find a high-confidence match for the quote in source documents.)</i><br>"
                                                 f"<b>LLM-Generated Quote:</b> {html.escape(quote)}"
                                             )
 
                                     report_html = format_risk_assessment_html(risks, company_name_for_doc, sources)
+                                    # This line was missing the assignment
                                     word_bytes = risk_assessment_to_word_bytes(risks, company_name_for_doc)
 
                                 except json.JSONDecodeError:
