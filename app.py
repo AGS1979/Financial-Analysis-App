@@ -3417,17 +3417,14 @@ Approach this analysis without bias. Remain completely objective and do not beco
                                         "analysis_type": analysis_choice
                                     }
 
-
-    # --- Shared Output Display Area ---
+    # --- MODIFIED: Shared Output Display Area ---
     if 'analysis_output' in st.session_state:
         output = st.session_state.pop('analysis_output') # Get and remove to prevent re-display on rerun
-        # Display a custom message for Risk Assessment and skip rendering the HTML
-        if output["analysis_type"] == "Risk Assessment":
-            st.success("✅ Risk Assessment complete. The report is available for download below.")
-        else:
-            # For all other types, show the original message and render the HTML
-            st.success("✅ Analysis complete. You can now view and download the report.")
-            st.markdown(output["html"], unsafe_allow_html=True)
+        
+        # Display a generic success message for all analysis types.
+        st.success("✅ Analysis complete. Your report is ready for download below.")
+        
+        # This section no longer displays any HTML output in the UI.
         
         d1, d2 = st.columns(2)
         safe_filename = re.sub(r'[\s/]', '_', output["analysis_type"])
@@ -3446,6 +3443,7 @@ Approach this analysis without bias. Remain completely objective and do not beco
             mime="text/html",
             use_container_width=True
         )
+
 
     if indexed_companies:
         st.markdown("---")
