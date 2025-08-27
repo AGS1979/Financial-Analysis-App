@@ -1986,17 +1986,18 @@ Section to Summarize:
 
 def esg_analyzer_app():
     """
-    Encapsulates the ESG Analyzer with a new primary dashboard feature and the classic report/comparison as a sub-tool.
+    Encapsulates the ESG Analyzer with an enhanced dashboard featuring trend analysis and sparklines.
     """
-    # --- Add these imports for robustness ---
+    # --- Imports ---
     import re
     from datetime import datetime
-    import html # Ensure html is imported
+    import html
+    import numpy as np # For sparkline calculations
 
     st.markdown("### ✨ Advanced ESG Analyzer")
     st.markdown("Generate a professional ESG dashboard or a detailed insight report from sustainability disclosures.")
 
-    # --- Configuration & Core Helper Functions ---
+    # --- Core Helper Functions ---
     def get_benchmark_rating(score):
         """Converts a numeric score to a benchmark rating and color."""
         try:
@@ -2018,47 +2019,43 @@ def esg_analyzer_app():
             st.error(f"Error reading PDF: {e}")
             return ""
 
+    # --- MODIFIED: Core AI Analysis with Richer, Trend-Aware JSON Output ---
     def analyze_esg_with_structured_output(text):
-        """Analyzes text using the DeepSeek API with an enhanced structured JSON prompt for the dashboard."""
+        """Analyzes text with a prompt designed to extract current values, previous values, and trends for KPIs."""
         if not text.strip():
             return json.dumps({"error": "No text provided for analysis."})
 
         prompt = f"""
         You are an expert ESG analyst. Your task is to analyze the provided ESG report text and return a structured JSON object.
-        You must find specific, quantifiable metrics where possible.
+        You must find specific, quantifiable metrics and their historical counterparts where possible to show trends.
 
         **JSON Output Specification:**
-        - **executive_summary**: A concise, 2-3 sentence narrative summary of the company's overall ESG posture.
-        - **overall_score**: A single float score from 0.0 to 10.0 for overall performance.
-        - **environmental_score**: A float score from 0.0 to 10.0 for the Environmental pillar.
-        - **social_score**: A float score from 0.0 to 10.0 for the Social pillar.
-        - **governance_score**: A float score from 0.0 to 10.0 for the Governance pillar.
-        - **key_kpis**: An object containing key quantitative metrics. If a metric is not found, use "N/A".
-            - "ghg_emissions": "e.g., 15% reduction in Scope 1 & 2 vs 2020 baseline"
-            - "water_management": "e.g., 5 million cubic meters withdrawn, a 5% YoY decrease"
-            - "employee_turnover": "e.g., 12.5% voluntary turnover rate"
-            - "women_in_leadership": "e.g., 35% of senior management positions"
-            - "board_independence": "e.g., 8 out of 10 directors are independent"
-        - **esg_swot**: An object containing lists of strings for a SWOT analysis.
-            - "strengths": ["e.g., Industry-leading water recycling program"]
-            - "weaknesses": ["e.g., Higher employee turnover than sector average"]
-            - "opportunities": ["e.g., Growing market for sustainable products"]
-            - "threats": ["e.g., Upcoming regulations on plastic packaging"]
-        - **environmental_insights**: A list of JSON objects with "subcategory" and "detail". Provide up to 5 insights.
-        - **social_insights**: A list of JSON objects with "subcategory" and "detail". Provide up to 5 insights.
-        - **governance_insights**: A list of JSON objects with "subcategory" and "detail". Provide up to 5 insights.
-
-        Do not include any text outside of the main JSON object.
+        - "executive_summary": A concise, 2-3 sentence narrative summary of the company's overall ESG posture.
+        - "overall_score", "environmental_score", "social_score", "governance_score": Float scores from 0.0 to 10.0.
+        - "key_kpis": An object of key metrics. For each metric, provide an object with "value", "previous_value" (if available), and "unit".
+            - "ghg_emissions": {{"value": 16, "previous_value": 14, "unit": "% reduction vs baseline"}}
+            - "methane_intensity": {{"value": 57, "previous_value": null, "unit": "% reduction vs 2019"}}
+            - "water_recycled": {{"value": 83, "previous_value": 72, "unit": "million barrels"}}
+            - "women_in_leadership": {{"value": 36, "previous_value": 27, "unit": "% of board"}}
+            - "trir": {{"value": 0.53, "previous_value": 0.53, "unit": "Total Recordable Incident Rate"}}
+            - "esg_linked_compensation": {{"value": "Yes", "previous_value": null, "unit": "ESG metrics tied to executive pay"}}
+        - "esg_swot": A SWOT analysis object with lists of strings for "strengths", "weaknesses", "opportunities", "threats".
+        - "environmental_insights", "social_insights", "governance_insights": Lists of objects with "subcategory" and "detail".
 
         --- DOCUMENT TEXT ---
-        {text[:50000]}
+        {text[:60000]}
         """
         try:
             DEEPSEEK_API_KEY = st.secrets["deepseek"]["api_key"]
-            DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
             headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
-            payload = { "model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.2, "max_tokens": 8000, "response_format": {"type": "json_object"} }
-            response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=90)
+            payload = {
+                "model": "deepseek-chat",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.1,
+                "max_tokens": 8000,
+                "response_format": {"type": "json_object"}
+            }
+            response = requests.post("https://api.deepseek.com/v1/chat/completions", headers=headers, json=payload, timeout=90)
             response.raise_for_status()
             return response.json()["choices"][0]["message"]["content"]
         except Exception as e:
@@ -2067,98 +2064,135 @@ def esg_analyzer_app():
 
     def parse_structured_esg_data(api_response_text):
         """Parses the JSON string from the API. Handles potential errors."""
-        try:
-            return json.loads(api_response_text)
+        try: return json.loads(api_response_text)
         except json.JSONDecodeError:
-            st.error("Failed to decode the JSON response from the AI. The data may be malformed.")
-            return {"error": "Invalid JSON response."}
+            st.error("Failed to decode the JSON response from the AI."); return {"error": "Invalid JSON response."}
         except Exception as e:
-            st.error(f"An unexpected error occurred during parsing: {e}")
-            return {"error": str(e)}
+            st.error(f"An unexpected error occurred during parsing: {e}"); return {"error": str(e)}
 
-    # --- START OF FIX: Helper functions are moved OUTSIDE of generate_esg_dashboard_html ---
-    def _create_score_card_helper(title, score, pillar_class, get_benchmark_rating_func):
-        rating, color = get_benchmark_rating_func(score)
+    # --- NEW: Helper function for sparkline charts ---
+    def create_sparkline_svg(value, prev_value):
+        if prev_value is None or value == prev_value:
+            points = "0,15 100,15" # Flat line
+        else:
+            # Simple normalization to fit in the SVG box
+            min_val = min(value, prev_value)
+            max_val = max(value, prev_value)
+            range_val = max_val - min_val if max_val > min_val else 1
+            y1 = 28 - ((prev_value - min_val) / range_val * 26)
+            y2 = 28 - ((value - min_val) / range_val * 26)
+            points = f"0,{y1:.2f} 100,{y2:.2f}"
+        
+        stroke_color = "#e74c3c" if value < prev_value else "#27ae60"
+        if value == prev_value: stroke_color = "#7f8c8d"
+
         return f"""
-        <div class="score-card {pillar_class}">
-            <div class="card-header">{title}</div>
-            <div class="card-body">
-                <span class="score-value">{score}</span><span class="score-total">/ 10</span>
-            </div>
-            <div class="card-footer" style="background-color: {color};">{rating}</div>
-        </div>
+        <svg width="100" height="30" viewBox="0 0 100 30" xmlns="http://www.w3.org/2000/svg">
+            <polyline points="{points}" fill="none" stroke="{stroke_color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
         """
 
+    # --- Dashboard HTML Generation (Unchanged & Moved Helpers) ---
+    def _create_score_card_helper(title, score, pillar_class, get_benchmark_rating_func):
+        rating, color = get_benchmark_rating_func(score)
+        return f"""<div class="score-card {pillar_class}"><div class="card-header">{title}</div><div class="card-body"><span class="score-value">{score}</span><span class="score-total">/ 10</span></div><div class="card-footer" style="background-color: {color};">{rating}</div></div>"""
+
+    # --- MODIFIED: KPI section now generates trend cards with sparklines ---
     def _create_kpi_section_helper(kpis):
         kpi_items = ""
         kpi_map = {
-            "ghg_emissions": ("💨", "GHG Emissions"), "water_management": ("💧", "Water Management"),
-            "employee_turnover": ("🏃", "Employee Turnover"), "women_in_leadership": ("👩‍💼", "Women in Leadership"),
-            "board_independence": ("🏛️", "Board Independence"),
+            "ghg_emissions": ("💨", "GHG Emissions Reduction"), "methane_intensity": ("🔥", "Methane Intensity Reduction"),
+            "water_recycled": ("💧", "Water Recycled"), "women_in_leadership": ("👩‍💼", "Women in Leadership"),
+            "trir": ("⛑️", "Safety (TRIR)"), "esg_linked_compensation": ("💰", "ESG-Linked Compensation"),
         }
         for key, (icon, title) in kpi_map.items():
-            value = kpis.get(key, "N/A")
+            data = kpis.get(key, {})
+            value = data.get("value")
+            prev_value = data.get("previous_value")
+            unit = data.get("unit", "")
+            
+            trend_html = ""
+            sparkline_html = '<div class="kpi-sparkline-placeholder"></div>'
+            
+            if value is not None and isinstance(value, (int, float)) and prev_value is not None and isinstance(prev_value, (int, float)):
+                sparkline_html = create_sparkline_svg(value, prev_value)
+                change = value - prev_value
+                
+                # Invert logic for TRIR (lower is better)
+                is_positive_trend = (change >= 0) if key != 'trir' else (change <= 0)
+                
+                if change != 0:
+                    trend_color = "#27ae60" if is_positive_trend else "#e74c3c"
+                    arrow = "▲" if is_positive_trend else "▼"
+                    trend_html = f'<span class="kpi-trend" style="color: {trend_color};">{arrow} {abs(change):.2f} {unit}</span>'
+                else:
+                    trend_html = '<span class="kpi-trend-flat">Flat</span>'
+
+            elif value is not None:
+                trend_html = '<span class="kpi-trend-na">No Trend Data</span>'
+
             kpi_items += f"""
-            <div class="kpi-item">
+            <div class="kpi-card">
                 <div class="kpi-icon">{icon}</div>
-                <div class="kpi-text">
+                <div class="kpi-details">
                     <div class="kpi-title">{title}</div>
-                    <div class="kpi-value">{html.escape(str(value))}</div>
+                    <div class="kpi-value">{html.escape(str(value))} <span class="kpi-unit">{html.escape(unit)}</span></div>
+                    <div class="kpi-trend-info">{trend_html}</div>
                 </div>
+                <div class="kpi-sparkline">{sparkline_html}</div>
             </div>
             """
         return f'<h2>📊 Key Performance Indicators</h2><div class="kpi-grid">{kpi_items}</div>'
 
     def _create_swot_section_helper(swot):
-        def create_list(items):
-            return "".join([f"<li>{html.escape(item)}</li>" for item in items]) if items else "<li>N/A</li>"
-        return f"""
-        <h2>📈 SWOT Analysis</h2>
-        <div class="swot-grid">
-            <div class="swot-card swot-strengths"><h3>Strengths</h3><ul>{create_list(swot.get('strengths'))}</ul></div>
-            <div class="swot-card swot-weaknesses"><h3>Weaknesses</h3><ul>{create_list(swot.get('weaknesses'))}</ul></div>
-            <div class="swot-card swot-opportunities"><h3>Opportunities</h3><ul>{create_list(swot.get('opportunities'))}</ul></div>
-            <div class="swot-card swot-threats"><h3>Threats</h3><ul>{create_list(swot.get('threats'))}</ul></div>
-        </div>
-        """
-    # --- END OF FIX ---
+        def create_list(items): return "".join([f"<li>{html.escape(item)}</li>" for item in items]) if items else "<li>N/A</li>"
+        return f"""<h2>📈 SWOT Analysis</h2><div class="swot-grid"><div class="swot-card swot-strengths"><h3>Strengths</h3><ul>{create_list(swot.get('strengths'))}</ul></div><div class="swot-card swot-weaknesses"><h3>Weaknesses</h3><ul>{create_list(swot.get('weaknesses'))}</ul></div><div class="swot-card swot-opportunities"><h3>Opportunities</h3><ul>{create_list(swot.get('opportunities'))}</ul></div><div class="swot-card swot-threats"><h3>Threats</h3><ul>{create_list(swot.get('threats'))}</ul></div></div>"""
 
     def generate_esg_dashboard_html(esg_data, company_name):
-        """Generates a professional, visually appealing HTML dashboard."""
+        """Generates the visually enhanced HTML dashboard."""
         safe_company_name = re.sub(r'[^\w\-_]', '_', company_name)[:50]
         current_date = datetime.now().strftime("%B %d, %Y")
-
-        # --- NOTE: The helper functions that were previously here have been moved above ---
 
         html_content = f"""
         <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>{company_name} ESG Dashboard</title>
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
-            body {{ font-family: 'Poppins', sans-serif; background-color: #f4f7fc; color: #333; margin: 0; padding: 20px; }}
-            .container {{ max-width: 1200px; margin: auto; background: #fff; border-radius: 12px; box-shadow: 0 6px 20px rgba(0,0,0,0.08); padding: 40px; }}
-            header {{ text-align: center; border-bottom: 1px solid #e0e0e0; padding-bottom: 20px; margin-bottom: 30px; }}
+            body {{ font-family: 'Poppins', sans-serif; background-color: #f8f9fa; color: #343a40; margin: 0; padding: 20px; }}
+            .container {{ max-width: 1200px; margin: auto; background: #ffffff; border-radius: 12px; box-shadow: 0 8px 25px rgba(0,0,0,0.07); padding: 40px; }}
+            header {{ text-align: center; border-bottom: 1px solid #e9ecef; padding-bottom: 20px; margin-bottom: 30px; }}
             header h1 {{ font-size: 2.8em; color: #00416A; margin: 0; }}
-            header p {{ font-size: 1.1em; color: #666; margin: 5px 0 0 0; }}
+            header p {{ font-size: 1.1em; color: #6c757d; margin: 5px 0 0 0; }}
             h2 {{ font-size: 1.8em; color: #00416A; border-bottom: 2px solid #00416A; padding-bottom: 10px; margin-top: 40px; }}
-            .summary-box {{ background-color: #e6f1f6; padding: 20px; border-radius: 8px; margin-bottom: 30px; font-size: 1.1em; line-height: 1.6; text-align: center; }}
+            .summary-box {{ background-color: #e6f1f6; padding: 25px; border-radius: 8px; margin-bottom: 30px; font-size: 1.1em; line-height: 1.6; text-align: center; border-left: 5px solid #00416A; }}
             .scores-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; text-align: center; }}
-            .score-card {{ border-radius: 10px; overflow: hidden; box-shadow: 0 4px 10px rgba(0,0,0,0.05); border: 1px solid #eee; }}
+            .score-card {{ border-radius: 10px; overflow: hidden; box-shadow: 0 4px 10px rgba(0,0,0,0.05); border: 1px solid #dee2e6; }}
             .score-card .card-header {{ padding: 12px; font-size: 1.1em; font-weight: 600; color: #fff; }}
             .score-card .card-body {{ padding: 20px 10px; }}
-            .score-card .score-value {{ font-size: 3.5em; font-weight: 700; color: #333; }}
-            .score-card .score-total {{ font-size: 1.2em; color: #888; margin-left: 2px; }}
+            .score-card .score-value {{ font-size: 3.5em; font-weight: 700; color: #212529; }}
+            .score-card .score-total {{ font-size: 1.2em; color: #6c757d; margin-left: 2px; }}
             .score-card .card-footer {{ padding: 8px; font-size: 0.9em; font-weight: 600; color: white; }}
             .overall {{ background-color: #00416A; }} .environmental {{ background-color: #27ae60; }}
             .social {{ background-color: #2980b9; }} .governance {{ background-color: #8e44ad; }}
-            .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-top: 20px; }}
-            .kpi-item {{ display: flex; align-items: center; background-color: #f9f9f9; padding: 15px; border-radius: 8px; border-left: 4px solid #00416A; }}
-            .kpi-icon {{ font-size: 2em; margin-right: 15px; }}
-            .kpi-title {{ font-weight: 600; color: #555; }} .kpi-value {{ font-size: 1.1em; color: #000; }}
+            .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px; margin-top: 20px; }}
+            .kpi-card {{ display: flex; align-items: center; background-color: #f8f9fa; padding: 20px; border-radius: 8px; border: 1px solid #e9ecef; transition: transform 0.2s ease, box-shadow 0.2s ease; }}
+            .kpi-card:hover {{ transform: translateY(-5px); box-shadow: 0 6px 15px rgba(0,0,0,0.08); }}
+            .kpi-icon {{ font-size: 2.2em; margin-right: 20px; background-color: #e6f1f6; padding: 12px; border-radius: 50%; }}
+            .kpi-details {{ flex-grow: 1; }}
+            .kpi-title {{ font-weight: 600; color: #495057; font-size: 1em; }}
+            .kpi-value {{ font-size: 1.8em; color: #212529; font-weight: 700; }}
+            .kpi-unit {{ font-size: 0.6em; color: #6c757d; font-weight: 400; }}
+            .kpi-trend-info {{ font-size: 0.9em; font-weight: 600; height: 20px; }}
+            .kpi-trend-flat {{ color: #7f8c8d; }}
+            .kpi-trend-na {{ color: #adb5bd; font-style: italic; }}
+            .kpi-sparkline {{ width: 100px; }}
+            .kpi-sparkline-placeholder {{ height: 30px; }}
             .swot-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px; }}
-            .swot-card {{ padding: 20px; border-radius: 8px; }}
-            .swot-card h3 {{ margin-top: 0; color: #fff; border: none; }} .swot-card ul {{ padding-left: 20px; color: #f0f0f0; }}
-            .swot-strengths {{ background-color: #27ae60; }} .swot-weaknesses {{ background-color: #e74c3c; }}
-            .swot-opportunities {{ background-color: #3498db; }} .swot-threats {{ background-color: #f39c12; }}
+            .swot-card {{ padding: 25px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }}
+            .swot-card h3 {{ margin-top: 0; color: #fff; border: none; font-size: 1.3em; }} .swot-card ul {{ padding-left: 20px; color: #f8f9fa; line-height: 1.7; }}
+            .swot-strengths {{ background: linear-gradient(135deg, #27ae60, #2ecc71); }}
+            .swot-weaknesses {{ background: linear-gradient(135deg, #e74c3c, #c0392b); }}
+            .swot-opportunities {{ background: linear-gradient(135deg, #3498db, #2980b9); }}
+            .swot-threats {{ background: linear-gradient(135deg, #f39c12, #e67e22); }}
         </style></head><body><div class="container">
             <header><h1>{html.escape(company_name)}</h1><p>ESG Performance Dashboard | {current_date}</p></header>
             <div class="summary-box">{html.escape(esg_data.get('executive_summary', 'No summary available.'))}</div>
@@ -2174,9 +2208,8 @@ def esg_analyzer_app():
         """
         return html_content.encode('utf-8'), f"ESG_Dashboard_{safe_company_name}.html"
 
-    # --- Functions for the "Classic Report & Comparison" Sub-tool ---
+    # --- Functions for the "Classic Report & Comparison" Sub-tool (Unchanged) ---
     def generate_html_report_esg(esg_data, company_name):
-        """Generates the original, table-based HTML report."""
         safe_company_name = re.sub(r'[^\w\-_]', '_', company_name)[:50]
         current_date = datetime.now().strftime("%B %d, %Y")
         def generate_score_summary_html(title, score):
@@ -2184,13 +2217,12 @@ def esg_analyzer_app():
             return f"""<div class="score-card"><h4>{title}</h4><div class="score-value">{score}/10</div><div class="benchmark-pill" style="background-color:{color};">{rating}</div></div>"""
         def generate_insight_section(title, icon, insights):
             if not insights: return ""
-            rows_html = "".join(f"""<tr><td>{idx}</td><td>{html.escape(insight.get('subcategory', 'N/A'))}</td><td>{html.escape(insight.get('detail', 'No detail provided.'))}</td></tr>""" for idx, insight in enumerate(insights, 1))
+            rows_html = "".join(f"""<tr><td>{idx}</td><td>{html.escape(str(insight.get('subcategory', 'N/A')))}</td><td>{html.escape(str(insight.get('detail', 'No detail provided.')))}</td></tr>""" for idx, insight in enumerate(insights, 1))
             return f"""<h2><span class="category-icon">{icon}</span>{title}</h2><table><thead><tr><th width="5%">#</th><th width="25%">Category</th><th>Insight Detail</th></tr></thead><tbody>{rows_html}</tbody></table>"""
         html_content = f"""<!DOCTYPE html><html><head><title>{company_name} ESG Insights Report</title><style>body{{font-family:sans-serif;line-height:1.6;}} .container{{max-width:1000px;margin:auto;}} h1,h2{{color:#111827;}} table{{width:100%;border-collapse:collapse;margin:25px 0;}} th,td{{border:1px solid #e5e7eb;padding:12px 15px;}} .score-summary{{display:flex;justify-content:space-around;}} .score-card{{text-align:center;}} .score-value{{font-size:2em;font-weight:bold;}} .benchmark-pill{{display:inline-block;padding:4px 12px;border-radius:9999px;color:white;}}</style></head><body><div class="container"><h1>{company_name} ESG Report</h1><h3>{current_date}</h3><h2>Executive Score Summary</h2><div class="score-summary">{generate_score_summary_html("Overall ESG Score", esg_data.get('overall_score', 'N/A'))}{generate_score_summary_html("Environmental", esg_data.get('environmental_score', 'N/A'))}{generate_score_summary_html("Social", esg_data.get('social_score', 'N/A'))}{generate_score_summary_html("Governance", esg_data.get('governance_score', 'N/A'))}</div>{generate_insight_section("Environmental Insights", "🌍", esg_data.get("environmental_insights", []))}{generate_insight_section("Social Insights", "🏢", esg_data.get("social_insights", []))}{generate_insight_section("Governance Insights", "🏛️", esg_data.get("governance_insights", []))}</div></body></html>"""
         return html_content.encode('utf-8'), f"ESG_Insights_{safe_company_name}.html"
 
     def extract_data_from_html_for_comparison(soup, filename):
-        """Extracts structured ESG data from a single classic HTML report soup."""
         data = {'company_name': filename.replace('.html', '').replace('ESG_Insights_', '')}
         score_cards = soup.find_all('div', class_='score-card')
         for card in score_cards:
@@ -2208,7 +2240,6 @@ def esg_analyzer_app():
         return data
 
     def generate_comparison_html_esg(esg_reports):
-        """Generates an HTML comparison report from multiple classic reports."""
         if not 1 <= len(esg_reports) <= 5: return "<h1>Error: Please provide between 1 and 5 reports.</h1>".encode('utf-8'), "ESG_Comparison.html"
         current_date = datetime.now().strftime("%B %d, %Y")
         company_names = [report.get('company_name', 'Unknown') for report in esg_reports]
@@ -2234,63 +2265,52 @@ def esg_analyzer_app():
         html_content = f"""<!DOCTYPE html><html><head><title>ESG Comparison</title><style>body{{font-family:sans-serif;}} .container{{max-width:1200px;margin:auto;}} h1,h2{{color:#111827;}} table{{width:100%;border-collapse:collapse;margin:25px 0;}} th,td{{border:1px solid #e5e7eb;padding:12px 15px;}}</style></head><body><div class="container"><h1>ESG Comparison Report</h1><h3>{current_date}</h3>{generate_score_comparison_table()}{generate_insight_comparison_section("Environmental", "🌍", "environmental_insights")}{generate_insight_comparison_section("Social", "🏢", "social_insights")}{generate_insight_comparison_section("Governance", "🏛️", "governance_insights")}</div></body></html>"""
         return html_content.encode('utf-8'), "ESG_Comparison_Report.html"
 
-    # --- Streamlit UI with Tabs ---
+    # --- UI with Tabs ---
     tab1, tab2 = st.tabs(["📊 ESG Dashboard", "📝 Classic Report & Comparison"])
-
     with tab1:
         st.subheader("Generate New ESG Dashboard")
         st.info("Upload a company's sustainability or ESG report to generate a comprehensive dashboard.")
         company_dash = st.text_input("🏢 Enter Company Name", key="esg_company_dash")
         file_dash = st.file_uploader("📄 Upload ESG Disclosure PDF", type="pdf", key="esg_file_dash")
-
         if st.button("🚀 Generate Dashboard", key="esg_generate_dash", type="primary"):
-            if not all([company_dash, file_dash]):
-                st.error("Please provide a company name and a PDF file.")
+            if not all([company_dash, file_dash]): st.error("Please provide a company name and a PDF file.")
             else:
                 with st.spinner("Analyzing disclosures and building dashboard... This may take a moment."):
                     text = extract_text_from_pdf_esg(file_dash)
                     if text:
                         response_text = analyze_esg_with_structured_output(text)
                         esg_data = parse_structured_esg_data(response_text)
-                        if "error" in esg_data:
-                            st.error(f"Analysis failed: {esg_data['error']}")
+                        if "error" in esg_data: st.error(f"Analysis failed: {esg_data['error']}")
                         else:
                             st.success("Dashboard generated successfully!")
                             report_content, report_filename = generate_esg_dashboard_html(esg_data, company_dash)
                             st.download_button("📥 Download HTML Dashboard", report_content, report_filename, "text/html", use_container_width=True)
                             st.markdown("### Dashboard Preview:")
                             st.components.v1.html(report_content.decode('utf-8'), height=800, scrolling=True)
-
     with tab2:
         st.subheader("1. Generate Classic ESG Report")
         company_classic = st.text_input("🏢 Enter Company Name", key="esg_company_classic")
         file_classic = st.file_uploader("📄 Upload ESG Disclosure PDF", type="pdf", key="esg_file_classic")
-
         if st.button("🚀 Generate & Download Report", key="esg_generate_classic"):
-            if not all([company_classic, file_classic]):
-                st.error("Please provide a company name and a PDF file.")
+            if not all([company_classic, file_classic]): st.error("Please provide a company name and a PDF file.")
             else:
                 with st.spinner("Analyzing ESG disclosures..."):
                     text = extract_text_from_pdf_esg(file_classic)
                     if text:
                         response_text = analyze_esg_with_structured_output(text)
                         esg_data = parse_structured_esg_data(response_text)
-                        if "error" in esg_data:
-                            st.error(f"Analysis failed: {esg_data['error']}")
+                        if "error" in esg_data: st.error(f"Analysis failed: {esg_data['error']}")
                         else:
                             st.success("Analysis complete!")
                             report_content, report_filename = generate_html_report_esg(esg_data, company_classic)
                             st.download_button("📥 Download HTML Report", report_content, report_filename, "text/html", use_container_width=True)
                             st.markdown("### Report Preview:")
                             st.components.v1.html(report_content.decode('utf-8'), height=600, scrolling=True)
-
         st.markdown("---")
         st.subheader("2. Compare Existing Classic Reports")
         uploaded_html_files = st.file_uploader("📂 Upload 2 to 5 Classic ESG HTML Reports", type="html", accept_multiple_files=True, key="esg_compare_files")
-
         if st.button("🔍 Compare & Download", key="esg_compare"):
-            if not 2 <= len(uploaded_html_files) <= 5:
-                st.warning("Please upload between 2 and 5 HTML files to compare.")
+            if not 2 <= len(uploaded_html_files) <= 5: st.warning("Please upload between 2 and 5 HTML files to compare.")
             else:
                 comparison_data = []
                 with st.spinner("Parsing reports for comparison..."):
@@ -2299,8 +2319,7 @@ def esg_analyzer_app():
                             soup = BeautifulSoup(f.read().decode('utf-8', errors='ignore'), 'html.parser')
                             report_data = extract_data_from_html_for_comparison(soup, f.name)
                             comparison_data.append(report_data)
-                        except Exception as e:
-                            st.error(f"Error parsing file {f.name}: {e}")
+                        except Exception as e: st.error(f"Error parsing file {f.name}: {e}")
                 if comparison_data:
                     compare_content, compare_filename = generate_comparison_html_esg(comparison_data)
                     st.success("Comparison complete!")
