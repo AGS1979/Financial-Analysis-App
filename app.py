@@ -1986,20 +1986,23 @@ Section to Summarize:
 
 def esg_analyzer_app():
     """
-    Encapsulates the ESG Analyzer with an enhanced dashboard featuring trend analysis and sparklines.
+    Encapsulates the ESG Analyzer with a new, highly graphical dashboard and the classic report/comparison as a sub-tool.
+    This version focuses on rich data visualization from a single document.
     """
     # --- Imports ---
     import re
     from datetime import datetime
     import html
-    import numpy as np # For sparkline calculations
+    import json
+    import fitz  # PyMuPDF
+    import requests
+    from bs4 import BeautifulSoup
 
     st.markdown("### ✨ Advanced ESG Analyzer")
     st.markdown("Generate a professional ESG dashboard or a detailed insight report from sustainability disclosures.")
 
     # --- Core Helper Functions ---
     def get_benchmark_rating(score):
-        """Converts a numeric score to a benchmark rating and color."""
         try:
             s = float(score)
             if s >= 8.0: return ("Leading", "#27ae60")
@@ -2009,7 +2012,6 @@ def esg_analyzer_app():
             return ("N/A", "#7f8c8d")
 
     def extract_text_from_pdf_esg(pdf_file):
-        """Extracts text from an uploaded PDF file."""
         try:
             pdf_bytes = pdf_file.getvalue()
             pdf_file.seek(0)
@@ -2019,42 +2021,45 @@ def esg_analyzer_app():
             st.error(f"Error reading PDF: {e}")
             return ""
 
-    # --- MODIFIED: Core AI Analysis with Richer, Trend-Aware JSON Output ---
+    # --- MODIFIED: Core AI Analysis with highly granular, quantitative JSON Output ---
     def analyze_esg_with_structured_output(text):
-        """Analyzes text with a prompt designed to extract current values, previous values, and trends for KPIs."""
         if not text.strip():
             return json.dumps({"error": "No text provided for analysis."})
 
         prompt = f"""
         You are an expert ESG analyst. Your task is to analyze the provided ESG report text and return a structured JSON object.
-        You must find specific, quantifiable metrics and their historical counterparts where possible to show trends.
+        You MUST find specific, quantitative metrics. If a metric is not found, use a value of null.
 
         **JSON Output Specification:**
         - "executive_summary": A concise, 2-3 sentence narrative summary of the company's overall ESG posture.
         - "overall_score", "environmental_score", "social_score", "governance_score": Float scores from 0.0 to 10.0.
-        - "key_kpis": An object of key metrics. For each metric, provide an object with "value", "previous_value" (if available), and "unit".
-            - "ghg_emissions": {{"value": 16, "previous_value": 14, "unit": "% reduction vs baseline"}}
-            - "methane_intensity": {{"value": 57, "previous_value": null, "unit": "% reduction vs 2019"}}
-            - "water_recycled": {{"value": 83, "previous_value": 72, "unit": "million barrels"}}
-            - "women_in_leadership": {{"value": 36, "previous_value": 27, "unit": "% of board"}}
-            - "trir": {{"value": 0.53, "previous_value": 0.53, "unit": "Total Recordable Incident Rate"}}
-            - "esg_linked_compensation": {{"value": "Yes", "previous_value": null, "unit": "ESG metrics tied to executive pay"}}
-        - "esg_swot": A SWOT analysis object with lists of strings for "strengths", "weaknesses", "opportunities", "threats".
+        - "kpis": A nested object of Key Performance Indicators.
+          - "environmental":
+            - "ghg_scope1_2_emissions": {{"value": 4.74, "unit": "million tonnes CO2e"}}
+            - "ghg_intensity": {{"value": 15.48, "unit": "tCO2e/MBoe"}}
+            - "methane_intensity_pct_reduction": {{"value": 57, "unit": "% reduction since 2019"}}
+            - "flaring_intensity_pct": {{"value": 0.4, "unit": "% of gas produced"}}
+            - "water_recycled_bbl": {{"value": 83, "unit": "million bbl"}}
+            - "water_sourced_bbl": {{"value": 67, "unit": "million bbl"}}
+            - "water_fresh_bbl": {{"value": 9, "unit": "million bbl"}}
+          - "social":
+            - "trir": {{"value": 0.53, "unit": "Total Recordable Incident Rate"}}
+            - "employee_fatalities": {{"value": 1, "unit": "fatalities"}}
+            - "social_investment": {{"value": 15.9, "unit": "million USD"}}
+            - "women_in_workforce_pct": {{"value": 24, "unit": "%"}}
+          - "governance":
+            - "board_independence_pct": {{"value": 91, "unit": "% independent"}}
+            - "women_on_board_pct": {{"value": 36, "unit": "% women"}}
+            - "esg_linked_compensation": {{"value": "Yes", "unit": ""}}
         - "environmental_insights", "social_insights", "governance_insights": Lists of objects with "subcategory" and "detail".
 
         --- DOCUMENT TEXT ---
-        {text[:60000]}
+        {text[:80000]}
         """
         try:
             DEEPSEEK_API_KEY = st.secrets["deepseek"]["api_key"]
             headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
-            payload = {
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.1,
-                "max_tokens": 8000,
-                "response_format": {"type": "json_object"}
-            }
+            payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 8000, "response_format": {"type": "json_object"}}
             response = requests.post("https://api.deepseek.com/v1/chat/completions", headers=headers, json=payload, timeout=90)
             response.raise_for_status()
             return response.json()["choices"][0]["message"]["content"]
@@ -2063,151 +2068,154 @@ def esg_analyzer_app():
             return json.dumps({"error": f"API Request Error: {e}"})
 
     def parse_structured_esg_data(api_response_text):
-        """Parses the JSON string from the API. Handles potential errors."""
         try: return json.loads(api_response_text)
         except json.JSONDecodeError:
             st.error("Failed to decode the JSON response from the AI."); return {"error": "Invalid JSON response."}
         except Exception as e:
             st.error(f"An unexpected error occurred during parsing: {e}"); return {"error": str(e)}
 
-    # --- NEW: Helper function for sparkline charts ---
-    def create_sparkline_svg(value, prev_value):
-        if prev_value is None or value == prev_value:
-            points = "0,15 100,15" # Flat line
-        else:
-            # Simple normalization to fit in the SVG box
-            min_val = min(value, prev_value)
-            max_val = max(value, prev_value)
-            range_val = max_val - min_val if max_val > min_val else 1
-            y1 = 28 - ((prev_value - min_val) / range_val * 26)
-            y2 = 28 - ((value - min_val) / range_val * 26)
-            points = f"0,{y1:.2f} 100,{y2:.2f}"
+    # --- NEW: Helper functions for generating SVG charts ---
+    def _create_gauge_chart_svg(score, size=200):
+        if not isinstance(score, (int, float)): return ""
+        score = max(0, min(10, score))
+        percentage = score / 10
+        angle = percentage * 180
+        color = get_benchmark_rating(score)[1]
         
-        stroke_color = "#e74c3c" if value < prev_value else "#27ae60"
-        if value == prev_value: stroke_color = "#7f8c8d"
-
         return f"""
-        <svg width="100" height="30" viewBox="0 0 100 30" xmlns="http://www.w3.org/2000/svg">
-            <polyline points="{points}" fill="none" stroke="{stroke_color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        <svg width="{size}" height="{size/2}" viewBox="0 0 100 50" class="gauge">
+            <path d="M10 50 A 40 40 0 0 1 90 50" stroke="#e9ecef" stroke-width="8" fill="none" />
+            <path d="M10 50 A 40 40 0 0 1 90 50" stroke="{color}" stroke-width="8" fill="none"
+                  stroke-dasharray="{percentage * 125.6}, 125.6" />
+            <text x="50" y="45" text-anchor="middle" class="gauge-value">{score:.1f}</text>
         </svg>
         """
 
-    # --- Dashboard HTML Generation (Unchanged & Moved Helpers) ---
-    def _create_score_card_helper(title, score, pillar_class, get_benchmark_rating_func):
-        rating, color = get_benchmark_rating_func(score)
-        return f"""<div class="score-card {pillar_class}"><div class="card-header">{title}</div><div class="card-body"><span class="score-value">{score}</span><span class="score-total">/ 10</span></div><div class="card-footer" style="background-color: {color};">{rating}</div></div>"""
+    def _create_donut_chart_svg(value, size=80, color="#00416A"):
+        if not isinstance(value, (int, float)): return ""
+        value = max(0, min(100, value))
+        circumference = 2 * 3.14159 * 15.9155
+        offset = circumference - (value / 100 * circumference)
+        
+        return f"""
+        <svg width="{size}" height="{size}" viewBox="0 0 36 36" class="donut-chart">
+            <circle cx="18" cy="18" r="15.9155" fill="none" stroke="#e9ecef" stroke-width="3" />
+            <circle cx="18" cy="18" r="15.9155" fill="none" stroke="{color}" stroke-width="3.2"
+                    stroke-dasharray="{circumference}" stroke-dashoffset="{offset}" transform="rotate(-90 18 18)" />
+            <text x="18" y="20" text-anchor="middle" class="donut-value">{int(value)}%</text>
+        </svg>
+        """
 
-    # --- MODIFIED: KPI section now generates trend cards with sparklines ---
-    def _create_kpi_section_helper(kpis):
-        kpi_items = ""
-        kpi_map = {
-            "ghg_emissions": ("💨", "GHG Emissions Reduction"), "methane_intensity": ("🔥", "Methane Intensity Reduction"),
-            "water_recycled": ("💧", "Water Recycled"), "women_in_leadership": ("👩‍💼", "Women in Leadership"),
-            "trir": ("⛑️", "Safety (TRIR)"), "esg_linked_compensation": ("💰", "ESG-Linked Compensation"),
-        }
-        for key, (icon, title) in kpi_map.items():
-            data = kpis.get(key, {})
-            value = data.get("value")
-            prev_value = data.get("previous_value")
-            unit = data.get("unit", "")
-            
-            trend_html = ""
-            sparkline_html = '<div class="kpi-sparkline-placeholder"></div>'
-            
-            if value is not None and isinstance(value, (int, float)) and prev_value is not None and isinstance(prev_value, (int, float)):
-                sparkline_html = create_sparkline_svg(value, prev_value)
-                change = value - prev_value
-                
-                # Invert logic for TRIR (lower is better)
-                is_positive_trend = (change >= 0) if key != 'trir' else (change <= 0)
-                
-                if change != 0:
-                    trend_color = "#27ae60" if is_positive_trend else "#e74c3c"
-                    arrow = "▲" if is_positive_trend else "▼"
-                    trend_html = f'<span class="kpi-trend" style="color: {trend_color};">{arrow} {abs(change):.2f} {unit}</span>'
-                else:
-                    trend_html = '<span class="kpi-trend-flat">Flat</span>'
-
-            elif value is not None:
-                trend_html = '<span class="kpi-trend-na">No Trend Data</span>'
-
-            kpi_items += f"""
-            <div class="kpi-card">
-                <div class="kpi-icon">{icon}</div>
-                <div class="kpi-details">
-                    <div class="kpi-title">{title}</div>
-                    <div class="kpi-value">{html.escape(str(value))} <span class="kpi-unit">{html.escape(unit)}</span></div>
-                    <div class="kpi-trend-info">{trend_html}</div>
-                </div>
-                <div class="kpi-sparkline">{sparkline_html}</div>
+    def _create_water_usage_chart(recycled, sourced, fresh):
+        total = recycled + sourced + fresh
+        if total == 0: return "<p>No water data available.</p>"
+        r_pct, s_pct, f_pct = (recycled/total*100), (sourced/total*100), (fresh/total*100)
+        return f"""
+        <div class="water-chart-container">
+            <div class="water-bar">
+                <div class="water-segment recycled" style="width: {r_pct}%;" title="Recycled: {recycled}M bbl"></div>
+                <div class="water-segment sourced" style="width: {s_pct}%;" title="Sourced: {sourced}M bbl"></div>
+                <div class="water-segment fresh" style="width: {f_pct}%;" title="Fresh: {fresh}M bbl"></div>
             </div>
-            """
-        return f'<h2>📊 Key Performance Indicators</h2><div class="kpi-grid">{kpi_items}</div>'
-
-    def _create_swot_section_helper(swot):
-        def create_list(items): return "".join([f"<li>{html.escape(item)}</li>" for item in items]) if items else "<li>N/A</li>"
-        return f"""<h2>📈 SWOT Analysis</h2><div class="swot-grid"><div class="swot-card swot-strengths"><h3>Strengths</h3><ul>{create_list(swot.get('strengths'))}</ul></div><div class="swot-card swot-weaknesses"><h3>Weaknesses</h3><ul>{create_list(swot.get('weaknesses'))}</ul></div><div class="swot-card swot-opportunities"><h3>Opportunities</h3><ul>{create_list(swot.get('opportunities'))}</ul></div><div class="swot-card swot-threats"><h3>Threats</h3><ul>{create_list(swot.get('threats'))}</ul></div></div>"""
+            <div class="water-legend">
+                <div><span class="dot recycled"></span>Recycled ({r_pct:.0f}%)</div>
+                <div><span class="dot sourced"></span>Sourced ({s_pct:.0f}%)</div>
+                <div><span class="dot fresh"></span>Fresh ({f_pct:.0f}%)</div>
+            </div>
+        </div>
+        """
 
     def generate_esg_dashboard_html(esg_data, company_name):
-        """Generates the visually enhanced HTML dashboard."""
         safe_company_name = re.sub(r'[^\w\-_]', '_', company_name)[:50]
         current_date = datetime.now().strftime("%B %d, %Y")
+        kpis = esg_data.get('kpis', {})
+        env_kpis = kpis.get('environmental', {})
+        soc_kpis = kpis.get('social', {})
+        gov_kpis = kpis.get('governance', {})
 
         html_content = f"""
         <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>{company_name} ESG Dashboard</title>
         <style>
-            @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
+            @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
             body {{ font-family: 'Poppins', sans-serif; background-color: #f8f9fa; color: #343a40; margin: 0; padding: 20px; }}
-            .container {{ max-width: 1200px; margin: auto; background: #ffffff; border-radius: 12px; box-shadow: 0 8px 25px rgba(0,0,0,0.07); padding: 40px; }}
-            header {{ text-align: center; border-bottom: 1px solid #e9ecef; padding-bottom: 20px; margin-bottom: 30px; }}
-            header h1 {{ font-size: 2.8em; color: #00416A; margin: 0; }}
-            header p {{ font-size: 1.1em; color: #6c757d; margin: 5px 0 0 0; }}
-            h2 {{ font-size: 1.8em; color: #00416A; border-bottom: 2px solid #00416A; padding-bottom: 10px; margin-top: 40px; }}
-            .summary-box {{ background-color: #e6f1f6; padding: 25px; border-radius: 8px; margin-bottom: 30px; font-size: 1.1em; line-height: 1.6; text-align: center; border-left: 5px solid #00416A; }}
-            .scores-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; text-align: center; }}
-            .score-card {{ border-radius: 10px; overflow: hidden; box-shadow: 0 4px 10px rgba(0,0,0,0.05); border: 1px solid #dee2e6; }}
-            .score-card .card-header {{ padding: 12px; font-size: 1.1em; font-weight: 600; color: #fff; }}
-            .score-card .card-body {{ padding: 20px 10px; }}
-            .score-card .score-value {{ font-size: 3.5em; font-weight: 700; color: #212529; }}
-            .score-card .score-total {{ font-size: 1.2em; color: #6c757d; margin-left: 2px; }}
-            .score-card .card-footer {{ padding: 8px; font-size: 0.9em; font-weight: 600; color: white; }}
-            .overall {{ background-color: #00416A; }} .environmental {{ background-color: #27ae60; }}
-            .social {{ background-color: #2980b9; }} .governance {{ background-color: #8e44ad; }}
-            .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px; margin-top: 20px; }}
-            .kpi-card {{ display: flex; align-items: center; background-color: #f8f9fa; padding: 20px; border-radius: 8px; border: 1px solid #e9ecef; transition: transform 0.2s ease, box-shadow 0.2s ease; }}
-            .kpi-card:hover {{ transform: translateY(-5px); box-shadow: 0 6px 15px rgba(0,0,0,0.08); }}
-            .kpi-icon {{ font-size: 2.2em; margin-right: 20px; background-color: #e6f1f6; padding: 12px; border-radius: 50%; }}
-            .kpi-details {{ flex-grow: 1; }}
-            .kpi-title {{ font-weight: 600; color: #495057; font-size: 1em; }}
-            .kpi-value {{ font-size: 1.8em; color: #212529; font-weight: 700; }}
-            .kpi-unit {{ font-size: 0.6em; color: #6c757d; font-weight: 400; }}
-            .kpi-trend-info {{ font-size: 0.9em; font-weight: 600; height: 20px; }}
-            .kpi-trend-flat {{ color: #7f8c8d; }}
-            .kpi-trend-na {{ color: #adb5bd; font-style: italic; }}
-            .kpi-sparkline {{ width: 100px; }}
-            .kpi-sparkline-placeholder {{ height: 30px; }}
-            .swot-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px; }}
-            .swot-card {{ padding: 25px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }}
-            .swot-card h3 {{ margin-top: 0; color: #fff; border: none; font-size: 1.3em; }} .swot-card ul {{ padding-left: 20px; color: #f8f9fa; line-height: 1.7; }}
-            .swot-strengths {{ background: linear-gradient(135deg, #27ae60, #2ecc71); }}
-            .swot-weaknesses {{ background: linear-gradient(135deg, #e74c3c, #c0392b); }}
-            .swot-opportunities {{ background: linear-gradient(135deg, #3498db, #2980b9); }}
-            .swot-threats {{ background: linear-gradient(135deg, #f39c12, #e67e22); }}
+            .container {{ max-width: 1200px; margin: auto; background: #ffffff; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.08); padding: 40px; }}
+            header h1 {{ font-size: 2.5em; color: #00416A; margin: 0; }}
+            header p {{ font-size: 1.1em; color: #6c757d; margin: 5px 0 25px 0; border-bottom: 1px solid #e9ecef; padding-bottom: 25px; }}
+            .summary-box {{ background-color: #e6f1f6; padding: 20px; border-radius: 8px; margin-bottom: 30px; font-size: 1.05em; line-height: 1.6; border-left: 5px solid #00416A; }}
+            
+            .dashboard-grid {{ display: grid; grid-template-columns: repeat(12, 1fr); gap: 25px; }}
+            .main-scores {{ grid-column: span 12; display: grid; grid-template-columns: repeat(4, 1fr); gap: 25px; text-align: center; }}
+            .overall-score-card {{ grid-column: span 2; background-color: #f8f9fa; border: 1px solid #e9ecef; border-radius: 12px; padding: 20px; }}
+            .pillar-score-card {{ background-color: #f8f9fa; border: 1px solid #e9ecef; border-radius: 12px; padding: 20px; }}
+            .card-title {{ font-size: 1.1em; font-weight: 600; color: #495057; margin-bottom: 15px; }}
+            .gauge-value {{ font-size: 3em; font-weight: 700; fill: #212529; }}
+            .donut-value {{ font-size: 0.8em; font-weight: 700; fill: #212529; }}
+            .rating-badge {{ display: inline-block; padding: 5px 15px; border-radius: 20px; color: #fff; font-weight: 600; font-size: 0.9em; margin-top: 10px; }}
+            
+            .kpi-section {{ grid-column: span 12; margin-top: 20px; }}
+            .kpi-section h2 {{ font-size: 1.6em; color: #00416A; border-bottom: 2px solid #00416A; padding-bottom: 10px; margin-bottom: 20px; }}
+            .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }}
+            .kpi-card {{ background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 12px; padding: 20px; text-align: center; }}
+            .kpi-card .card-title {{ margin-bottom: 10px; }}
+            .kpi-stat {{ font-size: 2.2em; font-weight: 700; color: #00416A; line-height: 1.2; }}
+            .kpi-unit {{ font-size: 0.9em; color: #6c757d; display: block; }}
+            .water-chart-container {{ margin-top: 15px; }}
+            .water-bar {{ display: flex; width: 100%; height: 20px; border-radius: 10px; overflow: hidden; margin-bottom: 10px; }}
+            .water-segment {{ height: 100%; }}
+            .water-segment.recycled {{ background-color: #2980b9; }}
+            .water-segment.sourced {{ background-color: #3498db; }}
+            .water-segment.fresh {{ background-color: #e74c3c; }}
+            .water-legend {{ display: flex; justify-content: center; gap: 15px; font-size: 0.8em; }}
+            .water-legend .dot {{ height: 10px; width: 10px; border-radius: 50%; display: inline-block; margin-right: 5px; }}
         </style></head><body><div class="container">
             <header><h1>{html.escape(company_name)}</h1><p>ESG Performance Dashboard | {current_date}</p></header>
-            <div class="summary-box">{html.escape(esg_data.get('executive_summary', 'No summary available.'))}</div>
-            <div class="scores-grid">
-                {_create_score_card_helper("Overall ESG", esg_data.get('overall_score', 'N/A'), 'overall', get_benchmark_rating)}
-                {_create_score_card_helper("Environmental", esg_data.get('environmental_score', 'N/A'), 'environmental', get_benchmark_rating)}
-                {_create_score_card_helper("Social", esg_data.get('social_score', 'N/A'), 'social', get_benchmark_rating)}
-                {_create_score_card_helper("Governance", esg_data.get('governance_score', 'N/A'), 'governance', get_benchmark_rating)}
+            <p class="summary-box">{html.escape(esg_data.get('executive_summary', 'No summary available.'))}</p>
+            
+            <div class="dashboard-grid">
+                <div class="main-scores">
+                    <div class="overall-score-card">
+                        <div class="card-title">Overall ESG Score</div>
+                        {_create_gauge_chart_svg(esg_data.get('overall_score'))}
+                        <span class="rating-badge" style="background-color:{get_benchmark_rating(esg_data.get('overall_score'))[1]};">{get_benchmark_rating(esg_data.get('overall_score'))[0]}</span>
+                    </div>
+                    <div class="pillar-score-card">
+                        <div class="card-title">Environmental</div>
+                        {_create_donut_chart_svg(esg_data.get('environmental_score', 0) * 10, '#27ae60')}
+                    </div>
+                    <div class="pillar-score-card">
+                        <div class="card-title">Social</div>
+                        {_create_donut_chart_svg(esg_data.get('social_score', 0) * 10, '#2980b9')}
+                    </div>
+                </div>
+                
+                <div class="kpi-section">
+                    <h2>🌍 Environmental KPIs</h2>
+                    <div class="kpi-grid">
+                        <div class="kpi-card"><div class="card-title">Scope 1 & 2 GHG Emissions</div><div class="kpi-stat">{env_kpis.get('ghg_scope1_2_emissions', {}).get('value', 'N/A')}</div><span class="kpi-unit">{env_kpis.get('ghg_scope1_2_emissions', {}).get('unit', '')}</span></div>
+                        <div class="kpi-card"><div class="card-title">GHG Intensity</div><div class="kpi-stat">{env_kpis.get('ghg_intensity', {}).get('value', 'N/A')}</div><span class="kpi-unit">{env_kpis.get('ghg_intensity', {}).get('unit', '')}</span></div>
+                        <div class="kpi-card"><div class="card-title">Methane Intensity Reduction</div><div class="kpi-stat">{env_kpis.get('methane_intensity_pct_reduction', {}).get('value', 'N/A')}%</div><span class="kpi-unit">Since 2019 Baseline</span></div>
+                        <div class="kpi-card"><div class="card-title">Flaring Intensity</div><div class="kpi-stat">{env_kpis.get('flaring_intensity_pct', {}).get('value', 'N/A')}%</div><span class="kpi-unit">Of Gas Produced</span></div>
+                        <div class="kpi-card" style="grid-column: span 2;">
+                            <div class="card-title">Water Usage Breakdown (Total: {(env_kpis.get('water_recycled_bbl', {}).get('value', 0) or 0) + (env_kpis.get('water_sourced_bbl', {}).get('value', 0) or 0) + (env_kpis.get('water_fresh_bbl', {}).get('value', 0) or 0)}M bbl)</div>
+                            {_create_water_usage_chart(env_kpis.get('water_recycled_bbl', {}).get('value', 0) or 0, env_kpis.get('water_sourced_bbl', {}).get('value', 0) or 0, env_kpis.get('water_fresh_bbl', {}).get('value', 0) or 0)}
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="kpi-section">
+                    <h2>🏢 Social & Governance KPIs</h2>
+                    <div class="kpi-grid">
+                        <div class="kpi-card"><div class="card-title">Total Recordable Incident Rate</div><div class="kpi-stat">{soc_kpis.get('trir', {}).get('value', 'N/A')}</div><span class="kpi-unit">{soc_kpis.get('trir', {}).get('unit', '')}</span></div>
+                        <div class="kpi-card"><div class="card-title">Community Investment</div><div class="kpi-stat">${soc_kpis.get('social_investment', {}).get('value', 'N/A')}M</div><span class="kpi-unit">in {current_date[-4:]}</span></div>
+                        <div class="kpi-card"><div class="card-title">Board Independence</div>{_create_donut_chart_svg(gov_kpis.get('board_independence_pct', {}).get('value'), color='#8e44ad')}</div>
+                        <div class="kpi-card"><div class="card-title">Women on Board</div>{_create_donut_chart_svg(gov_kpis.get('women_on_board_pct', {}).get('value'), color='#8e44ad')}</div>
+                    </div>
+                </div>
             </div>
-            {_create_kpi_section_helper(esg_data.get("key_kpis", {}))}
-            {_create_swot_section_helper(esg_data.get("esg_swot", {}))}
         </div></body></html>
         """
         return html_content.encode('utf-8'), f"ESG_Dashboard_{safe_company_name}.html"
-
+    
     # --- Functions for the "Classic Report & Comparison" Sub-tool (Unchanged) ---
     def generate_html_report_esg(esg_data, company_name):
         safe_company_name = re.sub(r'[^\w\-_]', '_', company_name)[:50]
@@ -2275,7 +2283,7 @@ def esg_analyzer_app():
         if st.button("🚀 Generate Dashboard", key="esg_generate_dash", type="primary"):
             if not all([company_dash, file_dash]): st.error("Please provide a company name and a PDF file.")
             else:
-                with st.spinner("Analyzing disclosures and building dashboard... This may take a moment."):
+                with st.spinner("Analyzing disclosures and building graphical dashboard..."):
                     text = extract_text_from_pdf_esg(file_dash)
                     if text:
                         response_text = analyze_esg_with_structured_output(text)
