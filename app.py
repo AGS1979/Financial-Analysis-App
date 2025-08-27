@@ -2021,44 +2021,56 @@ def esg_analyzer_app():
             st.error(f"Error reading PDF: {e}")
             return ""
 
-    # --- FINALIZED: AI prompt for deep, contextual data extraction ---
+    # --- FINALIZED: AI prompt with generic placeholders instead of specific examples ---
     def analyze_esg_with_structured_output(text):
         if not text.strip():
             return json.dumps({"error": "No text provided for analysis."})
 
         prompt = f"""
-        You are an expert ESG analyst. Your task is to analyze the provided ESG report and return a comprehensive, structured JSON object.
-        You MUST find specific, quantifiable metrics and provide context for them. If a metric is not found, use a value of null for the entire object.
+        You are an expert ESG analyst. Your task is to analyze the provided ESG report and return a comprehensive, structured JSON object based **only** on the text provided.
+        You MUST find specific, quantifiable metrics. If a metric is not found, use a value of null for the entire object.
 
         **JSON Output Specification:**
-        - "executive_summary": A concise, 2-3 sentence narrative summary of the company's overall ESG posture.
-        - "overall_score", "environmental_score", "social_score", "governance_score": Float scores from 0.0 to 10.0.
-        - "kpis": A nested object of Key Performance Indicators. For each KPI, provide an object with "value", "unit", "context", and a "rating" ('Positive', 'Neutral', 'Negative').
-          - "environmental":
-            - "ghg_emissions_reduction": {{"value": 16, "unit": "%", "context": "Reduction in Scope 1 & 2 GHG emissions compared to the 2019 baseline.", "rating": "Positive"}}
-            - "ghg_intensity": {{"value": 15.48, "unit": "tCO2e/MBoe", "context": "Intensity of Scope 1 & 2 emissions per thousand barrels of oil equivalent.", "rating": "Neutral"}}
-            - "methane_intensity_reduction": {{"value": 57, "unit": "%", "context": "Reduction in methane emissions intensity since 2019, demonstrating strong fugitive emission control.", "rating": "Positive"}}
-            - "flaring_intensity": {{"value": 0.4, "unit": "%", "context": "Flaring as a percentage of natural gas produced, meeting the 2025 target ahead of schedule.", "rating": "Positive"}}
-            - "water_recycled": {{"value": 83, "unit": "million bbl", "context": "Volume of recycled water used in operations, an increase of 15% from the previous year.", "rating": "Positive"}}
-            - "water_fresh": {{"value": 7, "unit": "million bbl", "context": "Volume of freshwater used, representing only a small portion of total water consumption.", "rating": "Positive"}}
-            - "key_environmental_initiatives": {{"value": "Carbon Accounting Platform", "unit": "", "context": "Implemented an internally developed platform for precise, equipment-level emissions tracking.", "rating": "Positive"}}
-          - "social":
-            - "trir": {{"value": 0.53, "unit": "", "context": "Total Recordable Incident Rate held flat year-over-year despite a 33% increase in work hours.", "rating": "Neutral"}}
-            - "employee_fatalities": {{"value": 1, "unit": "", "context": "One contractor fatality was recorded at a rig site in North Dakota.", "rating": "Negative"}}
-            - "social_investment": {{"value": 15.9, "unit": "million USD", "context": "Total investment in community programs, with a focus on STEM education and first responders.", "rating": "Positive"}}
-            - "women_in_workforce": {{"value": 24, "unit": "%", "context": "Representation of women in the total company headcount.", "rating": "Neutral"}}
-            - "key_social_initiatives": {{"value": "STEM Education Programs", "unit": "", "context": "Opened 161 STEM centers in underserved communities since 2021, impacting over 121,000 students.", "rating": "Positive"}}
-          - "governance":
-            - "board_independence": {{"value": 91, "unit": "%", "context": "Percentage of the board of directors qualifying as independent under NYSE standards.", "rating": "Positive"}}
-            - "women_on_board": {{"value": 36, "unit": "%", "context": "Representation of women on the board of directors, including the chair of the Audit Committee.", "rating": "Positive"}}
-            - "esg_linked_compensation": {{"value": "Yes", "unit": "", "context": "Executive and company-wide bonuses are tied to quantifiable environmental and safety performance goals.", "rating": "Positive"}}
-            - "key_governance_initiatives": {{"value": "Shareholder Engagement", "unit": "", "context": "Proactively engages with top shareholders on ESG topics, leading to strengthened policies and transparency.", "rating": "Positive"}}
-        - "pillar_takeaways": {{
-            "environmental": ["Company has surpassed its near-term flaring intensity goals and shows consistent reductions in GHG and methane intensity."],
-            "social": ["Strong community investment in STEM education is a key positive, but workplace safety remains an area for improvement given the contractor fatality."],
-            "governance": ["Board structure is strong with high independence and gender diversity, reinforced by linking executive pay directly to ESG performance."]
+        - "executive_summary": "<A concise, 2-3 sentence narrative summary of the company's overall ESG posture>"
+        - "overall_score": <A float score from 0.0 to 10.0 for overall performance>
+        - "environmental_score": <A float score from 0.0 to 10.0 for the Environmental pillar>
+        - "social_score": <A float score from 0.0 to 10.0 for the Social pillar>
+        - "governance_score": <A float score from 0.0 to 10.0 for the Governance pillar>
+        - "kpis": {{
+          - "environmental": {{
+            - "ghg_emissions_reduction": {{"value": <numeric_value_or_null>, "unit": "<unit_of_measure>", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
+            - "ghg_intensity": {{"value": <numeric_value_or_null>, "unit": "<unit_of_measure>", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
+            - "methane_intensity_reduction": {{"value": <numeric_value_or_null>, "unit": "<unit_of_measure>", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
+            - "flaring_intensity": {{"value": <numeric_value_or_null>, "unit": "<unit_of_measure>", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
+            - "water_recycled": {{"value": <numeric_value_or_null>, "unit": "<unit_of_measure>", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
+            - "water_fresh": {{"value": <numeric_value_or_null>, "unit": "<unit_of_measure>", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
+            - "key_environmental_initiatives": {{"value": "<Name_of_initiative>", "unit": "", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}}
+          }},
+          - "social": {{
+            - "trir": {{"value": <numeric_value_or_null>, "unit": "", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
+            - "employee_fatalities": {{"value": <numeric_value_or_null>, "unit": "", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
+            - "social_investment": {{"value": <numeric_value_or_null>, "unit": "<currency_unit>", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
+            - "women_in_workforce": {{"value": <numeric_value_or_null>, "unit": "%", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
+            - "key_social_initiatives": {{"value": "<Name_of_initiative>", "unit": "", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}}
+          }},
+          - "governance": {{
+            - "board_independence": {{"value": <numeric_value_or_null>, "unit": "%", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
+            - "women_on_board": {{"value": <numeric_value_or_null>, "unit": "%", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
+            - "esg_linked_compensation": {{"value": "<'Yes'_or_'No'>", "unit": "", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
+            - "key_governance_initiatives": {{"value": "<Name_of_initiative>", "unit": "", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}}
           }}
-        - "environmental_insights", "social_insights", "governance_insights": Lists of objects with "subcategory" and "detail".
+        }},
+        - "pillar_takeaways": {{
+            "environmental": ["<one_or_two_key_takeaways_for_this_pillar>"],
+            "social": ["<one_or_two_key_takeaways_for_this_pillar>"],
+            "governance": ["<one_or_two_key_takeaways_for_this_pillar>"]
+          }},
+        - "environmental_insights": [<list_of_objects_with_subcategory_and_detail>],
+        - "social_insights": [<list_of_objects_with_subcategory_and_detail>],
+        - "governance_insights": [<list_of_objects_with_subcategory_and_detail>]
+        
+        --- DOCUMENT TEXT ---
+        {text[:80000]}
         """
         try:
             DEEPSEEK_API_KEY = st.secrets["deepseek"]["api_key"]
