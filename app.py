@@ -2236,7 +2236,10 @@ def esg_analyzer_app():
             if not all_subcategories: return ""
             insight_map = {name: {i['subcategory']: i['detail'] for i in report.get(category_key, [])} for name, report in zip(company_names, esg_reports)}
             header = "".join(f"<th>{name}</th>" for name in company_names)
-            rows_html = "".join(f"<tr><td>{html.escape(subcat)}</td>{''.join(f'<td>{html.escape(insight_map[name].get(subcat, '-'))}</td>' for name in company_names)}</tr>" for subcat in sorted(list(all_subcategories)))
+            rows_html = ""
+                        for subcat in sorted(list(all_subcategories)):
+                            company_cells = ''.join(f"<td>{html.escape(insight_map[name].get(subcat, '-'))}</td>" for name in company_names)
+                            rows_html += f"<tr><td>{html.escape(subcat)}</td>{company_cells}</tr>"
             return f"<h2>{icon}{title} Comparison</h2><table><thead><tr><th>Category</th>{header}</tr></thead><tbody>{rows_html}</tbody></table>"
         html_content = f"""<!DOCTYPE html><html><head><title>ESG Comparison</title><style>body{{font-family:sans-serif;}} .container{{max-width:1200px;margin:auto;}} h1,h2{{color:#111827;}} table{{width:100%;border-collapse:collapse;margin:25px 0;}} th,td{{border:1px solid #e5e7eb;padding:12px 15px;}}</style></head><body><div class="container"><h1>ESG Comparison Report</h1><h3>{current_date}</h3>{generate_score_comparison_table()}{generate_insight_comparison_section("Environmental", "🌍", "environmental_insights")}{generate_insight_comparison_section("Social", "🏢", "social_insights")}{generate_insight_comparison_section("Governance", "🏛️", "governance_insights")}</div></body></html>"""
         return html_content.encode('utf-8'), "ESG_Comparison_Report.html"
