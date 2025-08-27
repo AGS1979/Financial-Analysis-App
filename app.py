@@ -1988,6 +1988,11 @@ def esg_analyzer_app():
     """
     Encapsulates the ESG Analyzer with a new primary dashboard feature and the classic report/comparison as a sub-tool.
     """
+    # --- NEW: Add these imports for robustness ---
+    import re
+    from datetime import datetime
+    # --- End of new code ---
+
     st.markdown("### ✨ Advanced ESG Analyzer")
     st.markdown("Generate a professional ESG dashboard or a detailed insight report from sustainability disclosures.")
 
