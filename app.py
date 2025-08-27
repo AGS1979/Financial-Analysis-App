@@ -2168,8 +2168,8 @@ def esg_analyzer_app():
                 {_create_score_card_helper("Social", esg_data.get('social_score', 'N/A'), 'social', get_benchmark_rating)}
                 {_create_score_card_helper("Governance", esg_data.get('governance_score', 'N/A'), 'governance', get_benchmark_rating)}
             </div>
-            {_create_kpi_section_helper(esg_data.get("key_kpis", {{}}))}
-            {_create_swot_section_helper(esg_data.get("esg_swot", {{}}))}
+            {_create_kpi_section_helper(esg_data.get("key_kpis", {}))}
+            {_create_swot_section_helper(esg_data.get("esg_swot", {}))}
         </div></body></html>
         """
         return html_content.encode('utf-8'), f"ESG_Dashboard_{safe_company_name}.html"
