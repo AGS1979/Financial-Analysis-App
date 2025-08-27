@@ -2086,9 +2086,30 @@ def esg_analyzer_app():
         return f"""<svg width="{size}" height="{size/2}" viewBox="0 0 100 50" class="gauge"><path d="M10 50 A 40 40 0 0 1 90 50" stroke="#e9ecef" stroke-width="10" fill="none" /><path d="M10 50 A 40 40 0 0 1 90 50" stroke="{color}" stroke-width="10" fill="none" stroke-dasharray="{percentage * 125.6}, 125.6" stroke-linecap="round" /><text x="50" y="45" text-anchor="middle" class="gauge-value">{score:.1f}</text></svg>"""
 
     def _create_donut_chart_svg(value, size=100, color="#00416A", title=""):
+        """Creates a donut chart SVG using the reliable stroke-dasharray method."""
         if not isinstance(value, (int, float)): return ""
-        value = max(0, min(100, value)); circumference = 2 * 3.14159 * 15.9155; offset = circumference - (value / 100 * circumference)
-        return f"""<div class="donut-container"><svg width="{size}" height="{size}" viewBox="0 0 36 36" class="donut-chart"><circle cx="18" cy="18" r="15.9155" fill="none" stroke="#e9ecef" stroke-width="3" /><circle cx="18" cy="18" r="15.9155" fill="none" stroke="{color}" stroke-width="3.2" stroke-dasharray="{circumference}" stroke-dashoffset="{offset}" transform="rotate(-90 18 18)" stroke-linecap="round" /><text x="18" y="20.5" text-anchor="middle" class="donut-value">{int(value)}%</text></svg><div class="donut-title">{title}</div></div>"""
+        value = max(0, min(100, value))
+        
+        # SVG circle geometry
+        radius = 15.9155
+        circumference = 2 * 3.14159 * radius
+        
+        # Calculate the length of the arc
+        arc_length = (value / 100) * circumference
+        
+        return f"""
+        <div class="donut-container">
+            <svg width="{size}" height="{size}" viewBox="0 0 36 36" class="donut-chart">
+                <circle cx="18" cy="18" r="{radius}" fill="none" stroke="#e9ecef" stroke-width="3" />
+                <circle cx="18" cy="18" r="{radius}" fill="none" stroke="{color}" stroke-width="3.2"
+                        stroke-dasharray="{arc_length} {circumference}"
+                        transform="rotate(-90 18 18)"
+                        stroke-linecap="round" />
+                <text x="18" y="20.5" text-anchor="middle" class="donut-value">{int(value)}%</text>
+            </svg>
+            <div class="donut-title">{title}</div>
+        </div>
+        """
 
     def _create_water_usage_chart(recycled, fresh, other):
         total = recycled + fresh + other
