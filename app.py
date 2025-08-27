@@ -1987,7 +1987,7 @@ Section to Summarize:
 def esg_analyzer_app():
     """
     Encapsulates the ESG Analyzer with a final, professional, data-rich dashboard.
-    This version balances graphical elements with deep, contextual detail.
+    This version balances graphical elements with deep, contextual detail and includes bug fixes.
     """
     # --- Imports ---
     import re
@@ -2040,7 +2040,7 @@ def esg_analyzer_app():
             - "methane_intensity_reduction": {{"value": 57, "unit": "%", "context": "Reduction in methane emissions intensity since 2019, demonstrating strong fugitive emission control.", "rating": "Positive"}}
             - "flaring_intensity": {{"value": 0.4, "unit": "%", "context": "Flaring as a percentage of natural gas produced, meeting the 2025 target ahead of schedule.", "rating": "Positive"}}
             - "water_recycled": {{"value": 83, "unit": "million bbl", "context": "Volume of recycled water used in operations, an increase of 15% from the previous year.", "rating": "Positive"}}
-            - "water_fresh": {{"value": 9, "unit": "million bbl", "context": "Volume of freshwater used, representing a small portion of total water consumption.", "rating": "Positive"}}
+            - "water_fresh": {{"value": 7, "unit": "million bbl", "context": "Volume of freshwater used, representing only a small portion of total water consumption.", "rating": "Positive"}}
             - "key_environmental_initiatives": {{"value": "Carbon Accounting Platform", "unit": "", "context": "Implemented an internally developed platform for precise, equipment-level emissions tracking.", "rating": "Positive"}}
           - "social":
             - "trir": {{"value": 0.53, "unit": "", "context": "Total Recordable Incident Rate held flat year-over-year despite a 33% increase in work hours.", "rating": "Neutral"}}
@@ -2053,7 +2053,11 @@ def esg_analyzer_app():
             - "women_on_board": {{"value": 36, "unit": "%", "context": "Representation of women on the board of directors, including the chair of the Audit Committee.", "rating": "Positive"}}
             - "esg_linked_compensation": {{"value": "Yes", "unit": "", "context": "Executive and company-wide bonuses are tied to quantifiable environmental and safety performance goals.", "rating": "Positive"}}
             - "key_governance_initiatives": {{"value": "Shareholder Engagement", "unit": "", "context": "Proactively engages with top shareholders on ESG topics, leading to strengthened policies and transparency.", "rating": "Positive"}}
-
+        - "pillar_takeaways": {{
+            "environmental": ["Company has surpassed its near-term flaring intensity goals and shows consistent reductions in GHG and methane intensity."],
+            "social": ["Strong community investment in STEM education is a key positive, but workplace safety remains an area for improvement given the contractor fatality."],
+            "governance": ["Board structure is strong with high independence and gender diversity, reinforced by linking executive pay directly to ESG performance."]
+          }}
         - "environmental_insights", "social_insights", "governance_insights": Lists of objects with "subcategory" and "detail".
         """
         try:
@@ -2074,7 +2078,7 @@ def esg_analyzer_app():
         except Exception as e:
             st.error(f"An unexpected error occurred during parsing: {e}"); return {"error": str(e)}
 
-    # --- NEW: Helper functions for generating SVG charts ---
+    # --- Helper functions for generating SVG charts ---
     def _create_gauge_chart_svg(score, size=180):
         if not isinstance(score, (int, float)): return ""
         score = max(0, min(10, score)); percentage = score / 10
@@ -2090,13 +2094,13 @@ def esg_analyzer_app():
         total = recycled + fresh + other
         if total == 0: return "<p>No water data available.</p>"
         r_pct, f_pct, o_pct = (recycled/total*100), (fresh/total*100), (other/total*100)
-        return f"""<div class="water-chart-container"><b>Water Usage Breakdown</b><div class="water-bar"><div class="water-segment recycled" style="width: {r_pct}%;" title="Recycled: {recycled}M bbl"></div><div class="water-segment other" style="width: {o_pct}%;" title="Other Sourced: {other}M bbl"></div><div class="water-segment fresh" style="width: {f_pct}%;" title="Fresh: {fresh}M bbl"></div></div><div class="water-legend"><div><span class="dot recycled"></span>Recycled ({r_pct:.0f}%)</div><div><span class="dot other"></span>Other ({o_pct:.0f}%)</div><div><span class="dot fresh"></span>Fresh ({f_pct:.0f}%)</div></div></div>"""
+        return f"""<div class="sidebar-card"><h3>Water Usage Breakdown</h3><div class="water-bar"><div class="water-segment recycled" style="width: {r_pct}%;" title="Recycled: {recycled}M bbl"></div><div class="water-segment other" style="width: {o_pct}%;" title="Other Sourced: {other}M bbl"></div><div class="water-segment fresh" style="width: {f_pct}%;" title="Fresh: {fresh}M bbl"></div></div><div class="water-legend"><div><span class="dot recycled"></span>Recycled ({r_pct:.0f}%)</div><div><span class="dot other"></span>Other ({o_pct:.0f}%)</div><div><span class="dot fresh"></span>Fresh ({f_pct:.0f}%)</div></div></div>"""
 
-    # --- FINALIZED: HTML generation for the new balanced dashboard ---
     def generate_esg_dashboard_html(esg_data, company_name):
         safe_company_name = re.sub(r'[^\w\-_]', '_', company_name)[:50]
         current_date = datetime.now().strftime("%B %d, %Y")
         kpis = esg_data.get('kpis', {})
+        takeaways = esg_data.get('pillar_takeaways', {})
         
         def get_rating_color(rating_text):
             return {"Positive": "#27ae60", "Neutral": "#f39c12", "Negative": "#e74c3c"}.get(rating_text, "#6c757d")
@@ -2120,6 +2124,18 @@ def esg_analyzer_app():
                 <p class="kpi-context">{html.escape(str(context))}</p>
             </div>
             """
+        
+        # --- NEW: HTML section to display Key Pillar Takeaways in the sidebar ---
+        takeaways_html = "<div class='sidebar-card'><h3>Key Pillar Takeaways</h3><ul class='takeaways-list'>"
+        takeaway_map = {"environmental": "🌍", "social": "🏢", "governance": "🏛️"}
+        for pillar, icon in takeaway_map.items():
+            points = takeaways.get(pillar, [])
+            if points:
+                takeaways_html += f"<li><span class='takeaway-icon'>{icon}</span><div>"
+                for point in points:
+                    takeaways_html += f"<p>{html.escape(point)}</p>"
+                takeaways_html += "</div></li>"
+        takeaways_html += "</ul></div>"
 
         html_content = f"""
         <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>{company_name} ESG Dashboard</title>
@@ -2130,14 +2146,14 @@ def esg_analyzer_app():
             header h1 {{ font-size: 2.8em; color: #00416A; margin: 0; }}
             header p {{ font-size: 1.2em; color: #6c757d; margin: 5px 0 25px 0; border-bottom: 1px solid #e9ecef; padding-bottom: 25px; }}
             .summary-box {{ background-color: #e6f1f6; padding: 25px; border-radius: 12px; margin-bottom: 35px; font-size: 1.1em; line-height: 1.65; border-left: 5px solid #00416A; }}
-            
             .dashboard-layout {{ display: grid; grid-template-columns: 2.5fr 1fr; gap: 30px; }}
             .main-content {{ display: flex; flex-direction: column; gap: 30px; }}
-            .sidebar {{ background-color: #f8f9fa; border-radius: 12px; padding: 25px; border: 1px solid #e9ecef; }}
-            
+            .sidebar {{ display: flex; flex-direction: column; gap: 25px; }}
+            .sidebar-card {{ background-color: #f8f9fa; border-radius: 12px; padding: 25px; border: 1px solid #e9ecef; }}
+            .sidebar-card h3 {{ font-size: 1.4em; color: #00416A; text-align: center; margin: 0 0 15px 0; }}
             .kpi-pillar-section h2 {{ font-size: 1.8em; color: #00416A; margin: 0 0 20px 0; padding-bottom: 10px; border-bottom: 2px solid #00416A; }}
             .kpi-card-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }}
-            .kpi-card {{ background-color: #fff; border: 1px solid #e9ecef; border-radius: 12px; padding: 20px; transition: all 0.2s ease-in-out; }}
+            .kpi-card {{ background-color: #fff; border: 1px solid #e9ecef; border-radius: 12px; padding: 20px; transition: all 0.2s ease-in-out; display: flex; flex-direction: column; }}
             .kpi-card:hover {{ transform: translateY(-5px); box-shadow: 0 8px 20px rgba(0,0,0,0.08); }}
             .kpi-header {{ display: flex; align-items: center; margin-bottom: 15px; }}
             .kpi-icon {{ font-size: 1.5em; margin-right: 12px; }}
@@ -2146,73 +2162,62 @@ def esg_analyzer_app():
             .kpi-body {{ display: flex; align-items: baseline; }}
             .kpi-value {{ font-size: 2.5em; font-weight: 700; color: #00416A; line-height: 1; }}
             .kpi-unit {{ font-size: 1em; color: #6c757d; margin-left: 8px; font-weight: 500; }}
-            .kpi-context {{ font-size: 0.9em; color: #6c757d; line-height: 1.5; margin: 10px 0 0 0; }}
-
-            .sidebar h3 {{ font-size: 1.4em; color: #00416A; text-align: center; margin: 0 0 15px 0; }}
-            .overall-score-card {{ text-align: center; margin-bottom: 25px; }}
+            .kpi-context {{ font-size: 0.9em; color: #6c757d; line-height: 1.5; margin: 10px 0 0 0; flex-grow: 1; }}
+            .overall-score-card {{ text-align: center; }}
             .gauge-value {{ font-size: 2.8em; font-weight: 700; fill: #212529; }}
             .rating-badge {{ display: inline-block; padding: 6px 18px; border-radius: 20px; color: #fff; font-weight: 600; font-size: 1em; margin-top: -10px; }}
-            .pillar-donuts {{ display: flex; justify-content: space-around; text-align: center; margin-bottom: 25px; }}
+            .pillar-donuts {{ display: flex; justify-content: space-around; text-align: center; }}
             .donut-value {{ font-size: 0.8em; font-weight: 700; fill: #212529; }}
             .donut-title {{ font-weight: 600; font-size: 0.9em; margin-top: 5px; color: #495057; }}
-            
-            .water-chart-container {{ margin-top: 15px; font-size: 0.9em; }}
             .water-bar {{ display: flex; width: 100%; height: 25px; border-radius: 10px; overflow: hidden; margin: 10px 0; }}
-            .water-segment {{ height: 100%; transition: width 0.3s ease; }}
             .water-segment.recycled {{ background-color: #2980b9; }}
             .water-segment.other {{ background-color: #bdc3c7; }}
             .water-segment.fresh {{ background-color: #e74c3c; }}
             .water-legend {{ display: flex; justify-content: space-around; font-size: 0.8em; }}
             .water-legend .dot {{ height: 10px; width: 10px; border-radius: 50%; display: inline-block; margin-right: 5px; }}
+            .takeaways-list {{ list-style-type: none; padding: 0; margin: 0; }}
+            .takeaways-list li {{ display: flex; align-items: flex-start; margin-bottom: 15px; }}
+            .takeaway-icon {{ font-size: 1.4em; margin-right: 12px; margin-top: 2px; }}
+            .takeaways-list p {{ margin: 0; font-size: 0.9em; line-height: 1.5; color: #495057; }}
         </style></head><body><div class="container">
             <header><h1>{html.escape(company_name)}</h1><p>ESG Performance Dashboard | {current_date}</p></header>
             <p class="summary-box">{html.escape(esg_data.get('executive_summary', 'No summary available.'))}</p>
-            
             <div class="dashboard-layout">
                 <div class="main-content">
-                    <div class="kpi-pillar-section">
-                        <h2>🌍 Environmental</h2>
-                        <div class="kpi-card-grid">
-                            {_create_kpi_card("environmental", "ghg_emissions_reduction", "📉", "GHG Emissions Reduction")}
-                            {_create_kpi_card("environmental", "ghg_intensity", "💨", "GHG Intensity")}
-                            {_create_kpi_card("environmental", "methane_intensity_reduction", "🔥", "Methane Intensity Reduction")}
-                            {_create_kpi_card("environmental", "flaring_intensity", "🕯️", "Flaring Intensity")}
-                            {_create_kpi_card("environmental", "key_environmental_initiatives", "💡", "Key Initiative")}
-                        </div>
-                    </div>
-                    <div class="kpi-pillar-section">
-                        <h2>🏢 Social</h2>
-                        <div class="kpi-card-grid">
-                            {_create_kpi_card("social", "trir", "⛑️", "Safety (TRIR)")}
-                            {_create_kpi_card("social", "employee_fatalities", "💔", "Employee Fatalities")}
-                            {_create_kpi_card("social", "social_investment", "💸", "Community Investment")}
-                            {_create_kpi_card("social", "women_in_workforce", "👩‍💼", "Women in Workforce")}
-                            {_create_kpi_card("social", "key_social_initiatives", "🤝", "Key Initiative")}
-                        </div>
-                    </div>
-                    <div class="kpi-pillar-section">
-                        <h2>🏛️ Governance</h2>
-                        <div class="kpi-card-grid">
-                            {_create_kpi_card("governance", "board_independence", "👑", "Board Independence")}
-                            {_create_kpi_card("governance", "women_on_board", "🚺", "Women on Board")}
-                            {_create_kpi_card("governance", "esg_linked_compensation", "🔗", "ESG-Linked Compensation")}
-                            {_create_kpi_card("governance", "key_governance_initiatives", "📜", "Key Initiative")}
-                        </div>
-                    </div>
+                    <div class="kpi-pillar-section"><h2>🌍 Environmental</h2><div class="kpi-card-grid">
+                        {_create_kpi_card("environmental", "ghg_emissions_reduction", "📉", "GHG Emissions Reduction")}
+                        {_create_kpi_card("environmental", "ghg_intensity", "💨", "GHG Intensity")}
+                        {_create_kpi_card("environmental", "methane_intensity_reduction", "🔥", "Methane Intensity Reduction")}
+                        {_create_kpi_card("environmental", "flaring_intensity", "🕯️", "Flaring Intensity")}
+                        {_create_kpi_card("environmental", "key_environmental_initiatives", "💡", "Key Initiative")}
+                    </div></div>
+                    <div class="kpi-pillar-section"><h2>🏢 Social</h2><div class="kpi-card-grid">
+                        {_create_kpi_card("social", "trir", "⛑️", "Safety (TRIR)")}
+                        {_create_kpi_card("social", "employee_fatalities", "💔", "Employee Fatalities")}
+                        {_create_kpi_card("social", "social_investment", "💸", "Community Investment")}
+                        {_create_kpi_card("social", "women_in_workforce", "👩‍💼", "Women in Workforce")}
+                        {_create_kpi_card("social", "key_social_initiatives", "🤝", "Key Initiative")}
+                    </div></div>
+                    <div class="kpi-pillar-section"><h2>🏛️ Governance</h2><div class="kpi-card-grid">
+                        {_create_kpi_card("governance", "board_independence", "👑", "Board Independence")}
+                        {_create_kpi_card("governance", "women_on_board", "🚺", "Women on Board")}
+                        {_create_kpi_card("governance", "esg_linked_compensation", "🔗", "ESG-Linked Compensation")}
+                        {_create_kpi_card("governance", "key_governance_initiatives", "📜", "Key Initiative")}
+                    </div></div>
                 </div>
                 <div class="sidebar">
-                    <h3>Key Figures</h3>
-                    <div class="overall-score-card">
+                    <div class="sidebar-card overall-score-card">
+                        <h3>Overall Score</h3>
                         {_create_gauge_chart_svg(esg_data.get('overall_score'))}
                         <span class="rating-badge" style="background-color:{get_benchmark_rating(esg_data.get('overall_score'))[1]};">{get_benchmark_rating(esg_data.get('overall_score'))[0]}</span>
                     </div>
-                    <div class="pillar-donuts">
-                        {_create_donut_chart_svg(esg_data.get('environmental_score', 0) * 10, color='#27ae60', title='Environmental')}
-                        {_create_donut_chart_svg(esg_data.get('social_score', 0) * 10, color='#2980b9', title='Social')}
-                        {_create_donut_chart_svg(esg_data.get('governance_score', 0) * 10, color='#8e44ad', title='Governance')}
+                    <div class="sidebar-card pillar-donuts">
+                        {_create_donut_chart_svg(value=esg_data.get('environmental_score', 0) * 10, color='#27ae60', title='Environmental')}
+                        {_create_donut_chart_svg(value=esg_data.get('social_score', 0) * 10, color='#2980b9', title='Social')}
+                        {_create_donut_chart_svg(value=esg_data.get('governance_score', 0) * 10, color='#8e44ad', title='Governance')}
                     </div>
-                    <hr style="border: 1px solid #e9ecef; margin: 25px 0;">
                     {_create_water_usage_chart(kpis.get('environmental', {}).get('water_recycled', {}).get('value', 0) or 0, kpis.get('environmental', {}).get('water_fresh', {}).get('value', 0) or 0, (kpis.get('environmental', {}).get('water_sourced_bbl', {}).get('value', 0) or 0) - (kpis.get('environmental', {}).get('water_fresh', {}).get('value', 0) or 0))}
+                    {takeaways_html}
                 </div>
             </div>
         </div></body></html>
