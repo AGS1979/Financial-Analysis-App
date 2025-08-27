@@ -2119,7 +2119,7 @@ def esg_analyzer_app():
                     </div>
                 </div>
                 """
-            return f"<h2>📊 Key Performance Indicators</h2><div class="kpi-grid">{kpi_items}</div>"
+            return f'<h2>📊 Key Performance Indicators</h2><div class="kpi-grid">{kpi_items}</div>'
 
         def create_swot_section(swot):
             def create_list(items):
