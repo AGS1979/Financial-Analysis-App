@@ -2026,9 +2026,10 @@ def esg_analyzer_app():
         if not text.strip():
             return json.dumps({"error": "No text provided for analysis."})
 
+        # MODIFIED PROMPT: Now asks the AI to find the *best* KPIs instead of a fixed list.
         prompt = f"""
         You are an expert ESG analyst. Your task is to analyze the provided ESG report and return a comprehensive, structured JSON object based **only** on the text provided.
-        You MUST find specific, quantifiable metrics. If a metric is not found, use a value of null for the entire object.
+        Your primary goal is to identify the **4 to 5 most relevant and quantifiable** Key Performance Indicators (KPIs) for each of the E, S, and G pillars. Do not include a KPI if a specific value is not present in the text.
 
         **JSON Output Specification:**
         - "executive_summary": "<A concise, 2-3 sentence narrative summary of the company's overall ESG posture>"
@@ -2037,28 +2038,18 @@ def esg_analyzer_app():
         - "social_score": <A float score from 0.0 to 10.0 for the Social pillar>
         - "governance_score": <A float score from 0.0 to 10.0 for the Governance pillar>
         - "kpis": {{
-          - "environmental": {{
-            - "ghg_emissions_reduction": {{"value": <numeric_value_or_null>, "unit": "<unit_of_measure>", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
-            - "ghg_intensity": {{"value": <numeric_value_or_null>, "unit": "<unit_of_measure>", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
-            - "methane_intensity_reduction": {{"value": <numeric_value_or_null>, "unit": "<unit_of_measure>", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
-            - "flaring_intensity": {{"value": <numeric_value_or_null>, "unit": "<unit_of_measure>", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
-            - "water_recycled": {{"value": <numeric_value_or_null>, "unit": "<unit_of_measure>", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
-            - "water_fresh": {{"value": <numeric_value_or_null>, "unit": "<unit_of_measure>", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
-            - "key_environmental_initiatives": {{"value": "<Name_of_initiative>", "unit": "", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}}
-          }},
-          - "social": {{
-            - "trir": {{"value": <numeric_value_or_null>, "unit": "", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
-            - "employee_fatalities": {{"value": <numeric_value_or_null>, "unit": "", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
-            - "social_investment": {{"value": <numeric_value_or_null>, "unit": "<currency_unit>", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
-            - "women_in_workforce": {{"value": <numeric_value_or_null>, "unit": "%", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
-            - "key_social_initiatives": {{"value": "<Name_of_initiative>", "unit": "", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}}
-          }},
-          - "governance": {{
-            - "board_independence": {{"value": <numeric_value_or_null>, "unit": "%", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
-            - "women_on_board": {{"value": <numeric_value_or_null>, "unit": "%", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
-            - "esg_linked_compensation": {{"value": "<'Yes'_or_'No'>", "unit": "", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}},
-            - "key_governance_initiatives": {{"value": "<Name_of_initiative>", "unit": "", "context": "<one_sentence_contextual_summary>", "rating": "<'Positive',_'Neutral',_or_'Negative'>"}}
-          }}
+          - "environmental": [
+            {{
+              "icon": "<a single relevant emoji for the KPI>",
+              "title": "<The name of the identified KPI>",
+              "value": "<The numeric or text value found>",
+              "unit": "<The unit of measure, if any>",
+              "context": "<A one-sentence contextual summary of the KPI>",
+              "rating": "<'Positive', 'Neutral', or 'Negative'>"
+            }}
+          ],
+          - "social": [ /* same list structure as environmental */ ],
+          - "governance": [ /* same list structure as environmental */ ]
         }},
         - "pillar_takeaways": {{
             "environmental": ["<one_or_two_key_takeaways_for_this_pillar>"],
@@ -2134,20 +2125,26 @@ def esg_analyzer_app():
         current_date = datetime.now().strftime("%B %d, %Y")
         kpis = esg_data.get('kpis', {})
         takeaways = esg_data.get('pillar_takeaways', {})
-        
+
         def get_rating_color(rating_text):
             return {"Positive": "#27ae60", "Neutral": "#f39c12", "Negative": "#e74c3c"}.get(rating_text, "#6c757d")
 
-        def _create_kpi_card(pillar, kpi_key, icon, title):
-            kpi_data = kpis.get(pillar, {}).get(kpi_key)
-            if not kpi_data: return ""
-            value, unit, context, rating = kpi_data.get('value'), kpi_data.get('unit'), kpi_data.get('context'), kpi_data.get('rating')
+        # This new dynamic helper function is correct.
+        def _create_kpi_card_from_dict(kpi_data):
+            if not isinstance(kpi_data, dict): return ""
+            
+            icon = kpi_data.get('icon', '💡')
+            title = kpi_data.get('title', 'N/A')
+            value = kpi_data.get('value', 'None')
+            unit = kpi_data.get('unit', '')
+            context = kpi_data.get('context', 'No context provided.')
+            rating = kpi_data.get('rating', 'Neutral')
             
             return f"""
             <div class="kpi-card">
                 <div class="kpi-header">
-                    <span class="kpi-icon">{icon}</span>
-                    <span class="kpi-title">{title}</span>
+                    <span class="kpi-icon">{html.escape(str(icon))}</span>
+                    <span class="kpi-title">{html.escape(str(title))}</span>
                     <span class="kpi-rating" style="background-color: {get_rating_color(rating)};">{rating}</span>
                 </div>
                 <div class="kpi-body">
@@ -2157,8 +2154,30 @@ def esg_analyzer_app():
                 <p class="kpi-context">{html.escape(str(context))}</p>
             </div>
             """
+
+        # --- NEW LOGIC TO FIND WATER DATA DYNAMICALLY ---
+        # This block searches the flexible KPI list for water data before creating the chart.
+        water_recycled_val = 0
+        water_fresh_val = 0
+        water_other_val = 0 # Assuming 'other' is not explicitly tracked, can be derived if total is known
         
-        # --- NEW: HTML section to display Key Pillar Takeaways in the sidebar ---
+        env_kpi_list = kpis.get("environmental", [])
+        for kpi in env_kpi_list:
+            title_lower = kpi.get('title', '').lower()
+            if 'recycled' in title_lower and 'water' in title_lower:
+                try: water_recycled_val = float(kpi.get('value', 0))
+                except (ValueError, TypeError): pass
+            elif 'fresh' in title_lower and 'water' in title_lower:
+                try: water_fresh_val = float(kpi.get('value', 0))
+                except (ValueError, TypeError): pass
+
+        # Loop through the AI-generated KPI lists to create the HTML.
+        env_kpi_html = "".join([_create_kpi_card_from_dict(kpi) for kpi in env_kpi_list])
+        soc_kpi_html = "".join([_create_kpi_card_from_dict(kpi) for kpi in kpis.get("social", [])])
+        gov_kpi_html = "".join([_create_kpi_card_from_dict(kpi) for kpi in kpis.get("governance", [])])
+
+        # (The old, unused _create_kpi_card function has been removed)
+        
         takeaways_html = "<div class='sidebar-card'><h3>Key Pillar Takeaways</h3><ul class='takeaways-list'>"
         takeaway_map = {"environmental": "🌍", "social": "🏢", "governance": "🏛️"}
         for pillar, icon in takeaway_map.items():
@@ -2173,6 +2192,7 @@ def esg_analyzer_app():
         html_content = f"""
         <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>{company_name} ESG Dashboard</title>
         <style>
+            /* CSS styles remain the same */
             @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
             body {{ font-family: 'Poppins', sans-serif; background-color: #f4f7fc; color: #343a40; margin: 0; padding: 20px; }}
             .container {{ max-width: 1400px; margin: auto; background: #ffffff; border-radius: 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.08); padding: 40px; }}
@@ -2217,26 +2237,9 @@ def esg_analyzer_app():
             <p class="summary-box">{html.escape(esg_data.get('executive_summary', 'No summary available.'))}</p>
             <div class="dashboard-layout">
                 <div class="main-content">
-                    <div class="kpi-pillar-section"><h2>🌍 Environmental</h2><div class="kpi-card-grid">
-                        {_create_kpi_card("environmental", "ghg_emissions_reduction", "📉", "GHG Emissions Reduction")}
-                        {_create_kpi_card("environmental", "ghg_intensity", "💨", "GHG Intensity")}
-                        {_create_kpi_card("environmental", "methane_intensity_reduction", "🔥", "Methane Intensity Reduction")}
-                        {_create_kpi_card("environmental", "flaring_intensity", "🕯️", "Flaring Intensity")}
-                        {_create_kpi_card("environmental", "key_environmental_initiatives", "💡", "Key Initiative")}
-                    </div></div>
-                    <div class="kpi-pillar-section"><h2>🏢 Social</h2><div class="kpi-card-grid">
-                        {_create_kpi_card("social", "trir", "⛑️", "Safety (TRIR)")}
-                        {_create_kpi_card("social", "employee_fatalities", "💔", "Employee Fatalities")}
-                        {_create_kpi_card("social", "social_investment", "💸", "Community Investment")}
-                        {_create_kpi_card("social", "women_in_workforce", "👩‍💼", "Women in Workforce")}
-                        {_create_kpi_card("social", "key_social_initiatives", "🤝", "Key Initiative")}
-                    </div></div>
-                    <div class="kpi-pillar-section"><h2>🏛️ Governance</h2><div class="kpi-card-grid">
-                        {_create_kpi_card("governance", "board_independence", "👑", "Board Independence")}
-                        {_create_kpi_card("governance", "women_on_board", "🚺", "Women on Board")}
-                        {_create_kpi_card("governance", "esg_linked_compensation", "🔗", "ESG-Linked Compensation")}
-                        {_create_kpi_card("governance", "key_governance_initiatives", "📜", "Key Initiative")}
-                    </div></div>
+                    <div class="kpi-pillar-section"><h2>🌍 Environmental</h2><div class="kpi-card-grid">{env_kpi_html}</div></div>
+                    <div class="kpi-pillar-section"><h2>🏢 Social</h2><div class="kpi-card-grid">{soc_kpi_html}</div></div>
+                    <div class="kpi-pillar-section"><h2>🏛️ Governance</h2><div class="kpi-card-grid">{gov_kpi_html}</div></div>
                 </div>
                 <div class="sidebar">
                     <div class="sidebar-card overall-score-card">
@@ -2249,7 +2252,7 @@ def esg_analyzer_app():
                         {_create_donut_chart_svg(value=esg_data.get('social_score', 0) * 10, color='#2980b9', title='Social')}
                         {_create_donut_chart_svg(value=esg_data.get('governance_score', 0) * 10, color='#8e44ad', title='Governance')}
                     </div>
-                    {_create_water_usage_chart(kpis.get('environmental', {}).get('water_recycled', {}).get('value', 0) or 0, kpis.get('environmental', {}).get('water_fresh', {}).get('value', 0) or 0, (kpis.get('environmental', {}).get('water_sourced_bbl', {}).get('value', 0) or 0) - (kpis.get('environmental', {}).get('water_fresh', {}).get('value', 0) or 0))}
+                    {_create_water_usage_chart(water_recycled_val, water_fresh_val, water_other_val)}
                     {takeaways_html}
                 </div>
             </div>
