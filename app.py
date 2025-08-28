@@ -2217,10 +2217,10 @@ def esg_analyzer_app():
             .kpi-unit {{ font-size: 1em; color: #6c757d; margin-left: 8px; font-weight: 500; }}
             .kpi-context {{ font-size: 0.9em; color: #6c757d; line-height: 1.5; margin: 10px 0 0 0; flex-grow: 1; }}
             .overall-score-card {{ text-align: center; }}
-            .gauge-value {{ font-size: 2.8em; font-weight: 700; fill: #212529; }}
+            .gauge-value {{ font-size: 1.4em; font-weight: 700; fill: #212529; }}
             .rating-badge {{ display: inline-block; padding: 6px 18px; border-radius: 20px; color: #fff; font-weight: 600; font-size: 1em; margin-top: -10px; }}
             .pillar-donuts {{ display: flex; justify-content: space-around; text-align: center; }}
-            .donut-value {{ font-size: 0.8em; font-weight: 700; fill: #212529; }}
+            .donut-value {{ font-size: 0.4em; font-weight: 700; fill: #212529; }}
             .donut-title {{ font-weight: 600; font-size: 0.9em; margin-top: 5px; color: #495057; }}
             .water-bar {{ display: flex; width: 100%; height: 25px; border-radius: 10px; overflow: hidden; margin: 10px 0; }}
             .water-segment.recycled {{ background-color: #2980b9; }}
