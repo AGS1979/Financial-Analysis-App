@@ -4289,6 +4289,8 @@ def main():
             st.markdown("Analyze confidential IMs and teasers with enterprise-grade secured environment.", help="Ensures data residency and privacy by processing documents within a secure environment.")
             st.markdown("##### 📝 Agent Pre-IPO")
             st.markdown("Upload a DRHP/IPO PDF to automatically generate a detailed investment memo and perform Q&A.", help="Uses LLMs to parse and structure information from prospectus documents.")
+            st.markdown("##### 📈 Tariff Impact Tracker")
+            st.markdown("Analyze earnings calls or filings to extract mentions of tariffs and their financial impact.", help="Quickly gauge a company's exposure and sentiment towards trade duties.")
             
         with c2:
             st.markdown("##### 📈 DCF Ginny")
@@ -4301,8 +4303,6 @@ def main():
             st.markdown("Extract and compare key ESG metrics from sustainability reports to benchmark corporate performance.", help="Provides a quick overview of Environmental, Social, and Governance factors.")
             st.markdown("##### 🗂️ Agent Portfolio")
             st.markdown("Index company-specific documents (10-Ks, earnings calls) and perform Q&A across your entire portfolio.", help="A persistent knowledge base for your covered companies.")
-            st.markdown("##### 📈 Tariff Impact Tracker")
-            st.markdown("Analyze earnings calls or filings to extract mentions of tariffs and their financial impact.", help="Quickly gauge a company's exposure and sentiment towards trade duties.")
 
 
 if __name__ == "__main__":
