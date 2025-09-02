@@ -316,7 +316,12 @@ h1 {
     padding-left: 20px;
     margin-top: 0;
 }
-
+/* FIX FOR EXPANDER WIDGET */
+[data-testid="stExpanderHeader"] {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
 </style>
 """, unsafe_allow_html=True)
 
