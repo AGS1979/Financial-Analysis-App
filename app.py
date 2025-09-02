@@ -316,12 +316,7 @@ h1 {
     padding-left: 20px;
     margin-top: 0;
 }
-/* FIX FOR EXPANDER WIDGET */
-[data-testid="stExpanderHeader"] {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -4026,20 +4021,24 @@ def pe_agent_app_azure():
             options=list(ANALYSIS_PROMPTS.keys()),
             default=list(ANALYSIS_PROMPTS.keys()),
         )
-        # --- REVISED ADDITION: UI for Custom Prompts ---
-        with st.expander("Advanced: Customize Analysis Prompts"):
+        # --- NEW UI for Custom Prompts (No Expander) ---
+        # Check if the user has selected any analyses to show the custom prompt section
+        if analysis_choices:
+            st.markdown("---")
+            st.subheader("Advanced: Customize Analysis Prompts")
             st.info("You can provide your own prompts for the selected analyses below. If a text box is left empty, the agent's default prompt will be used.")
+
             # This loop will display a text area for each analysis the user selects
             for choice in analysis_choices:
-                st.subheader(f"Custom Prompt for: {choice}")
+                st.markdown(f"##### Custom Prompt for: {choice}")
                 st.text_area(
-                    label=f"Custom prompt for {choice}",  # Hidden label for clarity
+                    label=f"Custom prompt for {choice}",
                     placeholder=f"Enter your full custom prompt for the '{choice}' analysis here...",
                     height=200,
-                    key=f"pe_custom_prompt_{choice}", # Unique key for each text area
+                    key=f"pe_custom_prompt_{choice}",
                     label_visibility="collapsed"
                 )
-        # --- END REVISED ADDITION ---
+        # --- END NEW UI ---
         if st.button("Generate Analysis", use_container_width=True):
             if not analysis_choices:
                 st.warning("Please select at least one analysis type.")
