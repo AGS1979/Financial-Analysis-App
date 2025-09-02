@@ -4526,23 +4526,23 @@ def main():
         st.info("👈 **Select an agent from the sidebar to begin.**")
         st.subheader("Available Agents")
 
-        # --- CORRECTED CSS for aligned rows ---
+        # --- CORRECTED CSS for a uniform grid ---
         st.markdown("""
         <style>
-        .agent-row {
-            display: flex;
-            justify-content: space-between;
+        .agent-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr); /* Creates 3 equal-width columns */
+            grid-auto-rows: 1fr; /* This is the key: makes all rows equal height */
             gap: 20px;
-            margin-bottom: 20px; /* Space between rows */
         }
         .agent-card {
-            flex: 1; /* Makes all cards in a row share space equally */
-            display: flex;
+            display: flex; /* Aligns content inside the card */
             flex-direction: column;
             background-color: #f8f9fa;
             border: 1px solid #e0e0e0;
             border-radius: 8px;
             padding: 20px;
+            height: 100%; /* Ensures card fills the entire grid cell */
             transition: box-shadow 0.2s ease-in-out;
         }
         .agent-card:hover {
@@ -4553,26 +4553,20 @@ def main():
             font-weight: 600;
             color: #1e1e1e;
             margin-bottom: 10px;
-            min-height: 44px; /* Ensures space for up to two lines of text, stabilizing alignment */
         }
         .agent-description {
             font-size: 0.95rem;
             color: #4a4a4a;
             line-height: 1.5;
         }
-        .placeholder-card {
-            flex: 1;
-            background-color: transparent;
-            border: none;
-        }
         </style>
         """, unsafe_allow_html=True)
 
-        # --- NEW HTML structure using explicit rows ---
+        # --- NEW HTML structure using a single grid container ---
         # The 'title' attribute provides a tooltip on hover.
 
         st.markdown("""
-        <div class="agent-row">
+        <div class="agent-grid">
             <div class="agent-card" title="Ensures data residency and privacy by processing documents within a secure environment.">
                 <div class="agent-title">🔒 Agent PE</div>
                 <div class="agent-description">Analyze confidential IMs and teasers with enterprise-grade secured environment.</div>
@@ -4585,9 +4579,6 @@ def main():
                 <div class="agent-title">🌍 ESG Analyzer</div>
                 <div class="agent-description">Extract and compare key ESG metrics from sustainability reports to benchmark corporate performance.</div>
             </div>
-        </div>
-
-        <div class="agent-row">
             <div class="agent-card" title="Uses LLMs to parse and structure information from prospectus documents.">
                 <div class="agent-title">📝 Agent Pre-IPO</div>
                 <div class="agent-description">Upload a DRHP/IPO PDF to automatically generate a detailed investment memo and perform Q&A.</div>
@@ -4600,9 +4591,6 @@ def main():
                 <div class="agent-title">🗂️ Agent Portfolio</div>
                 <div class="agent-description">Index company-specific documents (10-Ks, earnings calls) and perform Q&A across your entire portfolio.</div>
             </div>
-        </div>
-
-        <div class="agent-row">
             <div class="agent-card" title="Quickly gauge a company's exposure and sentiment towards trade duties.">
                 <div class="agent-title">📈 Tariff Impact Tracker</div>
                 <div class="agent-description">Analyze earnings calls or filings to extract mentions of tariffs and their financial impact.</div>
@@ -4611,8 +4599,6 @@ def main():
                 <div class="agent-title">📊 Agent Special Situations</div>
                 <div class="agent-description">Analyze events like M&A, spin-offs, and activist campaigns by uploading relevant documents to generate a summary memo.</div>
             </div>
-            <div class="placeholder-card">
-                </div>
         </div>
         """, unsafe_allow_html=True)
 
