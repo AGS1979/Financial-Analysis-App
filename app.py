@@ -4432,8 +4432,305 @@ def agent_credit_app_azure():
             use_container_width=True,
         )
 
+
+
 # ==============================================================================
-# 10. MAIN APP ROUTER (CORRECTED AND COMPLETE)
+# 10. Model Integrity Agent (Azure POWERED) - NEW
+# ==============================================================================
+
+def model_integrity_agent_app():
+    """
+    A secure agent to analyze and audit Excel financial models for errors and inconsistencies.
+    """
+    # --- Local imports ---
+    import io, re
+    import streamlit as st
+    import pandas as pd
+    from openai import AzureOpenAI
+    import openpyxl
+    from openpyxl.utils import get_column_letter
+
+    st.markdown("### 🛡️ Model Integrity Agent")
+    st.markdown(
+        "Audit confidential financial models with enterprise-grade privacy. Upload an Excel model to check for common errors, hard-coded values, and inconsistencies."
+    )
+
+    # --- AGENT CONFIG (Fetched from secrets for Azure) ---
+    try:
+        openai_endpoint = st.secrets["azure"]["openai_endpoint"]
+        openai_key = st.secrets["azure"]["openai_key"]
+        openai_deployment_name = st.secrets["azure"]["openai_deployment_name"]
+    except KeyError as e:
+        st.error(f"Configuration error: Missing Azure secret: {e}. Please check your secrets.toml file.")
+        st.stop()
+
+    # --- HELPER FUNCTIONS ---
+    def audit_excel_model(file_bytes: bytes) -> dict:
+        """
+        Parses an Excel workbook and checks for common modeling errors.
+        Returns a dictionary of findings.
+        """
+        findings = {
+            "hard_codes": [],
+            "error_cells": [],
+            "external_links": [],
+            "summary": {}
+        }
+        try:
+            workbook = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=False) # data_only=False to read formulas
+            findings["summary"]["sheets"] = workbook.sheetnames
+            findings["summary"]["total_sheets"] = len(workbook.sheetnames)
+
+            for sheet_name in workbook.sheetnames:
+                sheet = workbook[sheet_name]
+                # Check for hard-coded numbers in formula-heavy areas
+                for row in sheet.iter_rows(min_row=2, max_row=sheet.max_row, min_col=2, max_col=sheet.max_column):
+                    for cell in row:
+                        if cell.value is not None and cell.data_type == 'n' and not str(cell.value).startswith('='):
+                             # Heuristic: Check if neighbors have formulas
+                            left_cell = sheet.cell(row=cell.row, column=cell.column - 1) if cell.column > 1 else None
+                            if left_cell and left_cell.data_type == 'f':
+                                findings["hard_codes"].append(
+                                    f"Sheet '{sheet_name}', Cell {cell.coordinate}: Contains a hard-coded number ({cell.value}) next to a formula."
+                                )
+                        
+                        # Check for common error values
+                        if cell.data_type == 'e':
+                             findings["error_cells"].append(
+                                f"Sheet '{sheet_name}', Cell {cell.coordinate}: Contains an error value: {cell.value}"
+                            )
+
+                # Check for external links
+                if sheet.legacy_drawing is not None:
+                     findings["external_links"].append(f"Sheet '{sheet_name}' may contain legacy drawing objects with external links.")
+
+            return findings
+        except Exception as e:
+            st.warning(f"Could not fully audit the Excel file. Error: {e}")
+            return findings
+
+    def analyze_findings_with_azure_openai(findings: dict) -> str:
+        """
+        Sends the structured findings to Azure OpenAI for a narrative report.
+        """
+        prompt = f"""
+        You are an expert in financial modeling and auditing from a top-tier investment bank.
+        An automated script has analyzed an Excel financial model and found the following potential issues.
+        Your task is to synthesize these raw findings into a professional, well-structured audit report in MARKDOWN format.
+
+        **CRITICAL INSTRUCTIONS:**
+        1.  Start with a high-level executive summary.
+        2.  Group the findings into logical sections: "High-Severity Issues", "Medium-Severity Issues", and "Areas for Review".
+        3.  For each finding, explain the potential risk (e.g., "Hard-coded values can lead to incorrect calculations if assumptions change...").
+        4.  Conclude with a summary and a recommendation for a manual review.
+        5.  If a category (like 'error_cells') is empty, state that no such issues were found.
+
+        **AUTOMATED FINDINGS:**
+        ---
+        {str(findings)}
+        ---
+        """
+        try:
+            client = AzureOpenAI(
+                api_key=openai_key, api_version="2024-02-01", azure_endpoint=openai_endpoint
+            )
+            response = client.chat.completions.create(
+                model=openai_deployment_name,
+                messages=[
+                    {"role": "system", "content": "You are a financial modeling audit expert."},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            return f"## Error\n\n**Error during Azure OpenAI analysis:** {e}"
+
+    # --- UI & WORKFLOW ---
+    st.subheader("1. Upload Confidential Financial Model")
+    uploaded_file = st.file_uploader(
+        "Upload an Excel Model (.xlsx)",
+        type=["xlsx"],
+        accept_multiple_files=False,
+        key="model_integrity_uploader",
+    )
+
+    if uploaded_file:
+        if st.button("Audit Model", type="primary", use_container_width=True):
+            with st.spinner("Auditing model structure and generating report..."):
+                file_bytes = uploaded_file.getvalue()
+                
+                # Step 1: Perform programmatic audit
+                findings = audit_excel_model(file_bytes)
+                
+                # Step 2: Get AI-powered narrative
+                analysis_report = analyze_findings_with_azure_openai(findings)
+                
+                st.session_state.model_integrity_results = {
+                    "Model Audit Report": analysis_report
+                }
+
+    if "model_integrity_results" in st.session_state:
+        st.success("✅ Model audit complete!")
+        st.markdown("---")
+        st.subheader("2. Download Report")
+        
+        full_html_for_download = generate_report_html_from_markdown(
+            st.session_state.model_integrity_results,
+            "Financial Model Integrity Report"
+        )
+        
+        st.download_button(
+            label="📥 Download Audit Report as HTML",
+            data=full_html_for_download,
+            file_name="model_integrity_report.html",
+            mime="text/html",
+            use_container_width=True
+        )
+
+
+
+# ==============================================================================
+# 11. Agent Sentinel (Proactive Monitoring) - NEW
+# ==============================================================================
+def agent_sentinel_app():
+    """
+    An agent to proactively monitor a portfolio of companies for significant events,
+    triggered on-demand by the user.
+    """
+    # --- Local imports ---
+    import streamlit as st
+    import requests
+    from openai import AzureOpenAI
+    from datetime import datetime, timedelta
+
+    st.markdown("### 📡 Agent Sentinel")
+    st.markdown(
+        "Run an on-demand check on your portfolio for recent significant events. Enter company tickers to fetch the latest news and SEC filings, summarized by AI."
+    )
+    st.info("Note: This is an on-demand snapshot, not a continuous background service. Run it anytime to get the latest updates.", icon="ℹ️")
+
+    # --- AGENT CONFIG (Fetched from secrets) ---
+    try:
+        FMP_API_KEY = st.secrets["fmp"]["api_key"]
+        openai_endpoint = st.secrets["azure"]["openai_endpoint"]
+        openai_key = st.secrets["azure"]["openai_key"]
+        openai_deployment_name = st.secrets["azure"]["openai_deployment_name"]
+    except KeyError as e:
+        st.error(f"Configuration error: Missing a required secret: {e}. Please check your secrets.toml file.")
+        st.stop()
+
+    # --- HELPER FUNCTIONS ---
+    def fetch_fmp_data(tickers_list: list) -> dict:
+        """
+        Fetches latest news and 8-K filings for a list of tickers from FMP.
+        """
+        company_data = {ticker: {"news": [], "filings": []} for ticker in tickers_list}
+        today = datetime.now()
+        ninety_days_ago = today - timedelta(days=90)
+        date_to = today.strftime('%Y-%m-%d')
+        date_from = ninety_days_ago.strftime('%Y-%m-%d')
+
+        try:
+            # Fetch News
+            tickers_str = ",".join(tickers_list)
+            news_url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={tickers_str}&limit=20&apikey={FMP_API_KEY}"
+            news_response = requests.get(news_url).json()
+            if news_response:
+                for item in news_response:
+                    if item['symbol'] in company_data:
+                        company_data[item['symbol']]['news'].append(f"- {item['title']} (Source: {item['site']}, Published: {item['publishedDate']})")
+            
+            # Fetch 8-K Filings for each ticker
+            for ticker in tickers_list:
+                filings_url = f"https://financialmodelingprep.com/api/v3/sec_filings/{ticker}?type=8-K&from={date_from}&to={date_to}&limit=5&apikey={FMP_API_KEY}"
+                filings_response = requests.get(filings_url).json()
+                if filings_response:
+                    for item in filings_response:
+                        company_data[ticker]['filings'].append(f"- 8-K Filing from {item['fillingDate']}: [Link]({item['finalLink']})")
+
+            return company_data
+        except Exception as e:
+            st.error(f"Error fetching data from FMP API: {e}")
+            return {}
+
+    def summarize_events_with_azure_openai(data: dict) -> str:
+        """
+        Sends the collected data to Azure OpenAI for a summary report.
+        """
+        prompt = f"""
+        You are a senior analyst on an investment team. You have been given the latest news and SEC filings for a portfolio of companies.
+        Your task is to create a concise "Portfolio Monitoring Briefing" in MARKDOWN format.
+
+        **CRITICAL INSTRUCTIONS:**
+        1.  Start with a "Portfolio Executive Summary" that highlights the single most important event across the entire portfolio.
+        2.  Then, for each company, create a section with its ticker as the heading (e.g., `## AAPL`).
+        3.  Under each company, create two subheadings: "Recent News" and "Recent Filings".
+        4.  For each section, write a 2-3 sentence summary of the most significant developments. Do not just list the headlines. Synthesize and explain the potential impact.
+        5.  If a company has no new data in a category, state "No significant news found." or "No recent 8-K filings found."
+
+        **RAW DATA FEED:**
+        ---
+        {str(data)}
+        ---
+        """
+        try:
+            client = AzureOpenAI(
+                api_key=openai_key, api_version="2024-02-01", azure_endpoint=openai_endpoint
+            )
+            response = client.chat.completions.create(
+                model=openai_deployment_name,
+                messages=[
+                    {"role": "system", "content": "You are a senior investment analyst responsible for portfolio monitoring."},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            return f"## Error\n\n**Error during Azure OpenAI analysis:** {e}"
+
+    # --- UI & WORKFLOW ---
+    st.subheader("1. Define Portfolio")
+    tickers_input = st.text_input("Enter Company Tickers (comma-separated)", "AAPL, MSFT, NVDA", help="e.g., GOOGL, AMZN, JPM")
+
+    if st.button("Run Monitoring Check", type="primary", use_container_width=True):
+        tickers = [ticker.strip().upper() for ticker in tickers_input.split(',') if ticker.strip()]
+        if not tickers:
+            st.warning("Please enter at least one ticker.")
+        else:
+            with st.spinner(f"Fetching latest data for {', '.join(tickers)}..."):
+                # Step 1: Fetch data from APIs
+                raw_data = fetch_fmp_data(tickers)
+                
+                if not raw_data:
+                    st.error("Failed to fetch any data. Please check tickers and API keys.")
+                else:
+                    # Step 2: Get AI-powered summary
+                    summary_report = summarize_events_with_azure_openai(raw_data)
+                    st.session_state.sentinel_results = {
+                        "Portfolio Monitoring Briefing": summary_report
+                    }
+
+    if "sentinel_results" in st.session_state:
+        st.success("✅ Monitoring check complete!")
+        st.markdown("---")
+        st.subheader("2. Download Briefing")
+
+        full_html_for_download = generate_report_html_from_markdown(
+            st.session_state.sentinel_results,
+            "Portfolio Monitoring Briefing"
+        )
+        
+        st.download_button(
+            label="📥 Download Briefing as HTML",
+            data=full_html_for_download,
+            file_name="portfolio_monitoring_briefing.html",
+            mime="text/html",
+            use_container_width=True
+        )
+
+
+# ==============================================================================
+# 12. MAIN APP ROUTER (CORRECTED AND COMPLETE)
 # ==============================================================================
 def main():
     """
@@ -4468,12 +4765,14 @@ def main():
             [
                 "🏠 Welcome",
                 "Agent PE",
+                "Model Integrity Agent",
                 "Agent Credit", # <-- ADD THIS LINE
                 "Agent Pre-IPO",
                 "DCF Ginny",
                 "Agent Special Situations",
                 "ESG Analyzer",
                 "Agent Portfolio",
+                "Agent Sentinel",
                 "Tariff Impact Tracker"
             ],
             key="app_tool_choice"
@@ -4496,7 +4795,10 @@ def main():
     # --- Router Logic ---
     if app_mode == "Agent Credit": # <-- ADD THIS ENTIRE BLOCK
         agent_credit_app_azure()
-
+    elif app_mode == "Model Integrity Agent": # <-- ADD THIS BLOCK
+        model_integrity_agent_app()
+    elif app_mode == "Agent Sentinel":      # <-- ADD THIS BLOCK
+        agent_sentinel_app()
     elif app_mode == "Agent PE":
         # This now calls your self-contained Azure function
         pe_agent_app_azure()
@@ -4528,79 +4830,53 @@ def main():
 
         # --- CORRECTED CSS for a uniform grid ---
         st.markdown("""
-        <style>
-        .agent-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr); /* Creates 3 equal-width columns */
-            grid-auto-rows: 1fr; /* This is the key: makes all rows equal height */
-            gap: 20px;
-        }
-        .agent-card {
-            display: flex; /* Aligns content inside the card */
-            flex-direction: column;
-            background-color: #f8f9fa;
-            border: 1px solid #e0e0e0;
-            border-radius: 8px;
-            padding: 20px;
-            height: 100%; /* Ensures card fills the entire grid cell */
-            transition: box-shadow 0.2s ease-in-out;
-        }
-        .agent-card:hover {
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-        }
-        .agent-title {
-            font-size: 1.1rem;
-            font-weight: 600;
-            color: #1e1e1e;
-            margin-bottom: 10px;
-        }
-        .agent-description {
-            font-size: 0.95rem;
-            color: #4a4a4a;
-            line-height: 1.5;
-        }
-        </style>
-        """, unsafe_allow_html=True)
+<div class="agent-grid">
+    <div class="agent-card" title="Ensures data residency and privacy by processing documents within a secure environment.">
+        <div class="agent-title">🔒 Agent PE</div>
+        <div class="agent-description">Analyze confidential IMs and teasers with enterprise-grade secured environment.</div>
+    </div>
+    <div class="agent-card" title="Combines quantitative data with qualitative insights from documents.">
+        <div class="agent-title">📈 DCF Ginny</div>
+        <div class="agent-description">Generate a document-driven Discounted Cash Flow (DCF) analysis using public data or your own financials.</div>
+    </div>
+    <div class="agent-card" title="Provides a quick overview of Environmental, Social, and Governance factors.">
+        <div class="agent-title">🌍 ESG Analyzer</div>
+        <div class="agent-description">Extract and compare key ESG metrics from sustainability reports to benchmark corporate performance.</div>
+    </div>
 
-        # --- NEW HTML structure using a single grid container ---
-        # The 'title' attribute provides a tooltip on hover.
+    <div class="agent-card" title="Uses LLMs to parse and structure information from prospectus documents.">
+        <div class="agent-title">📝 Agent Pre-IPO</div>
+        <div class="agent-description">Upload a DRHP/IPO PDF to automatically generate a detailed investment memo and perform Q&A.</div>
+    </div>
+    <div class="agent-card" title="Ideal for private credit, distressed debt, and fixed-income workflows.">
+        <div class="agent-title">🔒 Agent Credit</div>
+        <div class="agent-description">Analyze confidential credit agreements, indentures, and loan documents in a secure environment.</div>
+    </div>
+    <div class="agent-card" title="A persistent knowledge base for your covered companies.">
+        <div class="agent-title">🗂️ Agent Portfolio</div>
+        <div class="agent-description">Index company-specific documents (10-Ks, earnings calls) and perform Q&A across your entire portfolio.</div>
+    </div>
 
-        st.markdown("""
-        <div class="agent-grid">
-            <div class="agent-card" title="Ensures data residency and privacy by processing documents within a secure environment.">
-                <div class="agent-title">🔒 Agent PE</div>
-                <div class="agent-description">Analyze confidential IMs and teasers with enterprise-grade secured environment.</div>
-            </div>
-            <div class="agent-card" title="Combines quantitative data with qualitative insights from documents.">
-                <div class="agent-title">📈 DCF Ginny</div>
-                <div class="agent-description">Generate a document-driven Discounted Cash Flow (DCF) analysis using public data or your own financials.</div>
-            </div>
-            <div class="agent-card" title="Provides a quick overview of Environmental, Social, and Governance factors.">
-                <div class="agent-title">🌍 ESG Analyzer</div>
-                <div class="agent-description">Extract and compare key ESG metrics from sustainability reports to benchmark corporate performance.</div>
-            </div>
-            <div class="agent-card" title="Uses LLMs to parse and structure information from prospectus documents.">
-                <div class="agent-title">📝 Agent Pre-IPO</div>
-                <div class="agent-description">Upload a DRHP/IPO PDF to automatically generate a detailed investment memo and perform Q&A.</div>
-            </div>
-            <div class="agent-card" title="Ideal for private credit, distressed debt, and fixed-income workflows.">
-                <div class="agent-title">🔒 Agent Credit</div>
-                <div class="agent-description">Analyze confidential credit agreements, indentures, and loan documents in a secure environment.</div>
-            </div>
-            <div class="agent-card" title="A persistent knowledge base for your covered companies.">
-                <div class="agent-title">🗂️ Agent Portfolio</div>
-                <div class="agent-description">Index company-specific documents (10-Ks, earnings calls) and perform Q&A across your entire portfolio.</div>
-            </div>
-            <div class="agent-card" title="Quickly gauge a company's exposure and sentiment towards trade duties.">
-                <div class="agent-title">📈 Tariff Impact Tracker</div>
-                <div class="agent-description">Analyze earnings calls or filings to extract mentions of tariffs and their financial impact.</div>
-            </div>
-            <div class="agent-card" title="Ideal for event-driven investment strategies.">
-                <div class="agent-title">📊 Agent Special Situations</div>
-                <div class="agent-description">Analyze events like M&A, spin-offs, and activist campaigns by uploading relevant documents to generate a summary memo.</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+    <div class="agent-card" title="Quickly gauge a company's exposure and sentiment towards trade duties.">
+        <div class="agent-title">📈 Tariff Impact Tracker</div>
+        <div class="agent-description">Analyze earnings calls or filings to extract mentions of tariffs and their financial impact.</div>
+    </div>
+    <div class="agent-card" title="Ideal for event-driven investment strategies.">
+        <div class="agent-title">📊 Agent Special Situations</div>
+        <div class="agent-description">Analyze events like M&A, spin-offs, and activist campaigns by uploading relevant documents to generate a summary memo.</div>
+    </div>
+    <div class="agent-card" title="Proactively monitor portfolio companies for key news, filings, and events.">
+        <div class="agent-title">📡 Agent Sentinel</div>
+        <div class="agent-description">Proactively monitor portfolio companies for key news, filings, and events.</div>
+    </div>
+
+    <div class="agent-card" title="Audit Excel financial models for errors, hard-codes, and inconsistencies.">
+        <div class="agent-title">🛡️ Model Integrity Agent</div>
+        <div class="agent-description">Audit Excel financial models for errors, hard-codes, and inconsistencies.</div>
+    </div>
+
+</div>
+""", unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
