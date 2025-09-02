@@ -4828,55 +4828,87 @@ def main():
         st.info("👈 **Select an agent from the sidebar to begin.**")
         st.subheader("Available Agents")
 
-        # --- CORRECTED CSS for a uniform grid ---
+        # --- THIS IS THE MISSING CSS BLOCK ---
         st.markdown("""
-<div class="agent-grid">
-    <div class="agent-card" title="Ensures data residency and privacy by processing documents within a secure environment.">
-        <div class="agent-title">🔒 Agent PE</div>
-        <div class="agent-description">Analyze confidential IMs and teasers with enterprise-grade secured environment.</div>
-    </div>
-    <div class="agent-card" title="Combines quantitative data with qualitative insights from documents.">
-        <div class="agent-title">📈 DCF Ginny</div>
-        <div class="agent-description">Generate a document-driven Discounted Cash Flow (DCF) analysis using public data or your own financials.</div>
-    </div>
-    <div class="agent-card" title="Provides a quick overview of Environmental, Social, and Governance factors.">
-        <div class="agent-title">🌍 ESG Analyzer</div>
-        <div class="agent-description">Extract and compare key ESG metrics from sustainability reports to benchmark corporate performance.</div>
-    </div>
+        <style>
+        .agent-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr); /* Creates 3 equal-width columns */
+            grid-auto-rows: 1fr; /* This is the key: makes all rows equal height */
+            gap: 20px;
+        }
+        .agent-card {
+            display: flex; /* Aligns content inside the card */
+            flex-direction: column;
+            background-color: #f8f9fa;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            height: 100%; /* Ensures card fills the entire grid cell */
+            transition: box-shadow 0.2s ease-in-out;
+        }
+        .agent-card:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .agent-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #1e1e1e;
+            margin-bottom: 10px;
+        }
+        .agent-description {
+            font-size: 0.95rem;
+            color: #4a4a4a;
+            line-height: 1.5;
+        }
+        </style>
+        """, unsafe_allow_html=True)
 
-    <div class="agent-card" title="Uses LLMs to parse and structure information from prospectus documents.">
-        <div class="agent-title">📝 Agent Pre-IPO</div>
-        <div class="agent-description">Upload a DRHP/IPO PDF to automatically generate a detailed investment memo and perform Q&A.</div>
-    </div>
-    <div class="agent-card" title="Ideal for private credit, distressed debt, and fixed-income workflows.">
-        <div class="agent-title">🔒 Agent Credit</div>
-        <div class="agent-description">Analyze confidential credit agreements, indentures, and loan documents in a secure environment.</div>
-    </div>
-    <div class="agent-card" title="A persistent knowledge base for your covered companies.">
-        <div class="agent-title">🗂️ Agent Portfolio</div>
-        <div class="agent-description">Index company-specific documents (10-Ks, earnings calls) and perform Q&A across your entire portfolio.</div>
-    </div>
-
-    <div class="agent-card" title="Quickly gauge a company's exposure and sentiment towards trade duties.">
-        <div class="agent-title">📈 Tariff Impact Tracker</div>
-        <div class="agent-description">Analyze earnings calls or filings to extract mentions of tariffs and their financial impact.</div>
-    </div>
-    <div class="agent-card" title="Ideal for event-driven investment strategies.">
-        <div class="agent-title">📊 Agent Special Situations</div>
-        <div class="agent-description">Analyze events like M&A, spin-offs, and activist campaigns by uploading relevant documents to generate a summary memo.</div>
-    </div>
-    <div class="agent-card" title="Proactively monitor portfolio companies for key news, filings, and events.">
-        <div class="agent-title">📡 Agent Sentinel</div>
-        <div class="agent-description">Proactively monitor portfolio companies for key news, filings, and events.</div>
-    </div>
-
-    <div class="agent-card" title="Audit Excel financial models for errors, hard-codes, and inconsistencies.">
-        <div class="agent-title">🛡️ Model Integrity Agent</div>
-        <div class="agent-description">Audit Excel financial models for errors, hard-codes, and inconsistencies.</div>
-    </div>
-
-</div>
-""", unsafe_allow_html=True)
+        # --- THIS IS THE HTML BLOCK FOR THE AGENT CARDS ---
+        st.markdown("""
+        <div class="agent-grid">
+            <div class="agent-card" title="Ensures data residency and privacy by processing documents within a secure environment.">
+                <div class="agent-title">🔒 Agent PE</div>
+                <div class="agent-description">Analyze confidential IMs and teasers with enterprise-grade secured environment.</div>
+            </div>
+            <div class="agent-card" title="Combines quantitative data with qualitative insights from documents.">
+                <div class="agent-title">📈 DCF Ginny</div>
+                <div class="agent-description">Generate a document-driven Discounted Cash Flow (DCF) analysis using public data or your own financials.</div>
+            </div>
+            <div class="agent-card" title="Provides a quick overview of Environmental, Social, and Governance factors.">
+                <div class="agent-title">🌍 ESG Analyzer</div>
+                <div class="agent-description">Extract and compare key ESG metrics from sustainability reports to benchmark corporate performance.</div>
+            </div>
+            <div class="agent-card" title="Uses LLMs to parse and structure information from prospectus documents.">
+                <div class="agent-title">📝 Agent Pre-IPO</div>
+                <div class="agent-description">Upload a DRHP/IPO PDF to automatically generate a detailed investment memo and perform Q&A.</div>
+            </div>
+            <div class="agent-card" title="Ideal for private credit, distressed debt, and fixed-income workflows.">
+                <div class="agent-title">🔒 Agent Credit</div>
+                <div class="agent-description">Analyze confidential credit agreements, indentures, and loan documents in a secure environment.</div>
+            </div>
+            <div class="agent-card" title="A persistent knowledge base for your covered companies.">
+                <div class="agent-title">🗂️ Agent Portfolio</div>
+                <div class="agent-description">Index company-specific documents (10-Ks, earnings calls) and perform Q&A across your entire portfolio.</div>
+            </div>
+            <div class="agent-card" title="Quickly gauge a company's exposure and sentiment towards trade duties.">
+                <div class="agent-title">📈 Tariff Impact Tracker</div>
+                <div class="agent-description">Analyze earnings calls or filings to extract mentions of tariffs and their financial impact.</div>
+            </div>
+            <div class="agent-card" title="Ideal for event-driven investment strategies.">
+                <div class="agent-title">📊 Agent Special Situations</div>
+                <div class="agent-description">Analyze events like M&A, spin-offs, and activist campaigns by uploading relevant documents to generate a summary memo.</div>
+            </div>
+            <div class="agent-card" title="Proactively monitor portfolio companies for key news, filings, and events.">
+                <div class="agent-title">📡 Agent Sentinel</div>
+                <div class="agent-description">Proactively monitor portfolio companies for key news, filings, and events.</div>
+            </div>
+            <div class="agent-card" title="Audit Excel financial models for errors, hard-codes, and inconsistencies.">
+                <div class="agent-title">🛡️ Model Integrity Agent</div>
+                <div class="agent-description">Audit Excel financial models for errors, hard-codes, and inconsistencies.</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
