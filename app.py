@@ -4021,6 +4021,21 @@ def pe_agent_app_azure():
             options=list(ANALYSIS_PROMPTS.keys()),
             default=list(ANALYSIS_PROMPTS.keys()),
         )
+        # --- ADDITION: UI for Custom Prompts ---
+        with st.expander("Advanced: Customize Analysis Prompts"):
+            st.info("You can edit the default prompts for the selected analyses below. The backend logic is not yet connected.")
+            # This loop will display a text area for each analysis the user selects
+            for choice in analysis_choices:
+                st.subheader(f"Prompt for: {choice}")
+                default_prompt = ANALYSIS_PROMPTS.get(choice, "Prompt not found.")
+                st.text_area(
+                    label="Edit prompt",  # The label is hidden but good practice
+                    value=default_prompt,
+                    height=250,
+                    key=f"pe_custom_prompt_{choice}", # Unique key for each text area
+                    label_visibility="collapsed"
+                )
+        # --- END ADDITION ---
         if st.button("Generate Analysis", use_container_width=True):
             if not analysis_choices:
                 st.warning("Please select at least one analysis type.")
