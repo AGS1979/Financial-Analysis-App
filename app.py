@@ -4523,7 +4523,7 @@ def main():
 
     # --- Router Logic ---
     if app_mode == "Agent Credit": # <-- ADD THIS ENTIRE BLOCK
-    agent_credit_app_azure()
+        agent_credit_app_azure()
 
     elif app_mode == "Agent PE":
         # This now calls your self-contained Azure function
