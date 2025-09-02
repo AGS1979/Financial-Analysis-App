@@ -864,6 +864,31 @@ def investment_memo_app():
             help="Example: 'Focus on the competitive landscape in North America and risks related to supply chain.'"
         )
 
+        # --- NEW UI for Custom Section Prompts ---
+        st.markdown("---")
+        st.subheader("Advanced: Customize Section Prompts")
+        st.info("You can provide your own generation prompt for each memo section below. Leave a box empty to use the default.")
+        
+        section_titles = [
+            "1. IPO Offer Details", "2. Company Overview", "3. Industry Overview and Outlook",
+            "4. Business Model", "5. Financial Highlights",
+            "6. Guidance and Outlook on future financial performance",
+            "7. Peer Comparison and Competitors", "8. Risks", "9. Investment Highlights"
+        ]
+
+        for title in section_titles:
+            st.markdown(f"##### Custom Prompt for: {title[3:]}")
+            st.text_area(
+                label=f"Custom prompt for {title[3:]}",
+                placeholder=f"Enter your full custom prompt for the '{title[3:]}' section here...",
+                height=150,
+                key=f"memo_custom_prompt_{title.replace(' ', '_')}", # Unique key
+                label_visibility="collapsed"
+            )
+        # --- END NEW UI ---
+
+
+
         if st.button("📘 Generate Investment Memo", key="gen_memo"):
             with st.spinner("⏳ Analyzing document and generating memo... This may take a few minutes."):
                 try:
@@ -1245,7 +1270,17 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
         st.subheader("📄 Qualitative Guidance Documents (Optional)")
         st.file_uploader("Upload Primary Document", type=["pdf"], key="dcf_primary_doc")
         st.file_uploader("Upload Supporting Documents", type=["pdf"], accept_multiple_files=True, key="dcf_support_docs")
-        
+        # --- NEW UI for Custom Prompt ---
+        st.markdown("---")
+        st.subheader("Advanced: Customize Analyst Memo Prompt")
+        st.warning("Your custom prompt must ask the model to return a JSON object with keys 'memo' and 'sources', or the analysis will fail.")
+        st.text_area(
+            "Enter your custom prompt for Analyst Memo generation:",
+            placeholder="Enter your full custom prompt here...",
+            height=250,
+            key="dcf_custom_prompt"
+        )
+        # --- END NEW UI ---
         if st.button("🚀 Generate DCF Analysis", use_container_width=True):
             st.session_state.update({
                 'dcf_company_name': st.session_state.dcf_company,
@@ -1910,7 +1945,17 @@ Section to Summarize:
             spinco_peers_raw = st.text_area("Enter SpinCo Peer Company Names (comma-separated)", key="spinco_peers_raw")
 
     uploaded_files_memo = st.file_uploader("Upload Public Documents (PDF, DOCX)", accept_multiple_files=True, key="uploaded_files_memo")
-
+    # --- NEW UI for Custom Prompt ---
+    st.markdown("---")
+    st.subheader("Advanced: Customize Memo Prompt")
+    st.info("You can provide a custom prompt template below. The agent may require your prompt to ask for a memo based on a specific structure.")
+    st.text_area(
+        "Enter your custom prompt template:",
+        placeholder="Enter your full custom prompt for the memo generation here...",
+        height=250,
+        key="situations_custom_prompt"
+    )
+    # --- END NEW UI ---
     if st.button("Generate Memo", type="primary"):
         if not company_name_memo or not situation_type_memo or not uploaded_files_memo:
             st.warning("Please fill in all fields and upload at least one document.")
@@ -2324,6 +2369,17 @@ def esg_analyzer_app():
         st.info("Upload a company's sustainability or ESG report to generate a comprehensive dashboard.")
         company_dash = st.text_input("🏢 Enter Company Name", key="esg_company_dash")
         file_dash = st.file_uploader("📄 Upload ESG Disclosure PDF", type="pdf", key="esg_file_dash")
+        # --- NEW UI for Custom Prompt ---
+        st.markdown("---")
+        st.subheader("Advanced: Customize Analysis Prompt")
+        st.warning("The ESG Dashboard requires a specific JSON output. Your custom prompt must request this structure or the dashboard generation will fail.")
+        st.text_area(
+            "Enter your custom prompt for ESG analysis:",
+            placeholder="Enter your full custom prompt here. It must ask for a JSON object with keys like 'overall_score', 'kpis', etc.",
+            height=250,
+            key="esg_custom_prompt_dash"
+        )
+        # --- END NEW UI ---
         if st.button("🚀 Generate Dashboard", key="esg_generate_dash", type="primary"):
             if not all([company_dash, file_dash]): st.error("Please provide a company name and a PDF file.")
             else:
@@ -2343,6 +2399,17 @@ def esg_analyzer_app():
         st.subheader("1. Generate Classic ESG Report")
         company_classic = st.text_input("🏢 Enter Company Name", key="esg_company_classic")
         file_classic = st.file_uploader("📄 Upload ESG Disclosure PDF", type="pdf", key="esg_file_classic")
+        # --- NEW UI for Custom Prompt ---
+        st.markdown("---")
+        st.subheader("Advanced: Customize Analysis Prompt")
+        st.warning("The ESG Report requires a specific JSON output. Your custom prompt must request this structure or the report generation will fail.")
+        st.text_area(
+            "Enter your custom prompt for ESG analysis:",
+            placeholder="Enter your full custom prompt here. It must ask for a JSON object with keys like 'overall_score', 'environmental_insights', etc.",
+            height=250,
+            key="esg_custom_prompt_classic"
+        )
+        # --- END NEW UI ---
         if st.button("🚀 Generate & Download Report", key="esg_generate_classic"):
             if not all([company_classic, file_classic]): st.error("Please provide a company name and a PDF file.")
             else:
@@ -3296,6 +3363,17 @@ Approach this analysis without bias. Remain completely objective and do not beco
                     type=["pdf", "docx", "txt"], accept_multiple_files=True
                 )
 
+            # --- NEW UI for Custom Prompt ---
+            st.markdown("---")
+            st.subheader("Advanced: Customize Meeting Prep Prompt")
+            st.text_area(
+                "Enter your custom prompt for the analysis:",
+                placeholder="Enter your full custom prompt for the 'Management Meeting Prep' analysis here...",
+                height=250,
+                key="meeting_prep_custom_prompt"
+            )
+            # --- END NEW UI ---
+
             submitted = st.form_submit_button("🚀 Generate Meeting Prep", use_container_width=True)
 
             if submitted:
@@ -3351,6 +3429,22 @@ Approach this analysis without bias. Remain completely objective and do not beco
             user_query = ""
             if analysis_choice == "Custom Query":
                 user_query = st.text_area("Ask a question about the selected companies' documents")
+
+            # --- NEW UI for Custom Prompt ---
+            # Show custom prompt UI for all non-custom analyses
+            if analysis_choice != "Custom Query":
+                st.markdown("---")
+                st.subheader("Advanced: Customize Analysis Prompt")
+                if analysis_choice == "Risk Assessment":
+                    st.warning("Your custom prompt must request a specific JSON output for the report to generate correctly.")
+                st.text_area(
+                    "Enter your custom prompt for the analysis:",
+                    placeholder=f"Enter your full custom prompt for the '{analysis_choice}' analysis here...",
+                    height=250,
+                    key="portfolio_custom_prompt"
+                )
+            # --- END NEW UI ---
+
 
             if st.button("🚀 Run Analysis", use_container_width=True):
                 proceed = False
@@ -3738,7 +3832,17 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
 
     if 'tariff_all_analysis_results' not in st.session_state:
         st.session_state.tariff_all_analysis_results = {}
-
+    # --- NEW UI for Custom Prompt ---
+    st.markdown("---")
+    st.subheader("Advanced: Customize Analysis Prompt")
+    st.warning("The Tariff Tracker requires a specific JSON output. Your custom prompt must request this structure or the analysis will fail.")
+    st.text_area(
+        "Enter your custom prompt for tariff analysis:",
+        placeholder="Enter your full custom prompt here. It must ask for a JSON object with keys like 'management_commentary', 'vulnerability', etc.",
+        height=250,
+        key="tariff_custom_prompt"
+    )
+    # --- END NEW UI ---    
     if data_source == "Fetch Transcript":
         tickers_input = st.text_input("Company Ticker(s)", "CROX, STLD, CLF", help="Enter one or more tickers, separated by commas.")
         c2, c3 = st.columns(2)
