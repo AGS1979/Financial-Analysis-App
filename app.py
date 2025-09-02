@@ -4443,7 +4443,7 @@ def model_integrity_agent_app():
     A secure agent to analyze and audit Excel financial models for errors and inconsistencies.
     """
     # --- Local imports ---
-    import io, re
+    import io, re, html, markdown
     import streamlit as st
     import pandas as pd
     from openai import AzureOpenAI
@@ -4464,7 +4464,42 @@ def model_integrity_agent_app():
         st.error(f"Configuration error: Missing Azure secret: {e}. Please check your secrets.toml file.")
         st.stop()
 
-    # --- HELPER FUNCTIONS ---
+    # --- LOCAL HELPER FUNCTIONS ---
+    def generate_report_html_from_markdown(analysis_results: dict) -> str:
+        """
+        Converts a dictionary of markdown analysis into a complete, styled HTML string.
+        This helper is self-contained within the Model Integrity Agent.
+        """
+        report_title = "Financial Model Integrity Report"
+        styles = """
+        <style>
+            .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9fafb; margin: 20px; }
+            .analysis-container h1 { font-size: 1.8em; font-weight: 700; color: #00416A; margin-top: 0; padding-bottom: 15px; border-bottom: 3px solid #00416A; }
+            .analysis-container h2 { font-size: 1.5em; font-weight: 600; color: #00416A; border-bottom: 2px solid #e6f1f6; padding-bottom: 10px; margin-top: 30px; margin-bottom: 20px; }
+            .analysis-container h3 { font-size: 1.2em; font-weight: 600; color: #1e1e1e; margin-top: 25px; margin-bottom: 10px; }
+            .analysis-container p { margin-bottom: 1em; line-height: 1.6; color: #333; }
+            .analysis-container ul, .analysis-container ol { list-style-position: outside; padding-left: 20px; margin-top: 1em; margin-bottom: 1em; }
+            .analysis-container li { margin-bottom: 0.75em; line-height: 1.6; }
+            .analysis-container table { width: 100%; border-collapse: collapse; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+            .analysis-container th, .analysis-container td { border: 1px solid #ddd; padding: 12px 15px; text-align: left; }
+            .analysis-container th { background-color: #e6f1f6; font-weight: 600; }
+            .analysis-container tr:nth-of-type(even) { background-color: #fdfdfd; }
+        </style>
+        """
+        
+        full_html_body = f"<h1>{html.escape(report_title)}</h1>"
+        for title, markdown_content in analysis_results.items():
+            full_html_body += f"<h2>{html.escape(title)}</h2>"
+            html_from_md = markdown.markdown(markdown_content, extensions=['tables'])
+            processed_html = re.sub(r"<h2>(.*?)</h2>", r"<h3>\1</h3>", html_from_md)
+            full_html_body += processed_html
+        
+        content_div = f"<div class='analysis-container'>{full_html_body}</div>"
+        
+        return f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>{html.escape(report_title)}</title>
+        <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+        {styles}</head><body>{content_div}</body></html>"""
+
     def audit_excel_model(file_bytes: bytes) -> dict:
         """
         Parses an Excel workbook and checks for common modeling errors.
@@ -4477,32 +4512,27 @@ def model_integrity_agent_app():
             "summary": {}
         }
         try:
-            workbook = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=False) # data_only=False to read formulas
+            workbook = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=False)
             findings["summary"]["sheets"] = workbook.sheetnames
             findings["summary"]["total_sheets"] = len(workbook.sheetnames)
 
             for sheet_name in workbook.sheetnames:
                 sheet = workbook[sheet_name]
-                # Check for hard-coded numbers in formula-heavy areas
                 for row in sheet.iter_rows(min_row=2, max_row=sheet.max_row, min_col=2, max_col=sheet.max_column):
                     for cell in row:
                         if cell.value is not None and cell.data_type == 'n' and not str(cell.value).startswith('='):
-                             # Heuristic: Check if neighbors have formulas
                             left_cell = sheet.cell(row=cell.row, column=cell.column - 1) if cell.column > 1 else None
                             if left_cell and left_cell.data_type == 'f':
                                 findings["hard_codes"].append(
-                                    f"Sheet '{sheet_name}', Cell {cell.coordinate}: Contains a hard-coded number ({cell.value}) next to a formula."
+                                    f"Sheet '{sheet_name}', Cell {cell.coordinate}: Contains a hard-coded number ({cell.value}) next to a cell with a formula."
                                 )
-                        
-                        # Check for common error values
                         if cell.data_type == 'e':
                              findings["error_cells"].append(
                                 f"Sheet '{sheet_name}', Cell {cell.coordinate}: Contains an error value: {cell.value}"
                             )
-
-                # Check for external links
-                if sheet.legacy_drawing is not None:
-                     findings["external_links"].append(f"Sheet '{sheet_name}' may contain legacy drawing objects with external links.")
+                if hasattr(sheet, 'external_links'):
+                    for link in sheet.external_links:
+                        findings["external_links"].append(f"Sheet '{sheet_name}' contains an external link to: {link.Target}")
 
             return findings
         except Exception as e:
@@ -4519,11 +4549,11 @@ def model_integrity_agent_app():
         Your task is to synthesize these raw findings into a professional, well-structured audit report in MARKDOWN format.
 
         **CRITICAL INSTRUCTIONS:**
-        1.  Start with a high-level executive summary.
-        2.  Group the findings into logical sections: "High-Severity Issues", "Medium-Severity Issues", and "Areas for Review".
-        3.  For each finding, explain the potential risk (e.g., "Hard-coded values can lead to incorrect calculations if assumptions change...").
-        4.  Conclude with a summary and a recommendation for a manual review.
-        5.  If a category (like 'error_cells') is empty, state that no such issues were found.
+        1.  Start with a high-level executive summary based on the number and type of findings.
+        2.  Group the findings into logical sections: "High-Severity Issues (e.g., Error Cells)", "Medium-Severity Issues (e.g., Hard-Codes in Calculation Blocks)", and "Areas for Review (e.g., External Links)".
+        3.  For each finding, explain the potential risk (e.g., "Hard-coded values can lead to incorrect calculations if assumptions change and are a common source of model errors.").
+        4.  Conclude with a summary and a clear recommendation for a manual review of the identified areas.
+        5.  If a category (like 'error_cells') is empty, state that "No issues of this type were detected."
 
         **AUTOMATED FINDINGS:**
         ---
@@ -4558,13 +4588,8 @@ def model_integrity_agent_app():
         if st.button("Audit Model", type="primary", use_container_width=True):
             with st.spinner("Auditing model structure and generating report..."):
                 file_bytes = uploaded_file.getvalue()
-                
-                # Step 1: Perform programmatic audit
                 findings = audit_excel_model(file_bytes)
-                
-                # Step 2: Get AI-powered narrative
                 analysis_report = analyze_findings_with_azure_openai(findings)
-                
                 st.session_state.model_integrity_results = {
                     "Model Audit Report": analysis_report
                 }
@@ -4575,8 +4600,7 @@ def model_integrity_agent_app():
         st.subheader("2. Download Report")
         
         full_html_for_download = generate_report_html_from_markdown(
-            st.session_state.model_integrity_results,
-            "Financial Model Integrity Report"
+            st.session_state.model_integrity_results
         )
         
         st.download_button(
@@ -4592,6 +4616,7 @@ def model_integrity_agent_app():
 # ==============================================================================
 # 11. Agent Sentinel (Proactive Monitoring) - NEW
 # ==============================================================================
+
 def agent_sentinel_app():
     """
     An agent to proactively monitor a portfolio of companies for significant events,
@@ -4599,7 +4624,7 @@ def agent_sentinel_app():
     """
     # --- Local imports ---
     import streamlit as st
-    import requests
+    import requests, html, markdown, re
     from openai import AzureOpenAI
     from datetime import datetime, timedelta
 
@@ -4619,7 +4644,42 @@ def agent_sentinel_app():
         st.error(f"Configuration error: Missing a required secret: {e}. Please check your secrets.toml file.")
         st.stop()
 
-    # --- HELPER FUNCTIONS ---
+    # --- LOCAL HELPER FUNCTIONS ---
+    def generate_report_html_from_markdown(analysis_results: dict) -> str:
+        """
+        Converts a dictionary of markdown analysis into a complete, styled HTML string.
+        This helper is self-contained within the Agent Sentinel function.
+        """
+        report_title = "Portfolio Monitoring Briefing"
+        styles = """
+        <style>
+            .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9fafb; margin: 20px; }
+            .analysis-container h1 { font-size: 1.8em; font-weight: 700; color: #00416A; margin-top: 0; padding-bottom: 15px; border-bottom: 3px solid #00416A; }
+            .analysis-container h2 { font-size: 1.5em; font-weight: 600; color: #00416A; border-bottom: 2px solid #e6f1f6; padding-bottom: 10px; margin-top: 30px; margin-bottom: 20px; }
+            .analysis-container h3 { font-size: 1.2em; font-weight: 600; color: #1e1e1e; margin-top: 25px; margin-bottom: 10px; }
+            .analysis-container p { margin-bottom: 1em; line-height: 1.6; color: #333; }
+            .analysis-container ul, .analysis-container ol { list-style-position: outside; padding-left: 20px; margin-top: 1em; margin-bottom: 1em; }
+            .analysis-container li { margin-bottom: 0.75em; line-height: 1.6; }
+            .analysis-container table { width: 100%; border-collapse: collapse; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+            .analysis-container th, .analysis-container td { border: 1px solid #ddd; padding: 12px 15px; text-align: left; }
+            .analysis-container th { background-color: #e6f1f6; font-weight: 600; }
+            .analysis-container tr:nth-of-type(even) { background-color: #fdfdfd; }
+        </style>
+        """
+        
+        full_html_body = f"<h1>{html.escape(report_title)}</h1>"
+        for title, markdown_content in analysis_results.items():
+            full_html_body += f"<h2>{html.escape(title)}</h2>"
+            html_from_md = markdown.markdown(markdown_content, extensions=['tables'])
+            processed_html = re.sub(r"<h2>(.*?)</h2>", r"<h3>\1</h3>", html_from_md)
+            full_html_body += processed_html
+        
+        content_div = f"<div class='analysis-container'>{full_html_body}</div>"
+        
+        return f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>{html.escape(report_title)}</title>
+        <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+        {styles}</head><body>{content_div}</body></html>"""
+
     def fetch_fmp_data(tickers_list: list) -> dict:
         """
         Fetches latest news and 8-K filings for a list of tickers from FMP.
@@ -4631,23 +4691,20 @@ def agent_sentinel_app():
         date_from = ninety_days_ago.strftime('%Y-%m-%d')
 
         try:
-            # Fetch News
             tickers_str = ",".join(tickers_list)
-            news_url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={tickers_str}&limit=20&apikey={FMP_API_KEY}"
+            news_url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={tickers_str}&limit=50&apikey={FMP_API_KEY}"
             news_response = requests.get(news_url).json()
-            if news_response:
+            if news_response and isinstance(news_response, list):
                 for item in news_response:
-                    if item['symbol'] in company_data:
-                        company_data[item['symbol']]['news'].append(f"- {item['title']} (Source: {item['site']}, Published: {item['publishedDate']})")
+                    if item.get('symbol') in company_data:
+                        company_data[item['symbol']]['news'].append(f"- {item.get('title')} (Source: {item.get('site')}, Published: {item.get('publishedDate')})")
             
-            # Fetch 8-K Filings for each ticker
             for ticker in tickers_list:
                 filings_url = f"https://financialmodelingprep.com/api/v3/sec_filings/{ticker}?type=8-K&from={date_from}&to={date_to}&limit=5&apikey={FMP_API_KEY}"
                 filings_response = requests.get(filings_url).json()
-                if filings_response:
+                if filings_response and isinstance(filings_response, list):
                     for item in filings_response:
-                        company_data[ticker]['filings'].append(f"- 8-K Filing from {item['fillingDate']}: [Link]({item['finalLink']})")
-
+                        company_data[ticker]['filings'].append(f"- 8-K Filing from {item.get('fillingDate')}: [Link]({item.get('finalLink')})")
             return company_data
         except Exception as e:
             st.error(f"Error fetching data from FMP API: {e}")
@@ -4662,9 +4719,9 @@ def agent_sentinel_app():
         Your task is to create a concise "Portfolio Monitoring Briefing" in MARKDOWN format.
 
         **CRITICAL INSTRUCTIONS:**
-        1.  Start with a "Portfolio Executive Summary" that highlights the single most important event across the entire portfolio.
+        1.  Start with a "Portfolio Executive Summary" that highlights the single most important event or trend across the entire portfolio.
         2.  Then, for each company, create a section with its ticker as the heading (e.g., `## AAPL`).
-        3.  Under each company, create two subheadings: "Recent News" and "Recent Filings".
+        3.  Under each company, create two subheadings: "Significant News" and "Recent Filings".
         4.  For each section, write a 2-3 sentence summary of the most significant developments. Do not just list the headlines. Synthesize and explain the potential impact.
         5.  If a company has no new data in a category, state "No significant news found." or "No recent 8-K filings found."
 
@@ -4698,13 +4755,10 @@ def agent_sentinel_app():
             st.warning("Please enter at least one ticker.")
         else:
             with st.spinner(f"Fetching latest data for {', '.join(tickers)}..."):
-                # Step 1: Fetch data from APIs
                 raw_data = fetch_fmp_data(tickers)
-                
                 if not raw_data:
                     st.error("Failed to fetch any data. Please check tickers and API keys.")
                 else:
-                    # Step 2: Get AI-powered summary
                     summary_report = summarize_events_with_azure_openai(raw_data)
                     st.session_state.sentinel_results = {
                         "Portfolio Monitoring Briefing": summary_report
@@ -4716,8 +4770,7 @@ def agent_sentinel_app():
         st.subheader("2. Download Briefing")
 
         full_html_for_download = generate_report_html_from_markdown(
-            st.session_state.sentinel_results,
-            "Portfolio Monitoring Briefing"
+            st.session_state.sentinel_results
         )
         
         st.download_button(
