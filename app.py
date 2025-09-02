@@ -4567,6 +4567,11 @@ def main():
         with c2:
             st.markdown("##### 📈 DCF Ginny")
             st.markdown("Generate a document-driven Discounted Cash Flow (DCF) analysis using public data or your own financials.", help="Combines quantitative data with qualitative insights from documents.")
+            
+            # <-- ADD THIS BLOCK FOR AGENT CREDIT
+            st.markdown("##### 🔒 Agent Credit")
+            st.markdown("Analyze confidential credit agreements, indentures, and loan documents in a secure environment.", help="Ideal for private credit, distressed debt, and fixed-income workflows.")
+            
             st.markdown("##### 📊 Agent Special Situations")
             st.markdown("Analyze events like M&A, spin-offs, and activist campaigns by uploading relevant documents to generate a summary memo.", help="Ideal for event-driven investment strategies.")
 
