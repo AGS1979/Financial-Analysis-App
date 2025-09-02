@@ -4552,34 +4552,97 @@ def main():
     else: # Welcome Page
         st.markdown('<p class="welcome-subtitle">A unified platform for advanced financial analysis.</p>', unsafe_allow_html=True)
         st.info("👈 **Select an agent from the sidebar to begin.**")
-
         st.subheader("Available Agents")
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            # Updated description to mention Azure
-            st.markdown("##### 🔒 Agent PE")
-            st.markdown("Analyze confidential IMs and teasers with enterprise-grade secured environment.", help="Ensures data residency and privacy by processing documents within a secure environment.")
-            st.markdown("##### 📝 Agent Pre-IPO")
-            st.markdown("Upload a DRHP/IPO PDF to automatically generate a detailed investment memo and perform Q&A.", help="Uses LLMs to parse and structure information from prospectus documents.")
-            st.markdown("##### 📈 Tariff Impact Tracker")
-            st.markdown("Analyze earnings calls or filings to extract mentions of tariffs and their financial impact.", help="Quickly gauge a company's exposure and sentiment towards trade duties.")
-            
-        with c2:
-            st.markdown("##### 📈 DCF Ginny")
-            st.markdown("Generate a document-driven Discounted Cash Flow (DCF) analysis using public data or your own financials.", help="Combines quantitative data with qualitative insights from documents.")
-            
-            # <-- ADD THIS BLOCK FOR AGENT CREDIT
-            st.markdown("##### 🔒 Agent Credit")
-            st.markdown("Analyze confidential credit agreements, indentures, and loan documents in a secure environment.", help="Ideal for private credit, distressed debt, and fixed-income workflows.")
-            
-            st.markdown("##### 📊 Agent Special Situations")
-            st.markdown("Analyze events like M&A, spin-offs, and activist campaigns by uploading relevant documents to generate a summary memo.", help="Ideal for event-driven investment strategies.")
 
-        with c3:
-            st.markdown("##### 🌍 ESG Analyzer")
-            st.markdown("Extract and compare key ESG metrics from sustainability reports to benchmark corporate performance.", help="Provides a quick overview of Environmental, Social, and Governance factors.")
-            st.markdown("##### 🗂️ Agent Portfolio")
-            st.markdown("Index company-specific documents (10-Ks, earnings calls) and perform Q&A across your entire portfolio.", help="A persistent knowledge base for your covered companies.")
+        # --- CORRECTED CSS for aligned rows ---
+        st.markdown("""
+        <style>
+        .agent-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 20px;
+            margin-bottom: 20px; /* Space between rows */
+        }
+        .agent-card {
+            flex: 1; /* Makes all cards in a row share space equally */
+            display: flex;
+            flex-direction: column;
+            background-color: #f8f9fa;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            transition: box-shadow 0.2s ease-in-out;
+        }
+        .agent-card:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .agent-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #1e1e1e;
+            margin-bottom: 10px;
+            min-height: 44px; /* Ensures space for up to two lines of text, stabilizing alignment */
+        }
+        .agent-description {
+            font-size: 0.95rem;
+            color: #4a4a4a;
+            line-height: 1.5;
+        }
+        .placeholder-card {
+            flex: 1;
+            background-color: transparent;
+            border: none;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+        # --- NEW HTML structure using explicit rows ---
+        # The 'title' attribute provides a tooltip on hover.
+
+        st.markdown("""
+        <div class="agent-row">
+            <div class="agent-card" title="Ensures data residency and privacy by processing documents within a secure environment.">
+                <div class="agent-title">🔒 Agent PE</div>
+                <div class="agent-description">Analyze confidential IMs and teasers with enterprise-grade secured environment.</div>
+            </div>
+            <div class="agent-card" title="Combines quantitative data with qualitative insights from documents.">
+                <div class="agent-title">📈 DCF Ginny</div>
+                <div class="agent-description">Generate a document-driven Discounted Cash Flow (DCF) analysis using public data or your own financials.</div>
+            </div>
+            <div class="agent-card" title="Provides a quick overview of Environmental, Social, and Governance factors.">
+                <div class="agent-title">🌍 ESG Analyzer</div>
+                <div class="agent-description">Extract and compare key ESG metrics from sustainability reports to benchmark corporate performance.</div>
+            </div>
+        </div>
+
+        <div class="agent-row">
+            <div class="agent-card" title="Uses LLMs to parse and structure information from prospectus documents.">
+                <div class="agent-title">📝 Agent Pre-IPO</div>
+                <div class="agent-description">Upload a DRHP/IPO PDF to automatically generate a detailed investment memo and perform Q&A.</div>
+            </div>
+            <div class="agent-card" title="Ideal for private credit, distressed debt, and fixed-income workflows.">
+                <div class="agent-title">🔒 Agent Credit</div>
+                <div class="agent-description">Analyze confidential credit agreements, indentures, and loan documents in a secure environment.</div>
+            </div>
+            <div class="agent-card" title="A persistent knowledge base for your covered companies.">
+                <div class="agent-title">🗂️ Agent Portfolio</div>
+                <div class="agent-description">Index company-specific documents (10-Ks, earnings calls) and perform Q&A across your entire portfolio.</div>
+            </div>
+        </div>
+
+        <div class="agent-row">
+            <div class="agent-card" title="Quickly gauge a company's exposure and sentiment towards trade duties.">
+                <div class="agent-title">📈 Tariff Impact Tracker</div>
+                <div class="agent-description">Analyze earnings calls or filings to extract mentions of tariffs and their financial impact.</div>
+            </div>
+            <div class="agent-card" title="Ideal for event-driven investment strategies.">
+                <div class="agent-title">📊 Agent Special Situations</div>
+                <div class="agent-description">Analyze events like M&A, spin-offs, and activist campaigns by uploading relevant documents to generate a summary memo.</div>
+            </div>
+            <div class="placeholder-card">
+                </div>
+        </div>
+        """, unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
