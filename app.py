@@ -4196,14 +4196,18 @@ def pe_agent_app_azure():
 # 9. Agent Credit (Azure POWERED) - NEW
 # ==============================================================================
 
+# ==============================================================================
+# 10. Agent Credit (Azure POWERED) - CORRECTED
+# ==============================================================================
+
 def agent_credit_app_azure():
     """
     A secure, confidential agent for Private Credit analysis using Azure services.
     It analyzes credit agreements and financial statements to extract key terms.
     """
     # --- Local imports ---
-    import io, re, html, os
-    import markdown, pdfplumber
+    import io, re, os, html, markdown
+    import pdfplumber
     import pandas as pd
     import streamlit as st
     from azure.core.credentials import AzureKeyCredential
@@ -4263,20 +4267,48 @@ def agent_credit_app_azure():
         ),
     }
 
-    # --- HELPER FUNCTIONS (identical to Agent PE) ---
+    # --- HELPER FUNCTIONS ---
+    def parse_markdown_to_html(analysis_results: dict) -> tuple[str, str]:
+        """
+        Converts a dictionary of markdown analysis into styled HTML components.
+        Returns a tuple: (styles_string, content_html_string)
+        """
+        styles = """
+        <style>
+            .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9fafb; margin: 20px; }
+            .analysis-container h1 { font-size: 1.8em; font-weight: 700; color: #00416A; margin-top: 0; padding-bottom: 15px; border-bottom: 3px solid #00416A; }
+            .analysis-container h2 { font-size: 1.5em; font-weight: 600; color: #00416A; border-bottom: 2px solid #e6f1f6; padding-bottom: 10px; margin-top: 30px; margin-bottom: 20px; }
+            .analysis-container h3 { font-size: 1.2em; font-weight: 600; color: #1e1e1e; margin-top: 25px; margin-bottom: 10px; }
+            .analysis-container p { margin-bottom: 1em; line-height: 1.6; color: #333; }
+            .analysis-container ul, .analysis-container ol { list-style-position: outside; padding-left: 20px; margin-top: 1em; margin-bottom: 1em; }
+            .analysis-container li { margin-bottom: 0.75em; line-height: 1.6; }
+            .analysis-container table { width: 100%; border-collapse: collapse; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+            .analysis-container th, .analysis-container td { border: 1px solid #ddd; padding: 12px 15px; text-align: left; }
+            .analysis-container th { background-color: #e6f1f6; font-weight: 600; }
+            .analysis-container tr:nth-of-type(even) { background-color: #fdfdfd; }
+        </style>
+        """
+        report_title = "Credit Analysis Report"
+        full_html_body = f"<h1>{html.escape(report_title)}</h1>"
+        for title, markdown_content in analysis_results.items():
+            full_html_body += f"<h2>{html.escape(title)}</h2>"
+            html_from_md = markdown.markdown(markdown_content, extensions=['tables'])
+            processed_html = re.sub(r"<h2>(.*?)</h2>", r"<h3>\1</h3>", html_from_md)
+            full_html_body += processed_html
+            
+        content_div = f"<div class='analysis-container'>{full_html_body}</div>"
+
+        # <-- THE FIX IS HERE: Return two separate values as expected
+        return styles, content_div
+
     def parse_pdf_with_azure_di(file_bytes: bytes) -> tuple[str, list]:
         try:
             client = DocumentIntelligenceClient(
-                endpoint=di_endpoint,
-                credential=AzureKeyCredential(di_key),
+                endpoint=di_endpoint, credential=AzureKeyCredential(di_key)
             )
             stream = io.BytesIO(file_bytes)
             poller = client.begin_analyze_document(
-                model_id="prebuilt-layout",
-                analyze_request=stream,
-                content_type="application/pdf",
-                pages=None,
-                output_content_format=ContentFormat.MARKDOWN,
+                "prebuilt-layout", stream, content_type="application/pdf", output_content_format=ContentFormat.MARKDOWN
             )
             result = poller.result()
             return (result.content or ""), []
@@ -4310,65 +4342,18 @@ def agent_credit_app_azure():
     def analyze_with_azure_openai(_context: str, _prompt: str) -> str:
         try:
             client = AzureOpenAI(
-                api_key=openai_key,
-                api_version="2024-02-01",
-                azure_endpoint=openai_endpoint,
+                api_key=openai_key, api_version="2024-02-01", azure_endpoint=openai_endpoint
             )
             response = client.chat.completions.create(
                 model=openai_deployment_name,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": "You are an expert credit analyst that responds only with clean, structured markdown as instructed.",
-                    },
-                    {
-                        "role": "user",
-                        "content": f"CONTEXT DOCUMENT:\n---\n{_context}\n---\nYOUR TASK: {_prompt}",
-                    },
+                    {"role": "system", "content": "You are an expert credit analyst that responds only with clean, structured markdown as instructed."},
+                    {"role": "user", "content": f"CONTEXT DOCUMENT:\n---\n{_context}\n---\nYOUR TASK: {_prompt}"},
                 ],
             )
             return response.choices[0].message.content
         except Exception as e:
             return f"## Error\n\n**Error during Azure OpenAI analysis:** {e}"
-
-    def parse_markdown_to_html(analysis_results: dict) -> str:
-        """
-        Converts a dictionary of markdown analysis into a complete, styled HTML string for download.
-        This helper is self-contained within the Agent Credit function.
-        """
-        styles = """
-        <style>
-            .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9fafb; margin: 20px; }
-            .analysis-container h1 { font-size: 1.8em; font-weight: 700; color: #00416A; margin-top: 0; padding-bottom: 15px; border-bottom: 3px solid #00416A; }
-            .analysis-container h2 { font-size: 1.5em; font-weight: 600; color: #00416A; border-bottom: 2px solid #e6f1f6; padding-bottom: 10px; margin-top: 30px; margin-bottom: 20px; }
-            .analysis-container h3 { font-size: 1.2em; font-weight: 600; color: #1e1e1e; margin-top: 25px; margin-bottom: 10px; }
-            .analysis-container p { margin-bottom: 1em; line-height: 1.6; color: #333; }
-            .analysis-container ul, .analysis-container ol { list-style-position: outside; padding-left: 20px; margin-top: 1em; margin-bottom: 1em; }
-            .analysis-container li { margin-bottom: 0.75em; line-height: 1.6; }
-            .analysis-container table { width: 100%; border-collapse: collapse; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-            .analysis-container th, .analysis-container td { border: 1px solid #ddd; padding: 12px 15px; text-align: left; }
-            .analysis-container th { background-color: #e6f1f6; font-weight: 600; }
-            .analysis-container tr:nth-of-type(even) { background-color: #fdfdfd; }
-        </style>
-        """
-        report_title = "Credit Analysis Report"
-        full_html_body = f"<h1>{html.escape(report_title)}</h1>"
-        for title, markdown_content in analysis_results.items():
-            full_html_body += f"<h2>{html.escape(title)}</h2>"
-            html_from_md = markdown.markdown(markdown_content, extensions=['tables'])
-            processed_html = re.sub(r"<h2>(.*?)</h2>", r"<h3>\1</h3>", html_from_md)
-            full_html_body += processed_html
-            
-        content_div = f"<div class='analysis-container'>{full_html_body}</div>"
-
-        return f"""
-        <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>{html.escape(report_title)}</title>
-        <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
-        {styles}</head><body>{content_div}</body></html>
-        """
-
-
-
 
     # --- UI & WORKFLOW ---
     st.subheader("1. Upload Confidential Documents")
@@ -4379,7 +4364,7 @@ def agent_credit_app_azure():
         key="agent_credit_uploader_azure",
     )
 
-    if uploaded_files:
+    if uploaded_files and "agent_credit_text" not in st.session_state:
         if st.button("Process Documents", type="primary"):
             with st.spinner("Processing documents in secure Azure environment..."):
                 all_texts = []
@@ -4388,23 +4373,20 @@ def agent_credit_app_azure():
                     st.write(f"Processing '{doc.name}'...")
                     file_ext = os.path.splitext(doc.name)[1].lower()
                     doc_content = ""
-
                     if file_ext == ".pdf":
                         text, _ = parse_pdf_with_azure_di(file_bytes)
                         if not text:
                             st.warning(f"Azure DI failed for '{doc.name}'. Falling back to local text extraction.")
                             text = fallback_pdf_text(file_bytes)
                         doc_content = text
-                    
                     elif file_ext in [".xlsx", ".xls"]:
                         doc_content = parse_excel_to_markdown(file_bytes, doc.name)
-                    
                     if doc_content:
                         all_texts.append(f"--- START OF DOCUMENT: {doc.name} ---\n\n{doc_content}\n\n--- END OF DOCUMENT: {doc.name} ---")
-
                 if all_texts:
                     st.session_state.agent_credit_text = "\n\n".join(all_texts)
                     st.success("✅ Documents processed and ready for analysis.")
+                    st.rerun()
                 else:
                     st.error("Document parsing failed for all uploaded files.")
 
@@ -4416,7 +4398,6 @@ def agent_credit_app_azure():
             options=list(CREDIT_ANALYSIS_PROMPTS.keys()),
             default=list(CREDIT_ANALYSIS_PROMPTS.keys()),
         )
-
         if st.button("Generate Analysis", use_container_width=True):
             if not analysis_choices:
                 st.warning("Please select at least one analysis type.")
@@ -4429,35 +4410,26 @@ def agent_credit_app_azure():
                         result = analyze_with_azure_openai(full_text, prompt)
                         analysis_results[choice] = result
                 st.session_state.agent_credit_analysis_results = analysis_results
+                st.rerun()
                 
     if "agent_credit_analysis_results" in st.session_state:
         st.success("✅ Analysis complete!")
         st.markdown("---")
         st.subheader("3. Download Report")
-
-        # The helper function is defined in the next section
+        
         styles_html, content_html = parse_markdown_to_html(st.session_state.agent_credit_analysis_results)
         
         full_html_for_download = f"""
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <title>Credit Analysis Report</title>
-            <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
-            {styles_html}
-        </head>
-        <body>
-            {content_html}
-        </body>
-        </html>
+        <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Credit Analysis Report</title>
+        <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+        {styles_html}</head><body>{content_html}</body></html>
         """
         st.download_button(
             label="📥 Download Report as HTML",
             data=full_html_for_download,
             file_name="credit_analysis_report.html",
             mime="text/html",
-            use_container_width=True
+            use_container_width=True,
         )
 
 # ==============================================================================
