@@ -4193,7 +4193,275 @@ def pe_agent_app_azure():
 
 
 # ==============================================================================
-# 9. MAIN APP ROUTER (CORRECTED AND COMPLETE)
+# 9. Agent Credit (Azure POWERED) - NEW
+# ==============================================================================
+
+def agent_credit_app_azure():
+    """
+    A secure, confidential agent for Private Credit analysis using Azure services.
+    It analyzes credit agreements and financial statements to extract key terms.
+    """
+    # --- Local imports ---
+    import io, re, html, os
+    import markdown, pdfplumber
+    import pandas as pd
+    import streamlit as st
+    from azure.core.credentials import AzureKeyCredential
+    from azure.ai.documentintelligence import DocumentIntelligenceClient
+    from azure.ai.documentintelligence.models import ContentFormat
+    from openai import AzureOpenAI
+
+    st.markdown("### 🔒 Agent Credit")
+    st.markdown(
+        "Analyze confidential credit agreements, indentures, and financial statements with enterprise-grade privacy."
+    )
+
+    # --- AGENT CONFIG (Fetched from secrets for Azure) ---
+    try:
+        di_endpoint = st.secrets["azure"]["di_endpoint"]
+        di_key = st.secrets["azure"]["di_key"]
+        openai_endpoint = st.secrets["azure"]["openai_endpoint"]
+        openai_key = st.secrets["azure"]["openai_key"]
+        openai_deployment_name = st.secrets["azure"]["openai_deployment_name"]
+    except KeyError as e:
+        st.error(f"Configuration error: Missing Azure secret: {e}. Please check your secrets.toml file.")
+        st.stop()
+
+    # --- PROMPTS FOR CREDIT ANALYSIS ---
+    CREDIT_ANALYSIS_PROMPTS = {
+        "Capital Structure Summary": (
+            "You are a top-tier credit analyst. Generate a summary of the company's capital structure based on the provided context. "
+            "**CRITICAL RULE: Your entire response must be in clean MARKDOWN format.** "
+            "Use markdown headings (`## Subheading`), tables for debt instruments, and bullet points (`* Point`) for lists. "
+            "Structure your response with the following markdown headings:\n"
+            "## Debt & Equity Summary\n(Provide a high-level narrative overview of the capital structure.)\n"
+            "## Detailed Debt Tranches\n(Create a markdown table with columns: Instrument, Seniority, Principal Amount, Coupon/Rate, Maturity Date.)\n"
+            "## Key Leverage Ratios\n(List and explain any leverage ratios found in the text, such as Debt/EBITDA or Net Debt/Equity.)"
+        ),
+        "Covenant Analysis": (
+            "You are a senior credit analyst specializing in legal documentation. **CRITICAL RULE: Your entire response must be in clean MARKDOWN format.** "
+            "Analyze the provided text to identify all debt covenants. Use markdown headings (`## Subheading`) and bullet points (`* Point`). Be specific. "
+            "Structure your response with the following markdown headings:\n"
+            "## Financial Covenants\n(List all financial maintenance or incurrence tests, e.g., Maximum Leverage Ratio, Minimum Interest Coverage Ratio, with specific thresholds.)\n"
+            "## Negative Covenants\n(List all restrictions on the borrower, such as limitations on indebtedness, asset sales, restricted payments, and investments. Detail any exceptions or baskets.)\n"
+            "## Positive Covenants\n(List all affirmative obligations, such as requirements to provide financial statements, maintain insurance, and pay taxes.)"
+        ),
+        "Debt Maturity Profile": (
+            "You are a treasurer analyzing refinancing risk. **CRITICAL RULE: Your entire response must be in clean MARKDOWN format.** "
+            "Based on the context, create a debt maturity profile. Use a markdown table and provide a narrative summary. "
+            "Structure your response with the following markdown headings:\n"
+            "## Maturity Schedule\n(Create a markdown table with columns: Maturity Year, Instrument Name, Amount Due.)\n"
+            "## Refinancing Risk Assessment\n(Write a brief narrative assessing the concentration of maturities and potential refinancing challenges based on the schedule.)"
+        ),
+        "Credit Risk Factors": (
+            "You are a credit risk officer. **CRITICAL RULE: Your entire response must be in clean MARKDOWN format.** "
+            "Identify the key risks to the company from a creditor's perspective. Use markdown headings (`## Subheading`) and bullet points (`* Point`).\n"
+            "Structure your response with the following markdown headings:\n"
+            "## Business & Operational Risks\n(e.g., Industry cyclicality, competitive pressure, supply chain issues.)\n"
+            "## Financial Risks\n(e.g., High leverage, tight liquidity, exposure to interest rate fluctuations.)\n"
+            "## Structural Risks\n(e.g., Subordination, lack of guarantees, potential for value leakage to junior stakeholders.)"
+        ),
+    }
+
+    # --- HELPER FUNCTIONS (identical to Agent PE) ---
+    def parse_pdf_with_azure_di(file_bytes: bytes) -> tuple[str, list]:
+        try:
+            client = DocumentIntelligenceClient(
+                endpoint=di_endpoint,
+                credential=AzureKeyCredential(di_key),
+            )
+            stream = io.BytesIO(file_bytes)
+            poller = client.begin_analyze_document(
+                model_id="prebuilt-layout",
+                analyze_request=stream,
+                content_type="application/pdf",
+                pages=None,
+                output_content_format=ContentFormat.MARKDOWN,
+            )
+            result = poller.result()
+            return (result.content or ""), []
+        except Exception as e:
+            st.error(f"Azure AI Document Intelligence error: {e}")
+            return None, []
+
+    def fallback_pdf_text(file_bytes: bytes) -> str:
+        text = []
+        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+            for page in pdf.pages:
+                text.append(page.extract_text() or "")
+        return "\n".join(text).strip()
+
+    def parse_excel_to_markdown(file_bytes: bytes, file_name: str) -> str:
+        try:
+            xls = pd.ExcelFile(io.BytesIO(file_bytes))
+            markdown_texts = []
+            for sheet_name in xls.sheet_names:
+                df = pd.read_excel(xls, sheet_name=sheet_name)
+                df.dropna(how='all', axis=0, inplace=True)
+                df.dropna(how='all', axis=1, inplace=True)
+                if not df.empty:
+                    markdown_texts.append(f"## Data from Sheet: {sheet_name}\n\n")
+                    markdown_texts.append(df.to_markdown(index=False))
+            return "\n\n".join(markdown_texts)
+        except Exception as e:
+            st.warning(f"Could not process Excel file {file_name}: {e}")
+            return ""
+
+    def analyze_with_azure_openai(_context: str, _prompt: str) -> str:
+        try:
+            client = AzureOpenAI(
+                api_key=openai_key,
+                api_version="2024-02-01",
+                azure_endpoint=openai_endpoint,
+            )
+            response = client.chat.completions.create(
+                model=openai_deployment_name,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an expert credit analyst that responds only with clean, structured markdown as instructed.",
+                    },
+                    {
+                        "role": "user",
+                        "content": f"CONTEXT DOCUMENT:\n---\n{_context}\n---\nYOUR TASK: {_prompt}",
+                    },
+                ],
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            return f"## Error\n\n**Error during Azure OpenAI analysis:** {e}"
+
+    def parse_markdown_to_html(analysis_results: dict) -> str:
+        """
+        Converts a dictionary of markdown analysis into a complete, styled HTML string for download.
+        This helper is self-contained within the Agent Credit function.
+        """
+        styles = """
+        <style>
+            .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9fafb; margin: 20px; }
+            .analysis-container h1 { font-size: 1.8em; font-weight: 700; color: #00416A; margin-top: 0; padding-bottom: 15px; border-bottom: 3px solid #00416A; }
+            .analysis-container h2 { font-size: 1.5em; font-weight: 600; color: #00416A; border-bottom: 2px solid #e6f1f6; padding-bottom: 10px; margin-top: 30px; margin-bottom: 20px; }
+            .analysis-container h3 { font-size: 1.2em; font-weight: 600; color: #1e1e1e; margin-top: 25px; margin-bottom: 10px; }
+            .analysis-container p { margin-bottom: 1em; line-height: 1.6; color: #333; }
+            .analysis-container ul, .analysis-container ol { list-style-position: outside; padding-left: 20px; margin-top: 1em; margin-bottom: 1em; }
+            .analysis-container li { margin-bottom: 0.75em; line-height: 1.6; }
+            .analysis-container table { width: 100%; border-collapse: collapse; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+            .analysis-container th, .analysis-container td { border: 1px solid #ddd; padding: 12px 15px; text-align: left; }
+            .analysis-container th { background-color: #e6f1f6; font-weight: 600; }
+            .analysis-container tr:nth-of-type(even) { background-color: #fdfdfd; }
+        </style>
+        """
+        report_title = "Credit Analysis Report"
+        full_html_body = f"<h1>{html.escape(report_title)}</h1>"
+        for title, markdown_content in analysis_results.items():
+            full_html_body += f"<h2>{html.escape(title)}</h2>"
+            html_from_md = markdown.markdown(markdown_content, extensions=['tables'])
+            processed_html = re.sub(r"<h2>(.*?)</h2>", r"<h3>\1</h3>", html_from_md)
+            full_html_body += processed_html
+            
+        content_div = f"<div class='analysis-container'>{full_html_body}</div>"
+
+        return f"""
+        <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>{html.escape(report_title)}</title>
+        <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+        {styles}</head><body>{content_div}</body></html>
+        """
+
+
+
+
+    # --- UI & WORKFLOW ---
+    st.subheader("1. Upload Confidential Documents")
+    uploaded_files = st.file_uploader(
+        "Upload Credit Agreements, CIMs, or Financials (PDF, XLSX, XLS)",
+        type=["pdf", "xlsx", "xls"],
+        accept_multiple_files=True,
+        key="agent_credit_uploader_azure",
+    )
+
+    if uploaded_files:
+        if st.button("Process Documents", type="primary"):
+            with st.spinner("Processing documents in secure Azure environment..."):
+                all_texts = []
+                for doc in uploaded_files:
+                    file_bytes = doc.getvalue()
+                    st.write(f"Processing '{doc.name}'...")
+                    file_ext = os.path.splitext(doc.name)[1].lower()
+                    doc_content = ""
+
+                    if file_ext == ".pdf":
+                        text, _ = parse_pdf_with_azure_di(file_bytes)
+                        if not text:
+                            st.warning(f"Azure DI failed for '{doc.name}'. Falling back to local text extraction.")
+                            text = fallback_pdf_text(file_bytes)
+                        doc_content = text
+                    
+                    elif file_ext in [".xlsx", ".xls"]:
+                        doc_content = parse_excel_to_markdown(file_bytes, doc.name)
+                    
+                    if doc_content:
+                        all_texts.append(f"--- START OF DOCUMENT: {doc.name} ---\n\n{doc_content}\n\n--- END OF DOCUMENT: {doc.name} ---")
+
+                if all_texts:
+                    st.session_state.agent_credit_text = "\n\n".join(all_texts)
+                    st.success("✅ Documents processed and ready for analysis.")
+                else:
+                    st.error("Document parsing failed for all uploaded files.")
+
+    if "agent_credit_text" in st.session_state:
+        st.markdown("---")
+        st.subheader("2. Select and Generate Analysis")
+        analysis_choices = st.multiselect(
+            "Choose the analyses you want to perform:",
+            options=list(CREDIT_ANALYSIS_PROMPTS.keys()),
+            default=list(CREDIT_ANALYSIS_PROMPTS.keys()),
+        )
+
+        if st.button("Generate Analysis", use_container_width=True):
+            if not analysis_choices:
+                st.warning("Please select at least one analysis type.")
+            else:
+                full_text = st.session_state.agent_credit_text
+                analysis_results = {}
+                with st.spinner("Generating credit analysis..."):
+                    for choice in analysis_choices:
+                        prompt = CREDIT_ANALYSIS_PROMPTS[choice]
+                        result = analyze_with_azure_openai(full_text, prompt)
+                        analysis_results[choice] = result
+                st.session_state.agent_credit_analysis_results = analysis_results
+                
+    if "agent_credit_analysis_results" in st.session_state:
+        st.success("✅ Analysis complete!")
+        st.markdown("---")
+        st.subheader("3. Download Report")
+
+        # The helper function is defined in the next section
+        styles_html, content_html = parse_markdown_to_html(st.session_state.agent_credit_analysis_results)
+        
+        full_html_for_download = f"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <title>Credit Analysis Report</title>
+            <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+            {styles_html}
+        </head>
+        <body>
+            {content_html}
+        </body>
+        </html>
+        """
+        st.download_button(
+            label="📥 Download Report as HTML",
+            data=full_html_for_download,
+            file_name="credit_analysis_report.html",
+            mime="text/html",
+            use_container_width=True
+        )
+
+# ==============================================================================
+# 10. MAIN APP ROUTER (CORRECTED AND COMPLETE)
 # ==============================================================================
 def main():
     """
@@ -4228,6 +4496,7 @@ def main():
             [
                 "🏠 Welcome",
                 "Agent PE",
+                "Agent Credit", # <-- ADD THIS LINE
                 "Agent Pre-IPO",
                 "DCF Ginny",
                 "Agent Special Situations",
@@ -4253,7 +4522,10 @@ def main():
     st.markdown("---")
 
     # --- Router Logic ---
-    if app_mode == "Agent PE":
+    if app_mode == "Agent Credit": # <-- ADD THIS ENTIRE BLOCK
+    agent_credit_app_azure()
+
+    elif app_mode == "Agent PE":
         # This now calls your self-contained Azure function
         pe_agent_app_azure()
         
