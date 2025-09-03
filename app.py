@@ -4227,7 +4227,7 @@ def agent_credit_app_azure():
         st.error(f"Configuration error: Missing Azure secret: {e}. Please check your secrets.toml file.")
         st.stop()
 
-    # --- FULLY REVISED & HYPER-SPECIFIC PROMPTS ---
+    # --- UNIVERSAL "CHAIN-OF-THOUGHT" PROMPTS (NO HARDCODED SECTIONS) ---
     CREDIT_ANALYSIS_PROMPTS = {
         "Capital Structure Summary": (
             "You are a top-tier credit analyst. Generate a summary of the company's capital structure based *only* on the provided document context. "
@@ -4239,16 +4239,17 @@ def agent_credit_app_azure():
             "## Guarantees & Security\n(Describe any parent or subsidiary guarantees supporting the debt. Detail any security package if mentioned, specifying the assets pledged as collateral.)"
         ),
         "Covenant Analysis": (
-            "You are a senior credit analyst specializing in legal documentation. **CRITICAL RULE: Your entire response must be in clean MARKDOWN format and based exclusively on the provided text. Do not generalize or use 'standard' examples.** "
-            "Your task is to perform a deep analysis of all debt covenants. Search the entire document, paying close attention to sections titled 'Affirmative Covenants', 'Negative Covenants', and 'Financial Covenants'. It is essential that you also locate and use the definitions of capitalized terms (like 'Consolidated EBITDA', 'Indebtedness', 'Lien', 'Consolidated Net Assets') which are typically found in 'Article 1' or a definitions section.\n"
-            "Structure your response with the following markdown headings:\n"
-            "## Financial Covenants\n(Locate the 'Financial Covenant' section (e.g., Section 5.03). State the name of the covenant (e.g., 'Consolidated Leverage Ratio'). You MUST extract the **exact quantitative threshold** (e.g., 'shall not exceed 4.75:1.00') and any **step-down provisions** over time. Identify the testing frequency (e.g., 'as of the last day of any fiscal quarter'). Specifically look for any 'acquisition holiday' or similar provision that temporarily increases the allowed ratio after a Material Acquisition and state the increased level and duration. Summarize the definitions of the key terms used in the ratio, such as 'Consolidated EBITDA' and 'Consolidated Total Debt'.)\n"
-            "## Negative Covenants\n(For each category below from the 'Negative Covenants' section (e.g., Section 5.02), detail the core restriction and then create a sub-list of the most important specific permissions, baskets, and carve-outs. You MUST extract quantitative figures where available.)\n"
-            "* **Limitation on Liens (Negative Pledge):** Describe the prohibition on securing debt with liens. Then, list the key exceptions ('Permitted Liens'), paying special attention to the main debt basket, such as one based on a percentage of 'Consolidated Net Assets' (e.g., 15% of Consolidated Net Assets).\n"
-            "* **Limitation on Indebtedness:** Describe the restriction on incurring new debt. List the key exceptions and baskets that allow for additional debt.\n"
-            "* **Limitation on Asset Sales:** Describe restrictions on selling assets and any requirements for the use of proceeds.\n"
-            "* **Mergers and Consolidations:** Describe the conditions under which the borrower can merge with another entity.\n"
-            "## Positive (Affirmative) Covenants\n(Summarize the key affirmative obligations of the borrower from the 'Affirmative Covenants' section (e.g., Section 5.01). Focus on specific deadlines for financial reporting (e.g., 'within 90 days after the end of each fiscal year'), requirements for maintaining properties and insurance, and obligations to notify lenders of defaults.)"
+            "You are a senior credit analyst specializing in legal documentation. **CRITICAL RULE: Your entire response must be in clean MARKDOWN format and based exclusively on the provided text. You MUST NOT generalize, use 'standard' examples, or state that information is missing if it is present.** "
+            "Your task is to perform a step-by-step deep analysis of all debt covenants. You must follow these steps precisely:\n"
+            "**Step 1:** Search the document for a section titled 'Financial Covenant' or a similarly named section that defines a leverage, interest coverage, or other financial ratio test.\n"
+            "**Step 2:** From that section, extract the name of the covenant (e.g., 'Consolidated Leverage Ratio'). You MUST extract the **exact quantitative threshold** (e.g., 'not to exceed 4.75:1.00') and detail all **step-down provisions** over time. You MUST also identify and describe any special conditions, such as an 'acquisition holiday' that temporarily increases the allowed ratio.\n"
+            "**Step 3:** Locate the 'Definitions' section (typically Article 1) and summarize the definitions for the key terms used in the financial covenant, such as 'Consolidated EBITDA' and 'Consolidated Total Debt'.\n"
+            "**Step 4:** Search the document for a section titled 'Negative Covenants'. For each major negative covenant you find (e.g., Liens, Indebtedness, Asset Sales, Mergers), first state the core restriction, then create a sub-list detailing the most important specific exceptions and quantitative baskets (e.g., for Liens, find the primary basket, such as one based on a percentage of 'Consolidated Net Assets').\n"
+            "**Step 5:** Search the document for a section titled 'Affirmative Covenants' and summarize the key obligations, paying special attention to financial reporting deadlines.\n"
+            "**Step 6:** Assemble all extracted information into a final report using the following markdown headings:\n\n"
+            "## Financial Covenants\n(Report your findings from Steps 1, 2, and 3 here.)\n"
+            "## Negative Covenants\n(Report your findings from Step 4 here, using sub-headings for each category like 'Limitation on Liens'.)\n"
+            "## Positive (Affirmative) Covenants\n(Report your findings from Step 5 here.)"
         ),
         "Debt Maturity Profile": (
             "You are a treasurer analyzing refinancing risk. **CRITICAL RULE: Your entire response must be in clean MARKDOWN format and based exclusively on the provided text.** "
@@ -4262,16 +4263,12 @@ def agent_credit_app_azure():
             "Synthesize information from the entire document to identify the key risks to the company from a creditor's perspective. Your analysis must be based on the specific contractual terms and financial data provided.\n"
             "Structure your response with the following markdown headings:\n"
             "## Business & Financial Risks\n(Summarize any risks mentioned related to the business, industry, or financial condition (e.g., leverage, liquidity, interest rate exposure).)\n"
-            "## Structural & Contractual Risks\n(Analyze the credit agreement itself for risks. Based on your covenant analysis, comment on any structural weaknesses. Is the covenant package loose or tight? Are there large baskets that could allow for value leakage to other stakeholders? Is the security and guarantee package comprehensive or limited? What are the 'Events of Default' and are there any unusual grace periods?)"
+            "## Structural & Contractual Risks\n(Analyze the credit agreement itself for risks. Based on the specific covenant terms, comment on any structural weaknesses. Is the covenant package loose or tight? Are there large baskets that could allow for value leakage to other stakeholders? Is the security and guarantee package comprehensive or limited? What are the key 'Events of Default' and are there any unusual grace periods?)"
         ),
     }
 
     # --- HELPER FUNCTIONS ---
     def parse_markdown_to_html(analysis_results: dict) -> tuple[str, str]:
-        """
-        Converts a dictionary of markdown analysis into styled HTML components.
-        Returns a tuple: (styles_string, content_html_string)
-        """
         styles = """
         <style>
             .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9fafb; margin: 20px; }
@@ -4294,7 +4291,6 @@ def agent_credit_app_azure():
             html_from_md = markdown.markdown(markdown_content, extensions=['tables'])
             processed_html = re.sub(r"<h2>(.*?)</h2>", r"<h3>\1</h3>", html_from_md)
             full_html_body += processed_html
-            
         content_div = f"<div class='analysis-container'>{full_html_body}</div>"
         return styles, content_div
 
