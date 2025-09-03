@@ -4227,43 +4227,42 @@ def agent_credit_app_azure():
         st.error(f"Configuration error: Missing Azure secret: {e}. Please check your secrets.toml file.")
         st.stop()
 
-    # --- UNIVERSAL "CHAIN-OF-THOUGHT" PROMPTS (NO HARDCODED SECTIONS) ---
+    # --- RE-ENGINEERED, MORE EFFECTIVE PROMPTS ---
     CREDIT_ANALYSIS_PROMPTS = {
         "Capital Structure Summary": (
-            "You are a top-tier credit analyst. Generate a summary of the company's capital structure based *only* on the provided document context. "
-            "**CRITICAL RULE: Your entire response must be in clean MARKDOWN format and based exclusively on the provided text. Do not invent or assume information.** "
-            "Search the entire document for details on all debt instruments, including their amounts, seniority, security, and guarantees. Look for a capitalization table if one exists.\n"
+            "You are a top-tier credit analyst. Your task is to generate a comprehensive summary of the company's capital structure based *only* on the provided document context. "
+            "**CRITICAL RULE: Your entire response must be in clean MARKDOWN format and based exclusively on the provided text. Do not invent or assume information if it is not present.**\n\n"
+            "Analyze the entire document, including recitals, definitions, schedules, and main body, to identify all debt and equity-like instruments. Pay close attention to any tables or lists detailing capitalization.\n\n"
             "Structure your response with the following markdown headings:\n"
-            "## Debt & Equity Overview\n(Provide a high-level narrative of the capital structure, describing the main layers of debt and equity mentioned in the text.)\n"
-            "## Detailed Capitalization Table\n(Create a markdown table with columns: **Instrument**, **Seniority/Rank**, **Security**, **Principal Amount**, **Coupon/Rate**, and **Maturity Date**. Populate this table with every debt tranche you can specifically identify in the document. If a detail is not mentioned, state 'Not Specified'.)\n"
-            "## Guarantees & Security\n(Describe any parent or subsidiary guarantees supporting the debt. Detail any security package if mentioned, specifying the assets pledged as collateral.)"
+            "## Debt & Equity Overview\n(Provide a high-level narrative of the capital structure. Describe the main layers of debt, such as term loans, revolving credit facilities, senior notes, and any other mentioned instruments. Mention the total facility size if available.)\n\n"
+            "## Detailed Capitalization Table\n(Create a markdown table with columns: **Instrument**, **Seniority/Rank**, **Security**, **Principal Amount / Commitment**, **Coupon/Rate Details**, and **Maturity Date**. Populate this table with every debt tranche, facility, or series of notes you can specifically identify. For 'Coupon/Rate Details', capture information like 'Base Rate + Applicable Margin' or a fixed percentage. If a detail is not explicitly mentioned, state 'Not Specified'.)\n\n"
+            "## Guarantees & Security\n(Describe any parent or subsidiary guarantees supporting the debt, specifying which entities are guarantors if mentioned. Detail any security package, specifying the assets pledged as collateral. If the debt is described as unsecured, state that clearly.)"
         ),
         "Covenant Analysis": (
-            "You are a senior credit analyst specializing in legal documentation. **CRITICAL RULE: Your entire response must be in clean MARKDOWN format and based exclusively on the provided text. You MUST NOT generalize, use 'standard' examples, or state that information is missing if it is present.** "
-            "Your task is to perform a step-by-step deep analysis of all debt covenants. You must follow these steps precisely:\n"
-            "**Step 1:** Search the document for a section titled 'Financial Covenant' or a similarly named section that defines a leverage, interest coverage, or other financial ratio test.\n"
-            "**Step 2:** From that section, extract the name of the covenant (e.g., 'Consolidated Leverage Ratio'). You MUST extract the **exact quantitative threshold** (e.g., 'not to exceed 4.75:1.00') and detail all **step-down provisions** over time. You MUST also identify and describe any special conditions, such as an 'acquisition holiday' that temporarily increases the allowed ratio.\n"
-            "**Step 3:** Locate the 'Definitions' section (typically Article 1) and summarize the definitions for the key terms used in the financial covenant, such as 'Consolidated EBITDA' and 'Consolidated Total Debt'.\n"
-            "**Step 4:** Search the document for a section titled 'Negative Covenants'. For each major negative covenant you find (e.g., Liens, Indebtedness, Asset Sales, Mergers), first state the core restriction, then create a sub-list detailing the most important specific exceptions and quantitative baskets (e.g., for Liens, find the primary basket, such as one based on a percentage of 'Consolidated Net Assets').\n"
-            "**Step 5:** Search the document for a section titled 'Affirmative Covenants' and summarize the key obligations, paying special attention to financial reporting deadlines.\n"
-            "**Step 6:** Assemble all extracted information into a final report using the following markdown headings:\n\n"
-            "## Financial Covenants\n(Report your findings from Steps 1, 2, and 3 here.)\n"
-            "## Negative Covenants\n(Report your findings from Step 4 here, using sub-headings for each category like 'Limitation on Liens'.)\n"
-            "## Positive (Affirmative) Covenants\n(Report your findings from Step 5 here.)"
+            "You are a senior credit analyst specializing in legal documentation. **CRITICAL RULE: Your entire response must be in clean MARKDOWN format and based exclusively on the provided text. You MUST NOT generalize, use 'standard' examples, or state that information is missing unless you have thoroughly searched the entire document.**\n\n"
+            "Your task is to perform a deep, comprehensive analysis of all debt covenants in the provided credit agreement. Synthesize information from all relevant sections, including 'Covenants', 'Financial Covenant', 'Negative Covenants', 'Affirmative Covenants', and related 'Definitions'.\n\n"
+            "Structure your final report with the following markdown headings:\n\n"
+            "## Financial Covenants\n(First, locate the primary financial covenant (e.g., a leverage or interest coverage ratio). It is often in Article 5 or 6. State the **exact name** of the covenant (e.g., 'Consolidated Leverage Ratio'). Then, detail the **precise quantitative threshold** (e.g., 'not to exceed 4.75:1.00'). Describe all **step-down provisions** over time and any special conditions like an **'acquisition holiday'** that temporarily increases the allowed ratio. Finally, summarize the definitions for the key terms used in the covenant, such as 'Consolidated EBITDA' and 'Consolidated Total Debt', by finding them in the 'Definitions' section (usually Article 1).)\n\n"
+            "## Negative Covenants\n(Locate the 'Negative Covenants' section. For each major covenant below, describe the core restriction and then create a sub-list detailing the most important specific exceptions and **quantitative baskets**.)\n"
+            "### Limitation on Liens\n(Describe the restriction and then list key exceptions, especially the primary debt basket, often defined as a percentage of 'Consolidated Net Assets' or a fixed dollar amount.)\n"
+            "### Limitation on Indebtedness\n(Describe the restriction and list key exceptions and baskets allowing for additional debt.)\n"
+            "### Limitation on Asset Sales\n(Describe the restriction and any thresholds or conditions for permitted asset sales.)\n"
+            "### Limitation on Mergers\n(Describe the restriction and the specific conditions under which mergers are permitted, such as the borrower being the surviving entity.)\n\n"
+            "## Positive (Affirmative) Covenants\n(Summarize the key ongoing obligations of the borrower, such as 'Compliance with Laws', 'Payment of Taxes', 'Maintenance of Insurance', and especially **financial reporting deadlines** (e.g., 'within 50 days after the end of each of the first three quarters').)"
         ),
         "Debt Maturity Profile": (
-            "You are a treasurer analyzing refinancing risk. **CRITICAL RULE: Your entire response must be in clean MARKDOWN format and based exclusively on the provided text.** "
-            "Based *only* on the provided context, create a detailed debt maturity profile. Search the document for all debt instruments, their final maturity dates, and any interim scheduled principal payments (amortization).\n"
+            "You are a treasurer analyzing refinancing risk. **CRITICAL RULE: Your entire response must be in clean MARKDOWN format and based exclusively on the provided text.**\n\n"
+            "Based *only* on the provided context, create a detailed debt maturity profile. Search the entire document, especially sections like 'Repayment of Advances', for all debt instruments, their final maturity dates, and any required interim principal payments (amortization schedule).\n\n"
             "Structure your response with the following headings:\n"
-            "## Amortization & Maturity Schedule\n(Create a markdown table with columns: **Instrument Name**, **Scheduled Repayment Date**, and **Amount Due**. List all specific interim amortization payments and the final bullet payment for each debt instrument identified.)\n"
-            "## Refinancing Risk Assessment\n(Write a brief narrative assessing the company's refinancing risk based *only* on the schedule you created. Comment on any large, single-year maturity 'towers' or significant near-term maturities that could pose a challenge.)"
+            "## Amortization & Maturity Schedule\n(Create a markdown table with columns: **Instrument Name / Tranche**, **Scheduled Repayment Date**, and **Amount Due / Repayment Term**. For each debt instrument, list all specific interim amortization payments (e.g., '2.5% of the initial principal quarterly starting on date X') and the final bullet payment at maturity.)\n\n"
+            "## Refinancing Risk Assessment\n(Write a narrative assessing the company's refinancing risk based *only* on the schedule you created. Comment on any large, single-year maturity 'towers' where significant principal comes due. Note any concentration of maturities and potential challenges this might pose.)"
         ),
         "Credit Risk Factors": (
-            "You are a credit risk officer. **CRITICAL RULE: Your entire response must be in clean MARKDOWN format and based exclusively on the provided text.** "
-            "Synthesize information from the entire document to identify the key risks to the company from a creditor's perspective. Your analysis must be based on the specific contractual terms and financial data provided.\n"
+            "You are a credit risk officer preparing a report for an investment committee. **CRITICAL RULE: Your entire response must be in clean MARKDOWN format and based exclusively on the provided text.**\n\n"
+            "Synthesize information from the entire document to identify and analyze the key risks to the company from a creditor's perspective. Your analysis must be grounded in the specific contractual terms and financial data provided in the document. When discussing contractual risks, you should reference specific clause numbers if possible.\n\n"
             "Structure your response with the following markdown headings:\n"
-            "## Business & Financial Risks\n(Summarize any risks mentioned related to the business, industry, or financial condition (e.g., leverage, liquidity, interest rate exposure).)\n"
-            "## Structural & Contractual Risks\n(Analyze the credit agreement itself for risks. Based on the specific covenant terms, comment on any structural weaknesses. Is the covenant package loose or tight? Are there large baskets that could allow for value leakage to other stakeholders? Is the security and guarantee package comprehensive or limited? What are the key 'Events of Default' and are there any unusual grace periods?)"
+            "## Business & Financial Risks\n(Summarize any risks mentioned related to the business operations, industry environment, or financial condition. Look for discussions on leverage, liquidity constraints, interest rate exposure (e.g., Base Rate vs. Eurocurrency Rate advances), and foreign exchange risk if multiple currencies are involved.)\n\n"
+            "## Structural & Contractual Risks\n(Analyze the credit agreement itself for structural risks to creditors. Based on the specific covenant terms you can find, comment on any weaknesses. Is the financial covenant tight, with little headroom? Are there large baskets in the negative covenants that could allow for significant value leakage to other stakeholders (e.g., through restricted payments or additional debt)? Is the security and guarantee package comprehensive or limited? What are the key 'Events of Default' (often in Article 6) and are there any unusually long grace periods that could delay remedies?)"
         ),
     }
 
