@@ -4231,53 +4231,54 @@ def agent_credit_app_azure():
     # These prompts are designed to pull raw, verbatim text from the document.
     EXTRACTION_PROMPTS = {
         "capital_structure": "Find all sections describing the debt facilities, tranches, notes, or other instruments. Include details on amounts, arrangers, and purpose. Quote these sections verbatim.",
+        "pricing_interest": "Find all sections describing interest rates, applicable margins, LIBOR/SOFR floors, and commitment fees for each debt tranche. Quote these sections verbatim.",
         "repayment_terms": "Find the section(s) detailing the repayment of advances, maturity dates, and any scheduled amortization for all debt tranches (e.g., Section 2.06). Quote these sections verbatim.",
         "guarantees_security": "Find all clauses describing guarantees, guarantors, and security or collateral for the debt (e.g., Section 5.01(n)). If the debt is explicitly stated as unsecured, find that statement. Quote these sections verbatim.",
         "financial_covenant": "Find the specific clause detailing the main financial covenant, often a leverage ratio (e.g., 'Section 5.03. Financial Covenant. Total Debt to EBITDA.'). Quote the entire clause, including any step-downs or special conditions, verbatim.",
         "negative_covenants": "Find the entire 'Negative Covenants' section (e.g., Section 5.02) and quote it verbatim, including all sub-clauses for liens, indebtedness, mergers, and asset sales.",
         "positive_covenants": "Find the entire 'Affirmative Covenants' or 'Positive Covenants' section (e.g., Section 5.01) and quote it verbatim, including reporting requirements.",
-        "key_definitions": "From the 'Definitions' section (usually Article 1), find and quote the exact, full definitions for 'Consolidated EBITDA', 'Consolidated Total Debt', 'Consolidated Net Assets', and any other key terms relevant to the financial covenant verbatim.",
+        "key_definitions": "From the 'Definitions' section (usually Article 1), find and quote the exact, full definitions for 'Consolidated EBITDA', 'Consolidated Total Debt', and any other key terms relevant to the financial covenant verbatim.",
         "events_of_default": "Find the 'Events of Default' section (e.g., Article 6) and quote the key clauses related to payment default, cross-default, and breach of covenants verbatim."
     }
 
-    # --- STAGE 2: NARRATIVE SYNTHESIS PROMPTS ---
-    # These prompts take the extracted text and build the final, detailed narrative.
+    # --- STAGE 2: NARRATIVE SYNTHESIS PROMPTS (IMPROVED) ---
     SYNTHESIS_PROMPTS = {
+        "Key Terms Sheet": (
+            "You are a top-tier credit analyst. Using the provided context, generate a **markdown table** summarizing the key terms. Populate the table with the most critical information found in the extracted clauses. If a specific piece of information is not found, state 'Not Specified'.\n\n"
+            "| Term                  | Details                                                                                             |\n"
+            "| :-------------------- | :-------------------------------------------------------------------------------------------------- |\n"
+            "| Borrower              | (Identify the main borrowing entity)                                                                |\n"
+            "| Facilities            | (List the names and amounts of each facility, e.g., '$500M Revolver', '$1.2B Term Loan B')           |\n"
+            "| Maturity              | (List the maturity date for each facility)                                                          |\n"
+            "| Interest & Fees       | (Summarize the interest rate for each facility, e.g., 'SOFR + 3.50% with a 0.50% floor')              |\n"
+            "| Guarantees            | (Summarize the guarantee structure, e.g., 'Guaranteed by ParentCo and all material domestic subs.') |\n"
+            "| Security              | (Summarize the collateral, e.g., 'First-priority lien on substantially all assets')                  |\n"
+            "| Financial Covenants   | (State the primary financial covenant, e.g., 'Maximum First Lien Net Leverage Ratio of 4.50x')      |\n"
+        ),
         "Capital Structure Summary": (
-            "You are a top-tier credit analyst preparing a detailed memorandum. Using the following **extracted clauses**, generate a comprehensive, text-heavy summary of the company's capital structure. "
+            "You are a top-tier credit analyst preparing a detailed memorandum. Using the following **extracted clauses**, generate a comprehensive summary of the company's capital structure. "
             "**CRITICAL RULE: Your entire response must be in clean, narrative MARKDOWN format. Write in full sentences and detailed paragraphs. Do not simply list facts; explain their implications for creditors.**\n\n"
-            "Structure your response with the following markdown headings:\n"
-            "## Debt & Equity Overview\n(Provide a high-level narrative. Use the 'capital_structure' context to describe the main layers of debt, total facility size, and its purpose, for instance, 'The company entered into a $6,000,000,000 Term Loan Credit Agreement to finance the Allergan Acquisition.')\n\n"
-            "## Detailed Debt Instrument Analysis\n(Using the 'capital_structure' and 'repayment_terms' context, write a detailed paragraph for **each** debt tranche. Describe its **Principal Amount**, **Maturity Date**, and any specified **Coupon/Rate Details**.)\n\n"
+            "## Debt Overview\n(Provide a high-level narrative. Use the 'capital_structure' context to describe the main layers of debt, total facility size, and its purpose, for instance, 'The company entered into a $6,000,000,000 Term Loan Credit Agreement to finance the Allergan Acquisition.')\n\n"
+            "## Detailed Debt Instrument Analysis\n(Using the 'capital_structure', 'pricing_interest' and 'repayment_terms' context, create a **markdown table** with the following columns: 'Facility/Tranche', 'Principal Amount', 'Maturity Date', 'Interest Rate / Margin', and 'Key Amortization Terms'. Fill this table for **each** debt instrument identified.)\n\n"
             "## Guarantees & Security\n(Using the 'guarantees_security' context, write a detailed paragraph describing the support package. Specify which entities are guarantors. Detail the security package or, if the debt is explicitly stated as unsecured, state that clearly and explain what that implies for creditors.)"
         ),
         "Covenant Analysis": (
             "You are a senior credit analyst specializing in legal documentation. **CRITICAL RULE: Your response must be a text-heavy, narrative report in clean MARKDOWN format, based exclusively on the provided extracted clauses. Do not generalize; be specific and quote key terms.**\n\n"
-            "Using the provided context, perform a comprehensive analysis of the debt covenants.\n\n"
-            "Structure your report with the following markdown headings:\n\n"
-            "## Financial Covenants\n(Analyze the 'financial_covenant' and 'key_definitions' context. In a detailed paragraph, describe the primary financial covenant. State its **exact name** (e.g., 'Consolidated Leverage Ratio') and **precise quantitative threshold** (e.g., 'not to exceed 4.75:1.00'). Detail all **step-down provisions** and explain any special conditions like an **'acquisition holiday'.** Then, explain how key terms like 'Consolidated EBITDA' are defined.)\n\n"
-            "## Negative Covenants\n(Analyze the 'negative_covenants' context. For each sub-heading below, write a paragraph explaining the core prohibition and then describe the most significant exceptions and **quantitative baskets** in detail, quoting specific language where helpful.)\n"
-            "### Limitation on Liens\n(Explain the general rule against securing other debt. Detail the primary exception or 'basket,' such as one based on a percentage of 'Consolidated Net Assets' (e.g., 'the aggregate amount of all such secured Borrowed Debt would not exceed 15% of Consolidated Net Assets').)\n"
-            "### Limitation on Mergers, Consolidations, and Asset Sales\n(Describe the restrictions and the specific conditions under which these actions are permitted, quoting key permissive language from the agreement.)\n\n"
+            "## Financial Covenants\n(Analyze the 'financial_covenant' and 'key_definitions' context. First, create a **markdown table** with columns: 'Covenant Name', 'Requirement', and 'Key Step-Downs'. Then, in a detailed paragraph below the table, describe the covenant, its definition (especially 'Consolidated EBITDA'), and any special conditions like an 'acquisition holiday'.)\n\n"
+            "## Negative Covenants\n(Analyze the 'negative_covenants' context. For each sub-heading below, write a paragraph explaining the core prohibition and then describe the most significant exceptions and **quantitative baskets** in detail, quoting specific dollar amounts or percentages.)\n"
+            "### Limitation on Liens\n"
+            "### Limitation on Indebtedness\n"
+            "### Limitation on Mergers and Asset Sales\n\n"
             "## Positive (Affirmative) Covenants\n(Analyze the 'positive_covenants' context. Write a paragraph summarizing key obligations, focusing especially on the **specific financial reporting deadlines** you can find (e.g., 'within 50 days after the end of each of the first three quarters').)"
-        ),
-        "Debt Maturity Profile": (
-            "You are a treasurer analyzing refinancing risk. **CRITICAL RULE: Your response must be a text-heavy, narrative report in clean MARKDOWN format, based exclusively on the provided extracted text.**\n\n"
-            "Using the 'repayment_terms' context, create a detailed debt maturity profile.\n\n"
-            "Structure your response with the following headings:\n"
-            "## Amortization & Maturity Schedule\n(In a detailed narrative, describe the repayment schedule for **each individual tranche**. For example: 'The 5-Year Tranche Advances have a scheduled amortization, requiring repayment of 2.5% of the initial principal amount on the last Business Day of each quarter, commencing after the third anniversary..., with the remaining balance due on the fifth anniversary.')\n\n"
-            "## Refinancing Risk Assessment\n(Write a comprehensive paragraph assessing refinancing risk based on the schedule you've described. Analyze whether it consists of bullet maturities, which concentrate risk, or amortizing payments. Comment on any large, single-year maturity 'towers' that could present a challenge.)"
         ),
         "Credit Risk Factors": (
             "You are a credit risk officer writing an internal memorandum. **CRITICAL RULE: Your response must be a detailed, text-heavy narrative report in clean MARKDOWN format, based exclusively on the provided extracted clauses. You must reference specific contractual terms.**\n\n"
-            "Synthesize the provided context to identify and analyze key creditor risks.\n\n"
-            "Structure your response with the following headings:\n"
-            "## Business & Financial Risks\n(Using all available context, summarize risks related to the business, leverage, liquidity, interest rate exposure, and foreign exchange risk.)\n\n"
-            "## Structural & Contractual Risks\n(Analyze the agreement's structure using the 'negative_covenants' and 'events_of_default' context. Comment on the tightness of the covenants. For example, 'The negative pledge in Section 5.02(a) is somewhat flexible, allowing secured debt up to a significant basket of 15% of Consolidated Net Assets.' Analyze the 'Events of Default', noting any long grace periods that could delay remedies for lenders.)"
+            "## Key Strengths for Creditors\n(Identify and summarize protective features from the document, such as a strong security package, tight covenants, or mandatory prepayments from asset sales.)\n\n"
+            "## Key Risks & Mitigants\n(Analyze the agreement's structure using the 'negative_covenants' and 'events_of_default' context. Comment on potential weaknesses, such as loose covenants, large exception baskets, or long grace periods for default. For each risk, describe any mitigating factors present in the agreement.)"
         ),
     }
-
-    # --- HELPER FUNCTIONS ---
+    
+    # --- HELPER FUNCTIONS (No changes needed here) ---
     def parse_markdown_to_html(analysis_results: dict) -> tuple[str, str]:
         styles = """
         <style>
@@ -4358,7 +4359,7 @@ def agent_credit_app_azure():
         except Exception as e:
             return f"## Error\n\n**Error during Azure OpenAI analysis:** {e}"
 
-    # --- UI & WORKFLOW ---
+    # --- UI & WORKFLOW (No changes needed here) ---
     st.subheader("1. Upload Confidential Documents")
     uploaded_files = st.file_uploader(
         "Upload Credit Agreements, CIMs, or Financials (PDF, XLSX, XLS)",
@@ -4396,10 +4397,11 @@ def agent_credit_app_azure():
     if "agent_credit_text" in st.session_state:
         st.markdown("---")
         st.subheader("2. Select and Generate Analysis")
+        # Ensure the new "Key Terms Sheet" is the default selection
         analysis_choices = st.multiselect(
             "Choose the analyses you want to perform:",
             options=list(SYNTHESIS_PROMPTS.keys()),
-            default=list(SYNTHESIS_PROMPTS.keys()),
+            default=["Key Terms Sheet", "Capital Structure Summary", "Covenant Analysis", "Credit Risk Factors"],
         )
         if st.button("Generate Analysis", use_container_width=True):
             if not analysis_choices:
