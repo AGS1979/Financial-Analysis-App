@@ -4241,6 +4241,97 @@ def agent_credit_app_azure():
         "events_of_default": "Find the 'Events of Default' section (e.g., Article 6) and quote the key clauses related to payment default, cross-default, and breach of covenants verbatim."
     }
 
+
+    # --- REQUIRED CONTEXT FOR EACH ANALYSIS ---
+    REQUIRED_CONTEXT = {
+        "Capital Structure Summary": ["capital_structure", "repayment_terms", "guarantees_security"],
+        "Covenant Analysis": ["financial_covenant", "negative_covenants", "positive_covenants", "key_definitions", "events_of_default"],
+        "Debt Maturity Profile": ["repayment_terms", "capital_structure"],
+        "Credit Risk Factors": ["financial_covenant", "negative_covenants", "events_of_default", "capital_structure"]
+    }
+
+    # --- REQUEST JSON STRUCTURE FOR CONSISTENT OUTPUT ---
+    JSON_SCHEMAS = {
+        "capital_structure": {
+            "instruction": (
+                "From the supplied excerpt(s), extract a structured list of instruments.\n"
+                "Return JSON with fields: instruments:[{name, type, currency, principal, rate_or_margin, benchmark, "
+                "maturity_date, amortization, purpose, arrangers, doc_section, page, raw_quote}]. "
+                "Numbers as plain strings if unknown. Use 'page' and 'doc_section' if visible from the excerpt."
+            )
+        },
+        "repayment_terms": {
+            "instruction": (
+                "Extract repayment schedules for each tranche. Return JSON: schedules:[{instrument_name, "
+                "amortization_pattern, periodic_percent, frequency, start_date, maturity_date, bullet, doc_section, page, raw_quote}]"
+            )
+        },
+        "guarantees_security": {
+            "instruction": (
+                "List guarantors, collateral/security, and whether unsecured. "
+                "Return JSON: security:{unsecured:boolean, collateral_description, guarantors:[...], doc_section, page, raw_quote}"
+            )
+        },
+        "financial_covenant": {
+            "instruction": (
+                "Extract primary financial covenant. Return JSON: covenant:{name, threshold, comparator, "
+                "stepdowns:[{effective_from, threshold}], holidays:[{type, duration}], test_frequency, "
+                "definitions_used:[...], doc_section, page, raw_quote}"
+            )
+        },
+        "negative_covenants": {
+            "instruction": (
+                "Extract key negative covenants and primary baskets with sizes. "
+                "Return JSON: negatives:[{topic, rule, key_baskets:[{name, size_basis, limit}], doc_section, page, raw_quote}]"
+            )
+        },
+        "positive_covenants": {
+            "instruction": (
+                "Extract reporting deadlines and other duties. "
+                "Return JSON: positives:[{topic, requirement, deadline, doc_section, page, raw_quote}]"
+            )
+        },
+        "key_definitions": {
+            "instruction": (
+                "Return JSON: definitions:[{term, definition_text, doc_section, page}]. "
+                "Focus on EBITDA, Total Debt, Net Assets and any covenant-linked definitions."
+            )
+        },
+        "events_of_default": {
+            "instruction": (
+                "Extract payment default, cross-default, covenant breach, grace periods. "
+                "Return JSON: eods:[{topic, trigger, grace_period, threshold, remedies, doc_section, page, raw_quote}]"
+            )
+        }
+    }
+
+
+    SECTION_PATTERNS = [
+    # (label, regex pattern capturing a whole section block)
+    ("negative_covenants", r"(ARTICLE\s+V.*?NEGATIVE COVENANTS.*?)(?=ARTICLE|$)"),
+    ("positive_covenants", r"(AFFIRMATIVE|POSITIVE COVENANTS.*?)(?=ARTICLE|$)"),
+    ("financial_covenant", r"(Section\s+5\.03.*?Financial Covenant.*?)(?=Section\s+5\.0|ARTICLE|$)"),
+    ("repayment_terms",   r"(Section\s+2\.\d+.*?(Repayment|Maturity|Amortization).*?)(?=Section\s+2\.\d+|ARTICLE|$)"),
+    ("guarantees_security", r"(Section\s+\d\.\d+.*? (?:Guarantees|Security|Collateral).*?)(?=Section\s+\d\.\d+|ARTICLE|$)"),
+    ("key_definitions",   r"(ARTICLE\s+I.*?DEFINITIONS.*?)(?=ARTICLE|$)"),
+    ("events_of_default", r"(ARTICLE\s+VI.*?EVENTS OF DEFAULT.*?)(?=ARTICLE|$)"),
+    ("capital_structure", r"(DESCRIPTION OF NOTES|CAPITALIZATION|CREDIT AGREEMENT.*?)(?=ARTICLE|$)")
+    ]
+
+    def locate_sections(md_text: str) -> dict[str, list[str]]:
+        """
+        Use regex to carve out likely sections from the DI markdown to reduce LLM search space.
+        Returns dict: key -> [candidate_snippets]
+        """
+        found = {k: [] for (k, _) in SECTION_PATTERNS}
+        for key, pat in SECTION_PATTERNS:
+            for m in re.finditer(pat, md_text, flags=re.IGNORECASE|re.DOTALL):
+                snippet = m.group(0).strip()
+                if len(snippet) > 100:  # ignore tiny matches
+                    found[key].append(snippet[:20000])  # cap to keep tokens in check
+        return found
+
+
     # --- STAGE 2: NARRATIVE SYNTHESIS PROMPTS (IMPROVED) ---
     SYNTHESIS_PROMPTS = {
         "Key Terms Sheet": (
@@ -4306,19 +4397,40 @@ def agent_credit_app_azure():
         return styles, content_div
 
     def parse_pdf_with_azure_di(file_bytes: bytes) -> tuple[str, list]:
+        """
+        Returns (markdown_text, metadata_list). For large PDFs, analyze in page ranges and concatenate.
+        """
         try:
-            client = DocumentIntelligenceClient(
-                endpoint=di_endpoint, credential=AzureKeyCredential(di_key)
-            )
-            stream = io.BytesIO(file_bytes)
-            poller = client.begin_analyze_document(
-                "prebuilt-layout", stream, content_type="application/pdf", output_content_format=ContentFormat.MARKDOWN
-            )
-            result = poller.result()
-            return (result.content or ""), []
+            # Count pages up front
+            with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+                n_pages = len(pdf.pages)
+
+            client = DocumentIntelligenceClient(endpoint=di_endpoint, credential=AzureKeyCredential(di_key))
+            md_parts = []
+            page_ranges = []
+            step = 30  # analyze in batches of 30 pages (tune as needed)
+
+            for start in range(1, n_pages + 1, step):
+                end = min(start + step - 1, n_pages)
+                page_spec = f"{start}-{end}"  # Azure DI supports page ranges like "1-30"
+                stream = io.BytesIO(file_bytes)
+                poller = client.begin_analyze_document(
+                    "prebuilt-layout",
+                    stream,
+                    content_type="application/pdf",
+                    pages=page_spec,
+                    output_content_format=ContentFormat.MARKDOWN,
+                )
+                result = poller.result()
+                md_parts.append(result.content or "")
+                page_ranges.append(page_spec)
+
+            return ("\n\n".join(md_parts), page_ranges)
+
         except Exception as e:
             st.error(f"Azure AI Document Intelligence error: {e}")
             return None, []
+
 
     def fallback_pdf_text(file_bytes: bytes) -> str:
         text = []
@@ -4343,21 +4455,41 @@ def agent_credit_app_azure():
             st.warning(f"Could not process Excel file {file_name}: {e}")
             return ""
 
-    def analyze_with_azure_openai(_context: str, _prompt: str) -> str:
+    import json
+
+    def analyze_with_azure_openai(_context: str, _prompt: str, as_json: bool = False):
         try:
-            client = AzureOpenAI(
-                api_key=openai_key, api_version="2024-02-01", azure_endpoint=openai_endpoint
-            )
+            client = AzureOpenAI(api_key=openai_key, api_version="2024-02-01", azure_endpoint=openai_endpoint)
+
+            kwargs = {}
+            if as_json:
+                # JSON mode if your Azure model supports it; otherwise we’ll parse manually
+                kwargs["response_format"] = {"type": "json_object"}
+
             response = client.chat.completions.create(
                 model=openai_deployment_name,
                 messages=[
-                    {"role": "system", "content": "You are an expert credit analyst that responds only with clean, structured markdown as instructed, based exclusively on the context provided."},
-                    {"role": "user", "content": f"CONTEXT DOCUMENT:\n---\n{_context}\n---\nYOUR TASK: {_prompt}"},
+                    {"role": "system",
+                     "content": "You are a precise credit-document extractor. If JSON is requested, return ONLY strict JSON."},
+                    {"role": "user",
+                     "content": f"CONTEXT EXCERPT:\n---\n{_context}\n---\nTASK:\n{_prompt}"}
                 ],
+                **kwargs
             )
-            return response.choices[0].message.content
+            txt = response.choices[0].message.content
+            if as_json:
+                try:
+                    return json.loads(txt)
+                except Exception:
+                    # fallback: try to strip code fences and parse
+                    txt = re.sub(r"^```json|```$", "", txt.strip(), flags=re.MULTILINE)
+                    return json.loads(txt)
+            return txt
         except Exception as e:
+            if as_json:
+                return {"error": str(e)}
             return f"## Error\n\n**Error during Azure OpenAI analysis:** {e}"
+
 
     # --- UI & WORKFLOW (No changes needed here) ---
     st.subheader("1. Upload Confidential Documents")
@@ -4412,29 +4544,80 @@ def agent_credit_app_azure():
                 # --- STAGE 1: FOCUSED EXTRACTION ---
                 extracted_context = {}
                 with st.spinner("Stage 1/2: Extracting key clauses from documents..."):
-                    for key, prompt in EXTRACTION_PROMPTS.items():
-                        # We only extract what's needed for the chosen analyses
-                        if any(key in SYNTHESIS_PROMPTS[choice] for choice in analysis_choices):
-                             extracted_context[key] = analyze_with_azure_openai(full_text, prompt)
+                    # Only run keys required for chosen analyses
+                    needed_keys = set()
+                    for choice in analysis_choices:
+                        needed_keys.update(REQUIRED_CONTEXT.get(choice, []))
+
+                    # Build a candidate-snippet index once
+                    candidates_by_key = locate_sections(full_text)
+
+                    for key in needed_keys:
+                        # Prefer deterministic snippets; if none, fall back to the whole text (last resort)
+                        candidate_snips = candidates_by_key.get(key, []) or [full_text]
+
+                        # Ask the model for structured JSON over TOP-2 snippets to keep tokens tight
+                        aggregated = []
+                        for snip in candidate_snips[:2]:
+                            schema_prompt = JSON_SCHEMAS[key]["instruction"]
+                            res = analyze_with_azure_openai(snip, schema_prompt, as_json=True)
+                            if isinstance(res, dict) and "error" not in res:
+                                aggregated.append(res)
+
+                        extracted_context[key] = aggregated  # list of JSON dicts (may be empty)
 
                 # --- STAGE 2: NARRATIVE SYNTHESIS ---
                 analysis_results = {}
                 with st.spinner("Stage 2/2: Synthesizing extracted data into narrative report..."):
                     for choice in analysis_choices:
-                        synthesis_prompt = SYNTHESIS_PROMPTS[choice]
-                        
-                        # Build a combined context from the relevant extracted snippets
-                        combined_context_for_synthesis = f"Please generate the '{choice}' section based on the following extracted clauses:\n\n"
-                        for key, text in extracted_context.items():
-                             if key in synthesis_prompt:
-                                combined_context_for_synthesis += f"--- START OF EXTRACTED CLAUSE: {key} ---\n{text}\n--- END OF EXTRACTED CLAUSE: {key} ---\n\n"
-                        
-                        result = analyze_with_azure_openai(combined_context_for_synthesis, synthesis_prompt)
-                        analysis_results[choice] = result
-                        
+                        req_keys = REQUIRED_CONTEXT.get(choice, [])
+                        compact_context = {k: extracted_context.get(k, []) for k in req_keys}
+
+                        # Let the model write the narrative but it now sees structured facts, not a swamp of text
+                        synthesis_prompt = (
+                            SYNTHESIS_PROMPTS[choice]
+                            + "\n\nUse ONLY the following structured facts (JSON). If a field is missing, say 'not disclosed'. "
+                              "Cite doc_section/page when present.\n\nFACTS:\n"
+                            + json.dumps(compact_context, ensure_ascii=False)[:120000]   # cap for safety
+                        )
+
+                        result_md = analyze_with_azure_openai("Structured facts provided above.", synthesis_prompt, as_json=False)
+                        analysis_results[choice] = result_md
+
                 st.session_state.agent_credit_analysis_results = analysis_results
                 st.rerun()
-                
+
+                # Optional: build & show maturity and instrument tables for clarity
+                def to_df(list_of_json_dicts, key):
+                    rows = []
+                    for block in list_of_json_dicts:
+                        arr = block.get(key, [])
+                        if isinstance(arr, list):
+                            rows.extend(arr)
+                    return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+                st.markdown("### Quick Tables (auto-extracted)")
+
+                colA, colB = st.columns(2)
+                with colA:
+                    df_instr = to_df(extracted_context.get("capital_structure", []), "instruments")
+                    if not df_instr.empty:
+                        st.caption("Debt Instruments (parsed)")
+                        st.dataframe(df_instr)
+
+                with colB:
+                    df_sched = to_df(extracted_context.get("repayment_terms", []), "schedules")
+                    if not df_sched.empty:
+                        st.caption("Repayment / Maturity Schedule (parsed)")
+                        st.dataframe(df_sched)
+
+                # Simple coverage checklist
+                covered = sorted(list({k for k, v in extracted_context.items() if v}))
+                missing = sorted(list(set().union(*REQUIRED_CONTEXT.values()) - set(covered)))
+                st.markdown(f"**Coverage:** ✅ {', '.join(covered) if covered else 'None'}")
+                if missing:
+                    st.markdown(f"**Missing/Not found:** ⚠️ {', '.join(missing)}")
+
     if "agent_credit_analysis_results" in st.session_state:
         st.success("✅ Analysis complete!")
         st.markdown("---")
