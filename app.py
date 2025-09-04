@@ -4227,6 +4227,146 @@ def agent_credit_app_azure():
         st.error(f"Configuration error: Missing Azure secret: {e}. Please check your secrets.toml file.")
         st.stop()
 
+
+    # --- UNIVERSAL SECTION DISCOVERY (agnostic to numbering) ---
+
+    # Headings/synonyms for major topics
+    TOPIC_SYNONYMS = {
+        "negative_covenants": {
+            "headings": [
+                "negative covenants", "restrictive covenants", "certain covenants",
+                "limitations", "restrictions"
+            ],
+            "keywords": [
+                "limitation on liens", "liens", "lien", "security interest", "encumbrance",
+                "mortgage", "pledge", "charge",
+                "indebtedness", "debt incurrence", "borrowed money",
+                "restricted payments", "dividends", "distributions", "stock buybacks",
+                "asset sales", "dispositions", "sale-leaseback", "sale and leaseback",
+                "affiliate transactions", "transactions with affiliates",
+                "mergers", "consolidations", "amalgamations"
+            ]
+        },
+        "positive_covenants": {
+            "headings": [
+                "affirmative covenants", "positive covenants", "affirmative undertakings",
+                "information and reporting", "reporting covenants"
+            ],
+            "keywords": ["financial statements", "reporting", "certificate", "compliance certificate"]
+        },
+        "financial_covenant": {
+            "headings": [
+                "financial covenant", "maintenance covenant", "leverage ratio",
+                "interest coverage", "secured leverage", "first lien leverage", "net leverage"
+            ],
+            "keywords": ["covenant", "ratio", "not to exceed", "at least", "step-down", "holiday"]
+        },
+        "repayment_terms": {
+            "headings": ["repayment", "amortization", "maturity"],
+            "keywords": ["scheduled amortization", "repay", "maturity date", "principal payment"]
+        },
+        "pricing_interest": {
+            "headings": ["interest", "interest rate determination", "applicable margin", "fees"],
+            "keywords": [
+                "sofr", "libor", "base rate", "benchmark", "margin", "floor",
+                "commitment fee", "utilization fee", "pricing grid"
+            ]
+        },
+        "guarantees_security": {
+            "headings": ["guarantee", "guaranty", "guarantors", "security", "collateral"],
+            "keywords": ["secured", "unsecured", "lien priority", "perfection", "pledge agreement"]
+        },
+        "key_definitions": {
+            "headings": ["definitions", "defined terms", "certain definitions", "interpretation"],
+            "keywords": ["means", "shall mean", "as defined"]
+        },
+        "events_of_default": {
+            "headings": ["events of default", "event of default", "defaults"],
+            "keywords": ["acceleration", "grace period", "cross default", "payment default"]
+        },
+        "capital_structure": {
+            "headings": ["capitalization", "credit agreement", "description of notes", "description of debt"],
+            "keywords": ["term loan", "revolving", "bridge", "senior notes", "issuance", "facility"]
+        },
+    }
+
+    # Normalize text to reduce hyphenation/line-break noise
+    def _normalize_text(t: str) -> str:
+        t = re.sub(r'(\w+)-\n(\w+)', r'\1\2', t)       # undo broken words across lines
+        t = re.sub(r'[ \t]+\n', '\n', t)               # strip trailing spaces before newlines
+        t = re.sub(r'\n{3,}', '\n\n', t)               # collapse tall gaps
+        return t
+
+    # Build a heading index from Azure DI markdown (#, ##, ###, etc.)
+    def build_heading_index(md_text: str):
+        lines = md_text.splitlines()
+        idx = []
+        pos = 0
+        for i, line in enumerate(lines):
+            # track char offsets so we can slice
+            line_start = pos
+            pos += len(line) + 1
+            m = re.match(r'^(#{1,6})\s+(.+)', line.strip())
+            if m:
+                level = len(m.group(1))
+                title = m.group(2).strip().lower()
+                idx.append({"level": level, "title": title, "char_start": line_start})
+        # add section ends
+        for i in range(len(idx)):
+            start = idx[i]["char_start"]
+            end = idx[i+1]["char_start"] if i+1 < len(idx) else len(md_text)
+            idx[i]["char_end"] = end
+        return idx
+
+    def _match_score(s: str, needles: list[str]) -> int:
+        s = s.lower()
+        return sum(1 for n in needles if n in s)
+
+    # Slice candidate blocks by heading similarity
+    def candidates_by_headings(md_text: str, topic_key: str, topn: int = 3) -> list[str]:
+        idx = build_heading_index(md_text)
+        syn = TOPIC_SYNONYMS.get(topic_key, {})
+        titles = [(h, _match_score(h["title"], syn.get("headings", []))) for h in idx]
+        titles = [t for t in titles if t[1] > 0]
+        # Prefer closest levels (##/###) and higher scores
+        titles.sort(key=lambda x: (-x[1], x[0]["level"]))
+        blocks = []
+        for h, _score in titles[:topn]:
+            blocks.append(md_text[h["char_start"]:h["char_end"]][:20000])
+        return blocks
+
+    # If headings fail, pull keyword windows
+    def candidates_by_keywords(md_text: str, topic_key: str, window_chars: int = 2200, topn: int = 3) -> list[str]:
+        syn = TOPIC_SYNONYMS.get(topic_key, {})
+        keys = syn.get("keywords", [])
+        text_low = md_text.lower()
+        hits = []
+        for k in keys:
+            for m in re.finditer(re.escape(k.lower()), text_low):
+                start = max(0, m.start() - window_chars//2)
+                end   = min(len(md_text), m.start() + window_chars//2)
+                hits.append((start, end))
+        # de-duplicate overlaps and keep top occurrences
+        hits = sorted(hits)
+        merged, last = [], None
+        for s, e in hits:
+            if not last or s > last[1] + 200:
+                merged.append([s, e])
+                last = merged[-1]
+            else:
+                last[1] = max(last[1], e)
+        return [md_text[s:e][:20000] for s, e in merged[:topn]]
+
+    def smart_candidates_for(topic_key: str, md_text: str) -> list[str]:
+        md_text = _normalize_text(md_text)
+        blocks = candidates_by_headings(md_text, topic_key)
+        if not blocks:
+            blocks = candidates_by_keywords(md_text, topic_key)
+        # still nothing? as a last resort, return the first N chars
+        return blocks or [md_text[:20000]]
+
+
+
     # --- STAGE 1: FOCUSED EXTRACTION PROMPTS ---
     # These prompts are designed to pull raw, verbatim text from the document.
     EXTRACTION_PROMPTS = {
@@ -4281,8 +4421,24 @@ def agent_credit_app_azure():
         },
         "negative_covenants": {
             "instruction": (
-                "Extract key negative covenants and primary baskets with sizes. "
-                "Return JSON: negatives:[{topic, rule, key_baskets:[{name, size_basis, limit}], doc_section, page, raw_quote}]"
+                "Extract key negative covenants and their primary quantified exceptions/baskets.\n"
+                "Return JSON: negatives:[{\n"
+                "  topic,  // e.g., 'Liens', 'Indebtedness', 'Restricted Payments', 'Asset Sales', 'Affiliate Transactions', 'Mergers'\n"
+                "  rule,   // the main prohibition summarized\n"
+                "  key_baskets:[{\n"
+                "     name, // e.g., 'General Liens Basket', 'Permitted Debt', 'RP General Basket'\n"
+                "     limit_text, // the verbatim amount clause if possible\n"
+                "     limit_value, // numeric value if clear e.g. 15 or 25000000\n"
+                "     limit_units, // '%', 'USD', 'x (ratio)', 'times', 'months', etc.\n"
+                "     basis, // e.g., 'Consolidated Net Assets', 'Total Assets', 'CNTA', 'EBITDA'\n"
+                "     greater_of: boolean,\n"
+                "     components: [ // if 'greater of' appears, list the two components (e.g., '$25,000,000', '2.0% of CNTA')\n"
+                "       {value, units, basis}\n"
+                "     ]\n"
+                "  }],\n"
+                "  doc_section, heading, raw_quote\n"
+                "}]\n"
+                "If uncertain, set fields to null. Do not invent data."
             )
         },
         "positive_covenants": {
@@ -4301,6 +4457,16 @@ def agent_credit_app_azure():
             "instruction": (
                 "Extract payment default, cross-default, covenant breach, grace periods. "
                 "Return JSON: eods:[{topic, trigger, grace_period, threshold, remedies, doc_section, page, raw_quote}]"
+            )
+        },
+        "pricing_interest": {
+            "instruction": (
+                "Extract interest and fee terms by tranche.\n"
+                "Return JSON: pricing:[{\n"
+                "  instrument_name, benchmark, margin, floor, stepups,\n"
+                "  commitment_fee, utilization_fee, rate_grid_basis, heading, raw_quote\n"
+                "}]\n"
+                "If values are in a grid/table, summarize in plain fields; unknown as null."
             )
         }
     }
@@ -4354,9 +4520,12 @@ def agent_credit_app_azure():
             "## Guarantees & Security\n(Using the 'guarantees_security' context, write a detailed paragraph describing the support package. Specify which entities are guarantors. Detail the security package or, if the debt is explicitly stated as unsecured, state that clearly and explain what that implies for creditors.)"
         ),
         "Covenant Analysis": (
-            "You are a senior credit analyst specializing in legal documentation. **CRITICAL RULE: Your response must be a text-heavy, narrative report in clean MARKDOWN format, based exclusively on the provided extracted clauses. Do not generalize; be specific and quote key terms.**\n\n"
+            "You are a senior credit analyst. RULES: "
+            "(1) Markdown only; (2) ≥600 words; (3) include at least 3 blockquotes of verbatim language; "
+            "(4) when possible, attribute quotes using the 'heading' field from the facts; "
+            "(5) be precise and quantitative, avoid generalities.\n\n"
             "## Financial Covenants\n(Analyze the 'financial_covenant' and 'key_definitions' context. First, create a **markdown table** with columns: 'Covenant Name', 'Requirement', and 'Key Step-Downs'. Then, in a detailed paragraph below the table, describe the covenant, its definition (especially 'Consolidated EBITDA'), and any special conditions like an 'acquisition holiday'.)\n\n"
-            "## Negative Covenants\n(Analyze the 'negative_covenants' context. For each sub-heading below, write a paragraph explaining the core prohibition and then describe the most significant exceptions and **quantitative baskets** in detail, quoting specific dollar amounts or percentages.)\n"
+            "## Negative Covenants\n(Analyze the 'negative_covenants' context. For each sub-heading below, write a paragraph explaining the core prohibition and then describe the most significant exceptions and **quantitative baskets** in detail, quoting specific dollar amounts or percentages. For each topic present in facts.negatives, write: core rule, list of key baskets with values and bases, and insert a short blockquote of the operative sentence. If 'greater_of' is true, spell out both components.)\n"
             "### Limitation on Liens\n"
             "### Limitation on Indebtedness\n"
             "### Limitation on Mergers and Asset Sales\n\n"
@@ -4549,22 +4718,25 @@ def agent_credit_app_azure():
                     for choice in analysis_choices:
                         needed_keys.update(REQUIRED_CONTEXT.get(choice, []))
 
-                    # Build a candidate-snippet index once
-                    candidates_by_key = locate_sections(full_text)
-
+                    # Build candidates once per key (agnostic to numbering)
                     for key in needed_keys:
-                        # Prefer deterministic snippets; if none, fall back to the whole text (last resort)
-                        candidate_snips = candidates_by_key.get(key, []) or [full_text]
+                        candidate_snips = smart_candidates_for(key, full_text)
 
-                        # Ask the model for structured JSON over TOP-2 snippets to keep tokens tight
                         aggregated = []
-                        for snip in candidate_snips[:2]:
+                        for snip in candidate_snips[:3]:
                             schema_prompt = JSON_SCHEMAS[key]["instruction"]
                             res = analyze_with_azure_openai(snip, schema_prompt, as_json=True)
                             if isinstance(res, dict) and "error" not in res:
                                 aggregated.append(res)
 
-                        extracted_context[key] = aggregated  # list of JSON dicts (may be empty)
+                        # Self-heal: if no items parsed for a key, broaden with keyword windows of different size
+                        if not aggregated:
+                            for snip in candidates_by_keywords(full_text, key, window_chars=3500, topn=2):
+                                res = analyze_with_azure_openai(snip, JSON_SCHEMAS[key]["instruction"], as_json=True)
+                                if isinstance(res, dict) and "error" not in res:
+                                    aggregated.append(res)
+
+                        extracted_context[key] = aggregated  # list of JSON dicts
 
                 # --- STAGE 2: NARRATIVE SYNTHESIS ---
                 analysis_results = {}
@@ -4597,26 +4769,28 @@ def agent_credit_app_azure():
                     return pd.DataFrame(rows) if rows else pd.DataFrame()
 
                 st.markdown("### Quick Tables (auto-extracted)")
-
                 colA, colB = st.columns(2)
                 with colA:
-                    df_instr = to_df(extracted_context.get("capital_structure", []), "instruments")
-                    if not df_instr.empty:
-                        st.caption("Debt Instruments (parsed)")
-                        st.dataframe(df_instr)
+                    st.caption("Debt Instruments / Pricing")
+                    df_p = to_df(extracted_context.get("pricing_interest", []), "pricing")
+                    df_i = to_df(extracted_context.get("capital_structure", []), "instruments")
+                    if not df_p.empty: st.dataframe(df_p)
+                    if not df_i.empty: st.dataframe(df_i)
 
                 with colB:
-                    df_sched = to_df(extracted_context.get("repayment_terms", []), "schedules")
-                    if not df_sched.empty:
-                        st.caption("Repayment / Maturity Schedule (parsed)")
-                        st.dataframe(df_sched)
+                    st.caption("Repayment Schedules / Negative Baskets")
+                    df_s = to_df(extracted_context.get("repayment_terms", []), "schedules")
+                    df_n = to_df(extracted_context.get("negative_covenants", []), "negatives")
+                    if not df_s.empty: st.dataframe(df_s)
+                    if not df_n.empty: st.dataframe(df_n)
 
-                # Simple coverage checklist
-                covered = sorted(list({k for k, v in extracted_context.items() if v}))
-                missing = sorted(list(set().union(*REQUIRED_CONTEXT.values()) - set(covered)))
+                covered = sorted([k for k, v in extracted_context.items() if v])
+                needed  = sorted(list(needed_keys))
+                missing = [k for k in needed if k not in covered]
                 st.markdown(f"**Coverage:** ✅ {', '.join(covered) if covered else 'None'}")
                 if missing:
                     st.markdown(f"**Missing/Not found:** ⚠️ {', '.join(missing)}")
+
 
     if "agent_credit_analysis_results" in st.session_state:
         st.success("✅ Analysis complete!")
