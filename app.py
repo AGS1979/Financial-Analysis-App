@@ -5335,21 +5335,17 @@ def agent_ideagen_app():
                 
         return pd.DataFrame(enriched_rows)        
 
-    def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str) -> str:
-        """ 
-        (Stage 5) Assembles all data into the final Markdown Dossier with corrected formatting.
+    def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str) -> dict:
         """
-        # Import the necessary library to fix indentation
+        (Stage 5) Assembles all data into a structured DICTIONARY for proper HTML rendering.
+        """
         import textwrap
-
         st.info(f"**(LIVE) Stage 5: Synthesizing Dossier for {quant_data['companyName']}...**")
 
-        # Helper function to safely get and format nested dictionary values
+        # Helper to format AI content (joining lists into paragraphs)
         def format_ai_content(content):
-            if isinstance(content, list):
-                return "\n\n".join(str(item) for item in content)
-            elif isinstance(content, str):
-                return content
+            if isinstance(content, list): return "\n\n".join(str(item) for item in content)
+            if isinstance(content, str): return content
             return "Analysis not available or in an unexpected format."
 
         def safe_get_and_format(data, keys):
@@ -5362,54 +5358,37 @@ def agent_ideagen_app():
             return format_ai_content(temp)
 
         theme_analysis_score = qual_analysis.get('theme_analysis', {}).get('score', 'N/A')
-        theme_analysis_justification = safe_get_and_format(qual_analysis, ['theme_analysis', 'justification'])
-        moat_analysis_description = safe_get_and_format(qual_analysis, ['moat_analysis', 'description'])
-        risk_analysis_summary = safe_get_and_format(qual_analysis, ['risk_analysis'])
-
-        # The f-string is now wrapped in textwrap.dedent()
-        dossier = f"""
-        # Investment Idea Dossier: {quant_data.get('companyName', 'N/A')} ({quant_data.get('ticker', 'N/A')})
-
-        **Theme:** {theme}
-        **Generated:** {pd.to_datetime('today').strftime('%Y-%m-%d')} | **AI Alignment Score:** {theme_analysis_score}/10
-
-        ## Executive Summary
-        {quant_data.get('companyName', 'N/A')} appears to be a potential candidate for the '{theme}' theme.
-        The company shows robust quantitative metrics. Qualitative analysis confirms its alignment with the theme and highlights its competitive position. Key risks should be reviewed.
-
-        ---
-        ## Quantitative Snapshot
+        
+        # --- CHANGE 1: Create the quantitative table as a markdown string here ---
+        quant_table_md = textwrap.dedent(f"""
         | Metric              | Value                  |
         |---------------------|------------------------|
         | Market Cap          | ${quant_data.get('marketCapUSD', 0) / 1e6:,.0f}M |
         | Revenue Growth (3Y) | {quant_data.get('revenueGrowth', 0):.1%}      |
         | Gross Margin        | {quant_data.get('grossMargin', 0):.1%}          |
-        | ROIC                | {quant_data.get('roic', 'N/A')}                  |
+        | ROIC                | {quant_data.get('roic', 0):.2f if isinstance(quant_data.get('roic'), (int, float)) else 'N/A'} |
+        """)
 
-        ---
-        ## Qualitative Deep Dive
-
-        ### Thematic Alignment & Justification
-        {theme_analysis_justification}
-
-        ### Competitive Moat & Pricing Power
-        {moat_analysis_description}
-
-        ### Key Risks Identified
-        {risk_analysis_summary}
-        """
+        # --- CHANGE 2: Return a dictionary of sections, not a single string ---
+        dossier_dict = {
+            "dossier_title": f"Investment Idea Dossier: {quant_data.get('companyName', 'N/A')} ({quant_data.get('ticker', 'N/A')})",
+            "metadata": f"**Theme:** {theme}\n**Generated:** {pd.to_datetime('today').strftime('%Y-%m-%d')} | **AI Alignment Score:** {theme_analysis_score}/10",
+            "Executive Summary": quant_data.get('companyName', 'N/A') + f" appears to be a potential candidate for the '{theme}' theme. The company shows robust quantitative metrics. Qualitative analysis confirms its alignment with the theme and highlights its competitive position. Key risks should be reviewed.",
+            "Quantitative Snapshot": quant_table_md,
+            "Thematic Alignment & Justification": safe_get_and_format(qual_analysis, ['theme_analysis', 'justification']),
+            "Competitive Moat & Pricing Power": safe_get_and_format(qual_analysis, ['moat_analysis', 'description']),
+            "Key Risks Identified": safe_get_and_format(qual_analysis, ['risk_analysis'])
+        }
         
-        # The dedent function removes the common leading whitespace from the string
-        return textwrap.dedent(dossier)
+        return dossier_dict
 
     # --- NEW HELPER FUNCTION TO GENERATE FINAL HTML REPORT ---
     def generate_final_html_report(dossier_list: list, theme: str) -> str:
         """ 
-        Compiles a list of markdown dossiers into a single, styled HTML file,
-        ensuring proper rendering of headings, tables, and paragraphs.
+        Compiles a list of dossier DICTIONARIES into a single, styled HTML file.
         """
         import markdown
-        import html # Import the html library for escaping
+        import html
 
         styles = """
         <style>
@@ -5419,27 +5398,49 @@ def agent_ideagen_app():
             .report-header h2 { font-size: 1.2em; color: #6b7280; font-weight: 400; margin-top: 0; }
             .dossier { background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 30px; margin-bottom: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
             .dossier h1, .dossier h2, .dossier h3 { color: #111827; }
-            .dossier h1 { font-size: 1.8em; } /* Dossier Title */
-            .dossier h2 { font-size: 1.4em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-top: 25px; } /* Section Titles */
+            .dossier h1 { font-size: 1.8em; }
+            .dossier h2 { font-size: 1.4em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-top: 25px; }
             .dossier table { width: 100%; border-collapse: collapse; margin-top: 15px; }
             .dossier th, .dossier td { padding: 10px 12px; border: 1px solid #d1d5db; text-align: left; }
             .dossier th { background-color: #f3f4f6; font-weight: 600; }
             .dossier hr { border: none; border-top: 1px solid #e5e7eb; margin: 25px 0; }
             .dossier p { line-height: 1.6; }
+            .dossier .metadata p { margin: 2px 0; } /* Tighter spacing for metadata */
         </style>
         """
         
-        # Escape the theme to prevent any HTML injection issues
         safe_theme = html.escape(theme)
         html_body = f"<div class='report-header'><h1>Investment Idea Generation Report</h1><h2>Theme: {safe_theme}</h2></div>"
         
-        for md_dossier in dossier_list:
-            # This is the key step: convert markdown string to an HTML string
-            html_content = markdown.markdown(md_dossier, extensions=['tables'])
+        # --- CHANGE: Loop through list of DICTIONARIES ---
+        for dossier_dict in dossier_list:
+            html_body += "<div class='dossier'>"
             
-            # Add the properly converted HTML to the dossier div
-            html_body += f"<div class='dossier'>{html_content}</div>"
+            # Add dossier title
+            html_body += f"<h1>{html.escape(dossier_dict.get('dossier_title', ''))}</h1>"
             
+            # Add metadata
+            metadata_md = dossier_dict.get('metadata', '')
+            html_body += f"<div class='metadata'>{markdown.markdown(metadata_md)}</div>"
+            
+            # Add a separator
+            html_body += "<hr>"
+
+            # Loop through the main content sections
+            main_sections = [
+                "Executive Summary", "Quantitative Snapshot", "Thematic Alignment & Justification",
+                "Competitive Moat & Pricing Power", "Key Risks Identified"
+            ]
+            
+            for section_title in main_sections:
+                if section_title in dossier_dict:
+                    html_body += f"<h2>{html.escape(section_title)}</h2>"
+                    section_content_md = dossier_dict[section_title]
+                    # Convert each section's markdown to HTML individually
+                    html_body += markdown.markdown(section_content_md, extensions=['tables'])
+
+            html_body += "</div>" # Close dossier div
+                
         return f"<!DOCTYPE html><html><head><title>IdeaGen Report: {safe_theme}</title>{styles}</head><body><div class='container'>{html_body}</div></body></html>"
 
     # --- 2. STREAMLIT UI AND ORCHESTRATION ---
