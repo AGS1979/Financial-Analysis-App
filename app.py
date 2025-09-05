@@ -5337,12 +5337,12 @@ def agent_ideagen_app():
 
     def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str) -> dict:
         """
-        (Stage 5) Assembles all data into a structured DICTIONARY for proper HTML rendering.
+        (Stage 5) Assembles all data into a structured DICTIONARY with robust error handling for missing data.
         """
         import textwrap
         st.info(f"**(LIVE) Stage 5: Synthesizing Dossier for {quant_data['companyName']}...**")
 
-        # Helper to format AI content (joining lists into paragraphs)
+        # Helper function to format AI content (joining lists into paragraphs)
         def format_ai_content(content):
             if isinstance(content, list): return "\n\n".join(str(item) for item in content)
             if isinstance(content, str): return content
@@ -5359,17 +5359,31 @@ def agent_ideagen_app():
 
         theme_analysis_score = qual_analysis.get('theme_analysis', {}).get('score', 'N/A')
         
-        # --- CHANGE 1: Create the quantitative table as a markdown string here ---
+        # --- START OF FIX: Add isinstance checks to all formatted metrics ---
+        market_cap_val = quant_data.get('marketCapUSD', 0)
+        market_cap_str = f"${market_cap_val / 1e6:,.0f}M" if isinstance(market_cap_val, (int, float)) else 'N/A'
+        
+        rev_growth_val = quant_data.get('revenueGrowth', 0)
+        rev_growth_str = f"{rev_growth_val:.1%}" if isinstance(rev_growth_val, (int, float)) else 'N/A'
+        
+        margin_val = quant_data.get('grossMargin', 0)
+        margin_str = f"{margin_val:.1%}" if isinstance(margin_val, (int, float)) else 'N/A'
+        
+        roic_val = quant_data.get('roic')
+        roic_str = f"{roic_val:.2f}" if isinstance(roic_val, (int, float)) else 'N/A'
+        # --- END OF FIX ---
+        
+        # Create the quantitative table as a markdown string using the safe strings
         quant_table_md = textwrap.dedent(f"""
         | Metric              | Value                  |
         |---------------------|------------------------|
-        | Market Cap          | ${quant_data.get('marketCapUSD', 0) / 1e6:,.0f}M |
-        | Revenue Growth (3Y) | {quant_data.get('revenueGrowth', 0):.1%}      |
-        | Gross Margin        | {quant_data.get('grossMargin', 0):.1%}          |
-        | ROIC                | {quant_data.get('roic', 0):.2f if isinstance(quant_data.get('roic'), (int, float)) else 'N/A'} |
+        | Market Cap          | {market_cap_str}       |
+        | Revenue Growth (3Y) | {rev_growth_str}       |
+        | Gross Margin        | {margin_str}           |
+        | ROIC                | {roic_str}             |
         """)
 
-        # --- CHANGE 2: Return a dictionary of sections, not a single string ---
+        # Return a dictionary of sections
         dossier_dict = {
             "dossier_title": f"Investment Idea Dossier: {quant_data.get('companyName', 'N/A')} ({quant_data.get('ticker', 'N/A')})",
             "metadata": f"**Theme:** {theme}\n**Generated:** {pd.to_datetime('today').strftime('%Y-%m-%d')} | **AI Alignment Score:** {theme_analysis_score}/10",
