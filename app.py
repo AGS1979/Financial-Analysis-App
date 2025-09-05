@@ -5410,30 +5410,43 @@ def agent_ideagen_app():
 
     # --- NEW HELPER FUNCTION TO GENERATE FINAL HTML REPORT ---
     def generate_final_html_report(dossier_list: list, theme: str) -> str:
-        """ Compiles a list of markdown dossiers into a single, styled HTML file. """
+        """ 
+        Compiles a list of markdown dossiers into a single, styled HTML file,
+        ensuring proper rendering of headings, tables, and paragraphs.
+        """
         import markdown
-        
+        import html # Import the html library for escaping
+
         styles = """
         <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 40px; background-color: #f9fafb; color: #1f2937;}
-            .container { max-width: 800px; margin: auto; }
-            .dossier { background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 25px; margin-bottom: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-            h1, h2, h3 { color: #111827; }
-            h1 { font-size: 2.2em; border-bottom: 2px solid #d1d5db; padding-bottom: 10px; }
-            h2 { font-size: 1.5em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-top: 25px; }
-            table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-            th, td { padding: 10px; border: 1px solid #d1d5db; text-align: left; }
-            th { background-color: #f3f4f6; }
-            hr { border: none; border-top: 1px solid #e5e7eb; margin: 25px 0; }
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background-color: #f9fafb; color: #1f2937;}
+            .container { max-width: 850px; margin: auto; }
+            .report-header h1 { font-size: 2.2em; color: #111827; border-bottom: 2px solid #d1d5db; padding-bottom: 10px; margin-bottom: 5px; }
+            .report-header h2 { font-size: 1.2em; color: #6b7280; font-weight: 400; margin-top: 0; }
+            .dossier { background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 30px; margin-bottom: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+            .dossier h1, .dossier h2, .dossier h3 { color: #111827; }
+            .dossier h1 { font-size: 1.8em; } /* Dossier Title */
+            .dossier h2 { font-size: 1.4em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-top: 25px; } /* Section Titles */
+            .dossier table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+            .dossier th, .dossier td { padding: 10px 12px; border: 1px solid #d1d5db; text-align: left; }
+            .dossier th { background-color: #f3f4f6; font-weight: 600; }
+            .dossier hr { border: none; border-top: 1px solid #e5e7eb; margin: 25px 0; }
+            .dossier p { line-height: 1.6; }
         </style>
         """
         
-        html_body = f"<h1>Investment Idea Generation Report</h1><h2>Theme: {theme}</h2>"
+        # Escape the theme to prevent any HTML injection issues
+        safe_theme = html.escape(theme)
+        html_body = f"<div class='report-header'><h1>Investment Idea Generation Report</h1><h2>Theme: {safe_theme}</h2></div>"
+        
         for md_dossier in dossier_list:
+            # This is the key step: convert markdown string to an HTML string
             html_content = markdown.markdown(md_dossier, extensions=['tables'])
+            
+            # Add the properly converted HTML to the dossier div
             html_body += f"<div class='dossier'>{html_content}</div>"
             
-        return f"<!DOCTYPE html><html><head><title>IdeaGen Report</title>{styles}</head><body><div class='container'>{html_body}</div></body></html>"
+        return f"<!DOCTYPE html><html><head><title>IdeaGen Report: {safe_theme}</title>{styles}</head><body><div class='container'>{html_body}</div></body></html>"
 
     # --- 2. STREAMLIT UI AND ORCHESTRATION ---
 
