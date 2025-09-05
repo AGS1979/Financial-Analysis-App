@@ -5176,26 +5176,25 @@ def agent_sentinel_app():
 
 def agent_ideagen_app():
     """
-    A Streamlit app for a multi-stage, AI-powered investment idea generator.
+    A Streamlit app for a multi-stage, AI-powered investment idea generator
+    that outputs a single downloadable HTML report.
     """
     import json
     import pandas as pd
-    import requests  # <-- ADD THIS IMPORT
+    import requests
     from openai import AzureOpenAI
 
     st.markdown("### 💡 Agent IdeaGen")
-    st.markdown("Generate new investment ideas by describing a theme. The agent screens for quantitative and qualitative alignment.")
+    st.markdown("Generate new investment ideas by describing a theme. The agent screens for quantitative and qualitative alignment and produces a downloadable HTML report.")
 
-    # --- 1. HELPER FUNCTIONS (STAGES OF THE FUNNEL) ---
+    # --- 1. HELPER FUNCTIONS ---
 
-    # --- FMP API KEY SETUP ---
     try:
         fmp_api_key = st.secrets["fmp"]["api_key"]
     except Exception as e:
         st.error("FMP API key not found in Streamlit secrets. Please add it to continue.")
         return
 
-    # LLM client setup
     try:
         client = AzureOpenAI(
             api_key=st.secrets["azure"]["openai_key"],
@@ -5207,9 +5206,8 @@ def agent_ideagen_app():
         st.error(f"Could not initialize the LLM client. Please check your secrets. Error: {e}")
         return
 
-    # --- STAGE 1: DECONSTRUCTION (No changes needed) ---
     def deconstruct_prompt(user_input: str) -> dict:
-        """ (Stage 1) Uses an LLM to convert a natural language prompt into a structured query. """
+        # This function remains the same
         prompt = f"""
         You are a financial analysis assistant. Convert the user's natural language investment idea into a structured JSON object
         compatible with the Financial Modeling Prep (FMP) API screener. Infer reasonable quantitative thresholds if not specified.
@@ -5237,17 +5235,13 @@ def agent_ideagen_app():
             st.error(f"Error in Stage 1 (Deconstruction): {e}")
             return None
 
-    # --- STAGE 2: LIVE QUANTITATIVE SCREEN ---
     def run_quantitative_screen(criteria: dict) -> pd.DataFrame:
-        """ (Stage 2) LIVE FUNCTION: Screens for companies using the FMP API. """
+        # This function remains the same
         st.info("**(LIVE) Stage 2: Running Quantitative Screen with FMP API...**")
         base_url = "https://financialmodelingprep.com/api/v3/stock-screener"
-        
-        # Add API key and limit results
         params = criteria.copy()
         params['apikey'] = fmp_api_key
-        params['limit'] = 20 # Limit the number of initial results
-
+        params['limit'] = 100 # Increase limit to get a wider initial universe
         try:
             response = requests.get(base_url, params=params)
             response.raise_for_status()
@@ -5255,28 +5249,21 @@ def agent_ideagen_app():
             if not data:
                 st.warning("FMP screener returned no companies matching the criteria.")
                 return pd.DataFrame()
-
             df = pd.DataFrame(data)
-            # Rename columns to match the dossier's expected names
             df.rename(columns={'symbol': 'ticker', 'marketCap': 'marketCapUSD'}, inplace=True)
             st.write(f"Screening complete. Found {len(df)} matching companies.")
             return df
-
         except requests.exceptions.RequestException as e:
             st.error(f"Error calling FMP API for screening: {e}")
             return pd.DataFrame()
 
-    # --- STAGE 3: LIVE QUALITATIVE DATA AGGREGATION ---
     def aggregate_qualitative_data(ticker: str) -> str:
-        """ (Stage 3) LIVE FUNCTION: Gathers textual data for a single ticker using FMP. """
+        # Modified to fetch more news for better context
         st.info(f"**(LIVE) Stage 3: Aggregating Qualitative Data for {ticker}...**")
-        
-        # 1. Get latest earnings transcript
         transcript_text = ""
         try:
-            # FMP returns a list of transcripts, we'll take the most recent one (index 0)
             url = f"https://financialmodelingprep.com/api/v3/earning_call_transcript/{ticker}?limit=1&apikey={fmp_api_key}"
-            response = requests.get(url)
+            response = requests.get(url, timeout=10)
             response.raise_for_status()
             transcript_data = response.json()
             if transcript_data and 'content' in transcript_data[0]:
@@ -5284,11 +5271,10 @@ def agent_ideagen_app():
         except Exception:
             transcript_text = "No recent earnings transcript found."
 
-        # 2. Get recent news
         news_text = ""
         try:
-            url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={ticker}&limit=5&apikey={fmp_api_key}"
-            response = requests.get(url)
+            url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={ticker}&limit=10&apikey={fmp_api_key}" # Increased news limit to 10
+            response = requests.get(url, timeout=10)
             response.raise_for_status()
             news_data = response.json()
             if news_data:
@@ -5296,27 +5282,15 @@ def agent_ideagen_app():
                 news_text = "Recent News Headlines:\n" + "\n".join(headlines)
         except Exception:
             news_text = "Could not fetch recent news."
-
         return f"{transcript_text}\n\n---\n\n{news_text}"
 
-
-    # --- STAGE 4 & 5 AND UI (No changes needed, but included for completeness) ---
-
     def run_ai_qualitative_analysis(company_name: str, text_corpus: str, theme: str) -> dict:
-        """ (Stage 4) Uses an LLM to analyze the text corpus for thematic alignment, moat, and risks. """
+        # This function remains the same
         st.info(f"**(LIVE) Stage 4: Running AI Qualitative Analysis for {company_name}...**")
-        
         analysis_prompt = f"""
         You are an expert equity research analyst. Analyze the provided text corpus for '{company_name}'
-        based on the investment theme: '{theme}'.
-        
-        TEXT CORPUS:
-        ---
-        {text_corpus}
-        ---
-        
+        based on the investment theme: '{theme}'. TEXT CORPUS: --- {text_corpus} ---
         Perform the following three tasks and return a single JSON object with the keys "theme_analysis", "moat_analysis", and "risk_analysis".
-
         1.  **theme_analysis**: Score the company's alignment with the theme from 1-10. Provide a 2-paragraph justification with direct quotes as evidence.
         2.  **moat_analysis**: Describe the company's competitive moat and its ability to exercise pricing power. Provide evidence.
         3.  **risk_analysis**: Identify and summarize the top 3 risks to the business mentioned in the text.
@@ -5334,9 +5308,9 @@ def agent_ideagen_app():
             return {}
 
     def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str) -> str:
-        """ (Stage 5) Assembles all data into the final Markdown Dossier. """
+        # This function remains the same
         st.info(f"**(LIVE) Stage 5: Synthesizing Dossier for {quant_data['companyName']}...**")
-
+        # ... (safe_get helper and dossier creation logic is unchanged)
         def safe_get(data, keys, default='Analysis not available.'):
             if not isinstance(data, dict): return default
             temp = data
@@ -5344,12 +5318,10 @@ def agent_ideagen_app():
                 if not isinstance(temp, dict): return default
                 temp = temp.get(key)
             return temp if temp is not None else default
-        
         theme_analysis_score = safe_get(qual_analysis, ['theme_analysis', 'score'], 'N/A')
         theme_analysis_justification = safe_get(qual_analysis, ['theme_analysis', 'justification'])
         moat_analysis_description = safe_get(qual_analysis, ['moat_analysis', 'description'])
         risk_analysis_summary = safe_get(qual_analysis, ['risk_analysis', 'summary'])
-
         dossier = f"""
         # Investment Idea Dossier: {quant_data.get('companyName', 'N/A')} ({quant_data.get('ticker', 'N/A')})
 
@@ -5383,6 +5355,33 @@ def agent_ideagen_app():
         """
         return dossier
 
+    # --- NEW HELPER FUNCTION TO GENERATE FINAL HTML REPORT ---
+    def generate_final_html_report(dossier_list: list, theme: str) -> str:
+        """ Compiles a list of markdown dossiers into a single, styled HTML file. """
+        import markdown
+        
+        styles = """
+        <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 40px; background-color: #f9fafb; color: #1f2937;}
+            .container { max-width: 800px; margin: auto; }
+            .dossier { background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 25px; margin-bottom: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+            h1, h2, h3 { color: #111827; }
+            h1 { font-size: 2.2em; border-bottom: 2px solid #d1d5db; padding-bottom: 10px; }
+            h2 { font-size: 1.5em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-top: 25px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+            th, td { padding: 10px; border: 1px solid #d1d5db; text-align: left; }
+            th { background-color: #f3f4f6; }
+            hr { border: none; border-top: 1px solid #e5e7eb; margin: 25px 0; }
+        </style>
+        """
+        
+        html_body = f"<h1>Investment Idea Generation Report</h1><h2>Theme: {theme}</h2>"
+        for md_dossier in dossier_list:
+            html_content = markdown.markdown(md_dossier, extensions=['tables'])
+            html_body += f"<div class='dossier'>{html_content}</div>"
+            
+        return f"<!DOCTYPE html><html><head><title>IdeaGen Report</title>{styles}</head><body><div class='container'>{html_body}</div></body></html>"
+
     # --- 2. STREAMLIT UI AND ORCHESTRATION ---
 
     user_query = st.text_area(
@@ -5391,25 +5390,25 @@ def agent_ideagen_app():
         height=100
     )
 
-    if st.button("🚀 Generate Ideas", type="primary"):
+    if st.button("🚀 Generate & Download Report", type="primary"):
         if not user_query:
             st.warning("Please describe your investment idea.")
             return
 
-        with st.spinner("Agent IdeaGen is running... This may take a minute."):
+        with st.spinner("Agent IdeaGen is running... This may take several minutes for a large number of companies."):
             structured_query = deconstruct_prompt(user_query)
             if not structured_query: return
-            
             st.success("✅ Stage 1 Complete: Deconstructed user prompt.")
             theme = structured_query.get('qualitative_theme', 'N/A')
 
             screened_companies_df = run_quantitative_screen(structured_query.get('quantitative_filters', {}))
             if screened_companies_df.empty: return
-
             st.success(f"✅ Stage 2 Complete: Found {len(screened_companies_df)} potential companies.")
             
-            # Limit to the top 3 results for the demo to run quickly
-            for index, company_row in screened_companies_df.head(3).iterrows():
+            all_dossiers = []
+            
+            # --- MODIFIED LOOP: REMOVED .head(3) TO PROCESS ALL COMPANIES ---
+            for index, company_row in screened_companies_df.iterrows():
                 company_name = company_row['companyName']
                 ticker = company_row['ticker']
 
@@ -5417,23 +5416,35 @@ def agent_ideagen_app():
                 if not qualitative_corpus or "No recent earnings transcript found." in qualitative_corpus:
                     st.warning(f"Could not retrieve sufficient qualitative data for {company_name}. Skipping.")
                     continue
-                
                 st.success(f"✅ Stage 3 Complete: Aggregated data for {company_name}.")
 
-                qualitative_analysis = run_ai_qualitative_analysis(
-                    company_name, qualitative_corpus, theme
-                )
+                qualitative_analysis = run_ai_qualitative_analysis(company_name, qualitative_corpus, theme)
                 if not qualitative_analysis:
                     st.warning(f"Qualitative analysis failed for {company_name}. Skipping.")
                     continue
-                
                 st.success(f"✅ Stage 4 Complete: AI analysis finished for {company_name}.")
 
                 final_dossier = synthesize_dossier(company_row, qualitative_analysis, theme)
                 st.success(f"✅ Stage 5 Complete: Dossier created for {company_name}.")
-
-                st.markdown("---")
-                st.markdown(final_dossier)
+                all_dossiers.append(final_dossier)
+            
+            # --- NEW: GENERATE AND OFFER HTML DOWNLOAD ---
+            if all_dossiers:
+                final_html_report = generate_final_html_report(all_dossiers, theme)
+                st.session_state.ideagen_report = final_html_report # Store in session state for download
+            else:
+                st.warning("Could not generate a report for any of the screened companies.")
+    
+    # --- NEW: DOWNLOAD HANDLER (OUTSIDE THE BUTTON CLICK) ---
+    if 'ideagen_report' in st.session_state:
+        st.download_button(
+            label="📥 Download Full HTML Report",
+            data=st.session_state.ideagen_report,
+            file_name=f"IdeaGen_Report_{pd.to_datetime('today').strftime('%Y%m%d')}.html",
+            mime="text/html"
+        )
+        # Clear the state after offering the download to prevent it from reappearing
+        del st.session_state.ideagen_report
 
 
 
