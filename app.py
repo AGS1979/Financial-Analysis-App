@@ -5309,31 +5309,31 @@ def agent_ideagen_app():
 
 
     def enrich_quantitative_data(df: pd.DataFrame, api_key: str) -> pd.DataFrame:
-    """Enriches the screened DataFrame with detailed financial metrics from FMP."""
-    st.info("**(LIVE) Enriching screened companies with detailed financial metrics...**")
-    enriched_rows = []
-    for index, row in df.iterrows():
-        ticker = row['ticker']
-        try:
-            # API call for key metrics
-            url = f"https://financialmodelingprep.com/api/v3/key-metrics-ttm/{ticker}?apikey={api_key}"
-            response = requests.get(url)
-            response.raise_for_status()
-            metrics = response.json()
-            
-            if metrics:
-                # Update the row with new data
-                row['grossMargin'] = metrics[0].get('grossProfitMarginTTM', 0)
-                row['revenueGrowth'] = metrics[0].get('revenueGrowthTTM', 0)
-                row['roic'] = metrics[0].get('roicTTM', 'N/A')
-            
-            enriched_rows.append(row)
-        except Exception as e:
-            st.warning(f"Could not enrich data for {ticker}: {e}")
-            # Append the original row even if enrichment fails
-            enriched_rows.append(row)
-            
-    return pd.DataFrame(enriched_rows)        
+        """Enriches the screened DataFrame with detailed financial metrics from FMP."""
+        st.info("**(LIVE) Enriching screened companies with detailed financial metrics...**")
+        enriched_rows = []
+        for index, row in df.iterrows():
+            ticker = row['ticker']
+            try:
+                # API call for key metrics
+                url = f"https://financialmodelingprep.com/api/v3/key-metrics-ttm/{ticker}?apikey={api_key}"
+                response = requests.get(url)
+                response.raise_for_status()
+                metrics = response.json()
+                
+                if metrics:
+                    # Update the row with new data
+                    row['grossMargin'] = metrics[0].get('grossProfitMarginTTM', 0)
+                    row['revenueGrowth'] = metrics[0].get('revenueGrowthTTM', 0)
+                    row['roic'] = metrics[0].get('roicTTM', 'N/A')
+                
+                enriched_rows.append(row)
+            except Exception as e:
+                st.warning(f"Could not enrich data for {ticker}: {e}")
+                # Append the original row even if enrichment fails
+                enriched_rows.append(row)
+                
+        return pd.DataFrame(enriched_rows)        
 
     def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str) -> str:
         """ (Stage 5) Assembles all data into the final Markdown Dossier with improved formatting. """
