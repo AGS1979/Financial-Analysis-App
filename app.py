@@ -5169,9 +5169,248 @@ def agent_sentinel_app():
         )
 
 
+
 # ==============================================================================
-# 12. MAIN APP ROUTER (CORRECTED AND COMPLETE)
+# 12. Agent Sentinel (Proactive Monitoring) - NEW
 # ==============================================================================
+
+def agent_ideagen_app():
+    """
+    A Streamlit app for a multi-stage, AI-powered investment idea generator.
+    """
+    import json
+    import pandas as pd
+    from openai import AzureOpenAI # Or from openai import OpenAI
+
+    st.markdown("### 💡 Agent IdeaGen")
+    st.markdown("Generate new investment ideas by describing a theme. The agent screens for quantitative and qualitative alignment.")
+
+    # --- 1. HELPER FUNCTIONS (STAGES OF THE FUNNEL) ---
+
+    # LLM client setup - replace with your actual client initialization
+    # Ensure your OpenAI keys are in st.secrets
+    try:
+        # This assumes you are using Azure, as in your other secure agents
+        client = AzureOpenAI(
+            api_key=st.secrets["azure"]["openai_key"],
+            api_version="2024-02-01",
+            azure_endpoint=st.secrets["azure"]["openai_endpoint"],
+        )
+        llm_deployment_name = st.secrets["azure"]["openai_deployment_name"]
+    except Exception as e:
+        st.error(f"Could not initialize the LLM client. Please check your secrets. Error: {e}")
+        return
+
+    def deconstruct_prompt(user_input: str) -> dict:
+        """ (Stage 1) Uses an LLM to convert a natural language prompt into a structured query. """
+        prompt = f"""
+        You are a financial analysis assistant. Convert the user's natural language investment idea into a structured JSON object.
+        Infer reasonable quantitative thresholds if not specified.
+
+        User request: "{user_input}"
+
+        Output a JSON object with these keys:
+        - "quantitative_filters": A dictionary of filters (e.g., {{"marketCapUSD_less_than": 2000000000, "sector": "Industrials", "grossProfitMargin_greater_than": 0.4}}).
+        - "qualitative_theme": A concise, one-sentence description of the core investment idea.
+        - "positive_keywords": A list of keywords to search for in documents that would support the thesis.
+        - "negative_keywords": A list of keywords that would weaken the thesis.
+        """
+        try:
+            response = client.chat.completions.create(
+                model=llm_deployment_name,
+                messages=[{"role": "system", "content": "You are a helpful assistant that only outputs JSON."},
+                          {"role": "user", "content": prompt}],
+                response_format={"type": "json_object"}
+            )
+            return json.loads(response.choices[0].message.content)
+        except Exception as e:
+            st.error(f"Error in Stage 1 (Deconstruction): {e}")
+            return None
+
+    def run_quantitative_screen(criteria: dict) -> pd.DataFrame:
+        """ (Stage 2) MOCK FUNCTION: Screens for companies based on quantitative criteria. """
+        st.info("**(MOCK) Stage 2: Running Quantitative Screen...**")
+        # In a real implementation, you would query an API like FMP, FactSet, or Refinitiv here
+        # using the 'criteria' dictionary to build your API request.
+        
+        # Mock data for demonstration purposes
+        mock_data = {
+            'ticker': ['GTI.DE', 'PWR.US', 'ELC.PA'],
+            'companyName': ['GridTech Inc.', 'PowerFlow Solutions', 'ElecCore SA'],
+            'marketCapUSD': [1.8e9, 2.5e9, 1.2e9],
+            'revenueGrowth3Y': [0.18, 0.09, 0.15],
+            'grossMargin': [0.48, 0.35, 0.45],
+            'roic': [0.16, 0.08, 0.14]
+        }
+        df = pd.DataFrame(mock_data)
+        
+        # Simulate filtering (though here we just return the mock data)
+        st.write("Screening complete. Found 3 matching companies (mock data).")
+        return df.head(3) # Limit to a few for the demo
+
+    def aggregate_qualitative_data(tickers: list) -> dict:
+        """ (Stage 3) MOCK FUNCTION: Gathers textual data for a list of tickers. """
+        st.info("**(MOCK) Stage 3: Aggregating Qualitative Data (Transcripts, Filings)...**")
+        # In a real implementation, you would loop through tickers and download recent
+        # earnings transcripts, 10-Ks, and investor presentations.
+        
+        # Mock text data for ONE company for demonstration
+        mock_corpus = {
+            "GTI.DE": """
+            From Q2 2025 Earnings Call: CEO remarks... "We are pleased to report another strong quarter. Demand for our smart transformers is unprecedented,
+            driven by the EU's Green Deal and grid investment mandates. Over 70% of our current backlog is tied to grid-hardening projects.
+            We successfully passed through 100% of the copper price increase to customers, protecting our gross margins."
+
+            From 2024 Annual Report: Risk Factors... "Our top 3 customers account for approximately 60% of our total revenue.
+            The loss of any of these key customers would have a material adverse effect on our business. We are actively seeking to
+            diversify our customer base in North America to mitigate this concentration risk."
+            """
+        }
+        # For the demo, we'll just return data for the first company
+        return {tickers[0]: mock_corpus.get(tickers[0], "No data found.")}
+
+    def run_ai_qualitative_analysis(company_name: str, text_corpus: str, theme: str) -> dict:
+        """ (Stage 4) Uses an LLM to analyze the text corpus for thematic alignment, moat, and risks. """
+        st.info(f"**(LIVE) Stage 4: Running AI Qualitative Analysis for {company_name}...**")
+        
+        analysis_prompt = f"""
+        You are an expert equity research analyst. Analyze the provided text corpus for '{company_name}'
+        based on the investment theme: '{theme}'.
+        
+        TEXT CORPUS:
+        ---
+        {text_corpus}
+        ---
+        
+        Perform the following three tasks and return a single JSON object with the keys "theme_analysis", "moat_analysis", and "risk_analysis".
+
+        1.  **theme_analysis**: Score the company's alignment with the theme from 1-10. Provide a 2-paragraph justification with direct quotes as evidence.
+        2.  **moat_analysis**: Describe the company's competitive moat and its ability to exercise pricing power. Provide evidence.
+        3.  **risk_analysis**: Identify and summarize the top 3 risks to the business mentioned in the text.
+        """
+        try:
+            response = client.chat.completions.create(
+                model=llm_deployment_name,
+                messages=[{"role": "system", "content": "You are an expert equity analyst that only outputs JSON."},
+                          {"role": "user", "content": analysis_prompt}],
+                response_format={"type": "json_object"}
+            )
+            return json.loads(response.choices[0].message.content)
+        except Exception as e:
+            st.error(f"Error in Stage 4 (Qualitative Analysis): {e}")
+            return {}
+
+    def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str) -> str:
+        """ (Stage 5) Assembles all data into the final Markdown Dossier. """
+        st.info(f"**(LIVE) Stage 5: Synthesizing Dossier for {quant_data['companyName']}...**")
+        
+        # Extracting data with fallbacks
+        theme_analysis = qual_analysis.get('theme_analysis', {})
+        moat_analysis = qual_analysis.get('moat_analysis', {})
+        risk_analysis = qual_analysis.get('risk_analysis', {})
+
+        dossier = f"""
+        # Investment Idea Dossier: {quant_data.get('companyName', 'N/A')} ({quant_data.get('ticker', 'N/A')})
+
+        **Theme:** {theme}
+        **Generated:** {pd.to_datetime('today').strftime('%Y-%m-%d')} | **AI Alignment Score:** {theme_analysis.get('score', 'N/A')}/10
+
+        ## Executive Summary
+        {quant_data.get('companyName', 'N/A')} appears to be a strong candidate for the '{theme}' theme.
+        The company shows robust quantitative metrics, including high revenue growth and strong margins relative to peers.
+        Qualitative analysis of recent documents confirms direct exposure to the theme and indicates a defensible competitive moat. Key risks include customer concentration.
+
+        ---
+        ## Quantitative Snapshot
+        | Metric              | Value                  |
+        |---------------------|------------------------|
+        | Market Cap          | ${quant_data.get('marketCapUSD', 0) / 1e6:,.0f}M |
+        | Revenue Growth (3Y) | {quant_data.get('revenueGrowth3Y', 0):.1%}      |
+        | Gross Margin        | {quant_data.get('grossMargin', 0):.1%}          |
+        | ROIC                | {quant_data.get('roic', 0):.1%}                  |
+
+        ---
+        ## Qualitative Deep Dive
+
+        ### Thematic Alignment & Justification
+        {theme_analysis.get('justification', 'Analysis not available.')}
+
+        ### Competitive Moat & Pricing Power
+        {moat_analysis.get('description', 'Analysis not available.')}
+
+        ### Key Risks Identified
+        {risk_analysis.get('summary', 'Analysis not available.')}
+        """
+        return dossier
+
+    # --- 2. STREAMLIT UI AND ORCHESTRATION ---
+
+    user_query = st.text_area(
+        "Describe your investment idea",
+        "Find me non-US, small-cap industrial companies with high recurring revenue, strong pricing power, and exposure to the grid modernization theme.",
+        height=100
+    )
+
+    if st.button("🚀 Generate Ideas", type="primary"):
+        if not user_query:
+            st.warning("Please describe your investment idea.")
+            return
+
+        with st.spinner("Agent IdeaGen is running... This may take a minute."):
+            # Stage 1: Deconstruct
+            structured_query = deconstruct_prompt(user_query)
+            if not structured_query:
+                return
+            
+            st.success("✅ Stage 1 Complete: Deconstructed user prompt.")
+            theme = structured_query.get('qualitative_theme', 'N/A')
+
+            # Stage 2: Quantitative Screen
+            screened_companies_df = run_quantitative_screen(structured_query.get('quantitative_filters', {}))
+            if screened_companies_df.empty:
+                st.warning("No companies passed the initial quantitative screen.")
+                return
+
+            st.success(f"✅ Stage 2 Complete: Found {len(screened_companies_df)} potential companies.")
+            
+            # Stages 3, 4, 5: Loop through each company
+            for index, company_row in screened_companies_df.iterrows():
+                company_name = company_row['companyName']
+                ticker = company_row['ticker']
+
+                # Stage 3: Aggregate Data
+                qualitative_corpus = aggregate_qualitative_data([ticker])
+                if not qualitative_corpus.get(ticker):
+                    st.warning(f"Could not retrieve qualitative data for {company_name}. Skipping.")
+                    continue
+                
+                st.success(f"✅ Stage 3 Complete: Aggregated data for {company_name}.")
+
+                # Stage 4: AI Analysis
+                qualitative_analysis = run_ai_qualitative_analysis(
+                    company_name, qualitative_corpus[ticker], theme
+                )
+                if not qualitative_analysis:
+                    st.warning(f"Qualitative analysis failed for {company_name}. Skipping.")
+                    continue
+                
+                st.success(f"✅ Stage 4 Complete: AI analysis finished for {company_name}.")
+
+                # Stage 5: Synthesize Dossier
+                final_dossier = synthesize_dossier(company_row, qualitative_analysis, theme)
+                st.success(f"✅ Stage 5 Complete: Dossier created for {company_name}.")
+
+                # Display the final output
+                st.markdown("---")
+                st.markdown(final_dossier)
+
+
+
+
+# ==============================================================================
+# 13. MAIN APP ROUTER (CORRECTED AND COMPLETE)
+# ==============================================================================
+
 def main():
     """
     Main function to run the Streamlit app with authentication and routing.
@@ -5204,9 +5443,10 @@ def main():
             "Choose a tool:",
             [
                 "🏠 Welcome",
+                "Agent IdeaGen",
                 "Agent PE",
                 "Model Integrity Agent",
-                "Agent Credit", # <-- ADD THIS LINE
+                "Agent Credit",
                 "Agent Pre-IPO",
                 "DCF Ginny",
                 "Agent Special Situations",
@@ -5233,11 +5473,13 @@ def main():
     st.markdown("---")
 
     # --- Router Logic ---
-    if app_mode == "Agent Credit": # <-- ADD THIS ENTIRE BLOCK
+    if app_mode == "Agent IdeaGen": 
+    agent_ideagen_app()
+    elif app_mode == "Agent Credit":
         agent_credit_app_azure()
-    elif app_mode == "Model Integrity Agent": # <-- ADD THIS BLOCK
+    elif app_mode == "Model Integrity Agent":
         model_integrity_agent_app()
-    elif app_mode == "Agent Sentinel":      # <-- ADD THIS BLOCK
+    elif app_mode == "Agent Sentinel":
         agent_sentinel_app()
     elif app_mode == "Agent PE":
         # This now calls your self-contained Azure function
@@ -5307,6 +5549,10 @@ def main():
         # --- THIS IS THE HTML BLOCK FOR THE AGENT CARDS ---
         st.markdown("""
         <div class="agent-grid">
+            <div class="agent-card" title="Acts as a sophisticated, AI-powered screener to find new investment opportunities.">
+                <div class="agent-title">💡 Agent IdeaGen</div>
+                <div class="agent-description">Discover new investment ideas by screening the market based on a specific theme or set of custom criteria.</div>
+            </div>
             <div class="agent-card" title="Ensures data residency and privacy by processing documents within a secure environment.">
                 <div class="agent-title">🔒 Agent PE</div>
                 <div class="agent-description">Analyze confidential IMs and teasers with enterprise-grade secured environment.</div>
