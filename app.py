@@ -5336,45 +5336,37 @@ def agent_ideagen_app():
         return pd.DataFrame(enriched_rows)        
 
     def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str) -> str:
-        """ (Stage 5) Assembles all data into the final Markdown Dossier with improved formatting. """
+        """ 
+        (Stage 5) Assembles all data into the final Markdown Dossier with corrected formatting.
+        """
+        # Import the necessary library to fix indentation
+        import textwrap
+
         st.info(f"**(LIVE) Stage 5: Synthesizing Dossier for {quant_data['companyName']}...**")
 
-        # --- START OF FIX ---
+        # Helper function to safely get and format nested dictionary values
         def format_ai_content(content):
-            """Helper to format AI output, joining lists into paragraphs."""
             if isinstance(content, list):
-                # Join list items into a single block of text with paragraph breaks
                 return "\n\n".join(str(item) for item in content)
             elif isinstance(content, str):
-                # If it's already a string, just return it
                 return content
-            # Fallback for unexpected formats
             return "Analysis not available or in an unexpected format."
 
         def safe_get_and_format(data, keys):
-            """Helper to safely get and format nested dictionary values."""
-            if not isinstance(data, dict):
-                return "Analysis not available."
-            
+            if not isinstance(data, dict): return "Analysis not available."
             temp = data
             for key in keys:
-                if not isinstance(temp, dict):
-                    return "Analysis not available."
+                if not isinstance(temp, dict): return "Analysis not available."
                 temp = temp.get(key)
-
-            if temp is None:
-                return "Analysis not available."
-            
+            if temp is None: return "Analysis not available."
             return format_ai_content(temp)
 
         theme_analysis_score = qual_analysis.get('theme_analysis', {}).get('score', 'N/A')
         theme_analysis_justification = safe_get_and_format(qual_analysis, ['theme_analysis', 'justification'])
         moat_analysis_description = safe_get_and_format(qual_analysis, ['moat_analysis', 'description'])
-        risk_analysis_summary = safe_get_and_format(qual_analysis, ['risk_analysis']) # Risks might be a list of dicts
-        # --- END OF FIX ---
+        risk_analysis_summary = safe_get_and_format(qual_analysis, ['risk_analysis'])
 
-        # Note: Financial data is addressed in the next section of this answer.
-        # This dossier will still show 0s until the quantitative step is also updated.
+        # The f-string is now wrapped in textwrap.dedent()
         dossier = f"""
         # Investment Idea Dossier: {quant_data.get('companyName', 'N/A')} ({quant_data.get('ticker', 'N/A')})
 
@@ -5406,7 +5398,9 @@ def agent_ideagen_app():
         ### Key Risks Identified
         {risk_analysis_summary}
         """
-        return dossier
+        
+        # The dedent function removes the common leading whitespace from the string
+        return textwrap.dedent(dossier)
 
     # --- NEW HELPER FUNCTION TO GENERATE FINAL HTML REPORT ---
     def generate_final_html_report(dossier_list: list, theme: str) -> str:
