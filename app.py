@@ -5474,7 +5474,7 @@ def main():
 
     # --- Router Logic ---
     if app_mode == "Agent IdeaGen": 
-    agent_ideagen_app()
+        agent_ideagen_app()
     elif app_mode == "Agent Credit":
         agent_credit_app_azure()
     elif app_mode == "Model Integrity Agent":
