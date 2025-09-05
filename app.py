@@ -5210,13 +5210,29 @@ def agent_ideagen_app():
         return
 
     def deconstruct_prompt(user_input: str) -> dict:
+        """ (Stage 1) Uses a more robust LLM prompt to convert a natural language request into a structured query. """
+        
+        # --- CHANGE: This prompt is now much more explicit and provides clear examples ---
         prompt = f"""
-        You are a financial analysis assistant. Convert the user's natural language investment idea into a structured JSON object
-        compatible with the Financial Modeling Prep (FMP) API screener. Infer reasonable quantitative thresholds if not specified.
-        User request: "{user_input}"
-        Map the user's request to FMP's available screening parameters like: marketCapMoreThan, marketCapLowerThan, betaMoreThan,
-        sector, industry, country, exchange, dividendYieldMoreThan, grossProfitMarginMoreThan, etc.
-        Output a JSON object with keys: "quantitative_filters", "qualitative_theme", "positive_keywords", "negative_keywords".
+        You are an expert financial data API assistant. Your sole task is to convert a user's natural language request into a valid JSON object for the FMP Stock Screener API.
+
+        **Instructions:**
+        1.  Analyze the user's request and identify criteria for filtering stocks.
+        2.  Map these criteria to the available FMP API parameters listed below.
+        3.  If a filter is not mentioned by the user, DO NOT include it in the JSON.
+        4.  Convert numerical values correctly (e.g., '$10 billion' becomes `10000000000`).
+
+        **FMP API Parameters:**
+        `marketCapMoreThan`, `marketCapLowerThan`, `priceMoreThan`, `priceLowerThan`, `betaMoreThan`, `betaLowerThan`, `volumeMoreThan`, `volumeLowerThan`, `dividendYieldMoreThan`, `dividendYieldLowerThan`, `grossProfitMarginMoreThan`, `grossProfitMarginLowerThan`, `netProfitMarginMoreThan`, `returnOnEquityMoreThan`, `country`, `sector`, `industry`, `exchange`.
+
+        **Example Mapping:**
+        - User says: "US-based solar energy companies" -> You output: `"country": "US", "industry": "Solar"`
+        - User says: "market capitalization exceeding $10 billion" -> You output: `"marketCapMoreThan": 10000000000`
+        - User says: "gross margin above 50%" -> You output: `"grossProfitMarginMoreThan": 0.50`
+
+        **User Request:** "{user_input}"
+
+        Now, generate the complete JSON object with the keys "quantitative_filters", "qualitative_theme", "positive_keywords", and "negative_keywords".
         """
         try:
             response = client.chat.completions.create(
