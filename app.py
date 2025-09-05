@@ -5180,17 +5180,23 @@ def agent_ideagen_app():
     """
     import json
     import pandas as pd
-    from openai import AzureOpenAI # Or from openai import OpenAI
+    import requests  # <-- ADD THIS IMPORT
+    from openai import AzureOpenAI
 
     st.markdown("### 💡 Agent IdeaGen")
     st.markdown("Generate new investment ideas by describing a theme. The agent screens for quantitative and qualitative alignment.")
 
     # --- 1. HELPER FUNCTIONS (STAGES OF THE FUNNEL) ---
 
-    # LLM client setup - replace with your actual client initialization
-    # Ensure your OpenAI keys are in st.secrets
+    # --- FMP API KEY SETUP ---
     try:
-        # This assumes you are using Azure, as in your other secure agents
+        fmp_api_key = st.secrets["fmp"]["api_key"]
+    except Exception as e:
+        st.error("FMP API key not found in Streamlit secrets. Please add it to continue.")
+        return
+
+    # LLM client setup
+    try:
         client = AzureOpenAI(
             api_key=st.secrets["azure"]["openai_key"],
             api_version="2024-02-01",
@@ -5201,16 +5207,20 @@ def agent_ideagen_app():
         st.error(f"Could not initialize the LLM client. Please check your secrets. Error: {e}")
         return
 
+    # --- STAGE 1: DECONSTRUCTION (No changes needed) ---
     def deconstruct_prompt(user_input: str) -> dict:
         """ (Stage 1) Uses an LLM to convert a natural language prompt into a structured query. """
         prompt = f"""
-        You are a financial analysis assistant. Convert the user's natural language investment idea into a structured JSON object.
-        Infer reasonable quantitative thresholds if not specified.
+        You are a financial analysis assistant. Convert the user's natural language investment idea into a structured JSON object
+        compatible with the Financial Modeling Prep (FMP) API screener. Infer reasonable quantitative thresholds if not specified.
 
         User request: "{user_input}"
 
+        Map the user's request to FMP's available screening parameters like: marketCapMoreThan, marketCapLowerThan, betaMoreThan,
+        sector, industry, country, exchange, dividendYieldMoreThan, grossProfitMarginMoreThan, etc.
+
         Output a JSON object with these keys:
-        - "quantitative_filters": A dictionary of filters (e.g., {{"marketCapUSD_less_than": 2000000000, "sector": "Industrials", "grossProfitMargin_greater_than": 0.4}}).
+        - "quantitative_filters": A dictionary of FMP-compatible filters (e.g., {{"marketCapLowerThan": 2000000000, "sector": "Industrials", "grossProfitMarginMoreThan": 0.4, "country": "DE"}}).
         - "qualitative_theme": A concise, one-sentence description of the core investment idea.
         - "positive_keywords": A list of keywords to search for in documents that would support the thesis.
         - "negative_keywords": A list of keywords that would weaken the thesis.
@@ -5227,47 +5237,70 @@ def agent_ideagen_app():
             st.error(f"Error in Stage 1 (Deconstruction): {e}")
             return None
 
+    # --- STAGE 2: LIVE QUANTITATIVE SCREEN ---
     def run_quantitative_screen(criteria: dict) -> pd.DataFrame:
-        """ (Stage 2) MOCK FUNCTION: Screens for companies based on quantitative criteria. """
-        st.info("**(MOCK) Stage 2: Running Quantitative Screen...**")
-        # In a real implementation, you would query an API like FMP, FactSet, or Refinitiv here
-        # using the 'criteria' dictionary to build your API request.
+        """ (Stage 2) LIVE FUNCTION: Screens for companies using the FMP API. """
+        st.info("**(LIVE) Stage 2: Running Quantitative Screen with FMP API...**")
+        base_url = "https://financialmodelingprep.com/api/v3/stock-screener"
         
-        # Mock data for demonstration purposes
-        mock_data = {
-            'ticker': ['GTI.DE', 'PWR.US', 'ELC.PA'],
-            'companyName': ['GridTech Inc.', 'PowerFlow Solutions', 'ElecCore SA'],
-            'marketCapUSD': [1.8e9, 2.5e9, 1.2e9],
-            'revenueGrowth3Y': [0.18, 0.09, 0.15],
-            'grossMargin': [0.48, 0.35, 0.45],
-            'roic': [0.16, 0.08, 0.14]
-        }
-        df = pd.DataFrame(mock_data)
-        
-        # Simulate filtering (though here we just return the mock data)
-        st.write("Screening complete. Found 3 matching companies (mock data).")
-        return df.head(3) # Limit to a few for the demo
+        # Add API key and limit results
+        params = criteria.copy()
+        params['apikey'] = fmp_api_key
+        params['limit'] = 20 # Limit the number of initial results
 
-    def aggregate_qualitative_data(tickers: list) -> dict:
-        """ (Stage 3) MOCK FUNCTION: Gathers textual data for a list of tickers. """
-        st.info("**(MOCK) Stage 3: Aggregating Qualitative Data (Transcripts, Filings)...**")
-        # In a real implementation, you would loop through tickers and download recent
-        # earnings transcripts, 10-Ks, and investor presentations.
-        
-        # Mock text data for ONE company for demonstration
-        mock_corpus = {
-            "GTI.DE": """
-            From Q2 2025 Earnings Call: CEO remarks... "We are pleased to report another strong quarter. Demand for our smart transformers is unprecedented,
-            driven by the EU's Green Deal and grid investment mandates. Over 70% of our current backlog is tied to grid-hardening projects.
-            We successfully passed through 100% of the copper price increase to customers, protecting our gross margins."
+        try:
+            response = requests.get(base_url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            if not data:
+                st.warning("FMP screener returned no companies matching the criteria.")
+                return pd.DataFrame()
 
-            From 2024 Annual Report: Risk Factors... "Our top 3 customers account for approximately 60% of our total revenue.
-            The loss of any of these key customers would have a material adverse effect on our business. We are actively seeking to
-            diversify our customer base in North America to mitigate this concentration risk."
-            """
-        }
-        # For the demo, we'll just return data for the first company
-        return {tickers[0]: mock_corpus.get(tickers[0], "No data found.")}
+            df = pd.DataFrame(data)
+            # Rename columns to match the dossier's expected names
+            df.rename(columns={'symbol': 'ticker', 'marketCap': 'marketCapUSD'}, inplace=True)
+            st.write(f"Screening complete. Found {len(df)} matching companies.")
+            return df
+
+        except requests.exceptions.RequestException as e:
+            st.error(f"Error calling FMP API for screening: {e}")
+            return pd.DataFrame()
+
+    # --- STAGE 3: LIVE QUALITATIVE DATA AGGREGATION ---
+    def aggregate_qualitative_data(ticker: str) -> str:
+        """ (Stage 3) LIVE FUNCTION: Gathers textual data for a single ticker using FMP. """
+        st.info(f"**(LIVE) Stage 3: Aggregating Qualitative Data for {ticker}...**")
+        
+        # 1. Get latest earnings transcript
+        transcript_text = ""
+        try:
+            # FMP returns a list of transcripts, we'll take the most recent one (index 0)
+            url = f"https://financialmodelingprep.com/api/v3/earning_call_transcript/{ticker}?limit=1&apikey={fmp_api_key}"
+            response = requests.get(url)
+            response.raise_for_status()
+            transcript_data = response.json()
+            if transcript_data and 'content' in transcript_data[0]:
+                transcript_text = f"From Q{transcript_data[0]['quarter']} {transcript_data[0]['year']} Earnings Call:\n{transcript_data[0]['content']}"
+        except Exception:
+            transcript_text = "No recent earnings transcript found."
+
+        # 2. Get recent news
+        news_text = ""
+        try:
+            url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={ticker}&limit=5&apikey={fmp_api_key}"
+            response = requests.get(url)
+            response.raise_for_status()
+            news_data = response.json()
+            if news_data:
+                headlines = [f"- {item['title']} (Source: {item['site']})" for item in news_data]
+                news_text = "Recent News Headlines:\n" + "\n".join(headlines)
+        except Exception:
+            news_text = "Could not fetch recent news."
+
+        return f"{transcript_text}\n\n---\n\n{news_text}"
+
+
+    # --- STAGE 4 & 5 AND UI (No changes needed, but included for completeness) ---
 
     def run_ai_qualitative_analysis(company_name: str, text_corpus: str, theme: str) -> dict:
         """ (Stage 4) Uses an LLM to analyze the text corpus for thematic alignment, moat, and risks. """
@@ -5303,43 +5336,50 @@ def agent_ideagen_app():
     def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str) -> str:
         """ (Stage 5) Assembles all data into the final Markdown Dossier. """
         st.info(f"**(LIVE) Stage 5: Synthesizing Dossier for {quant_data['companyName']}...**")
+
+        def safe_get(data, keys, default='Analysis not available.'):
+            if not isinstance(data, dict): return default
+            temp = data
+            for key in keys:
+                if not isinstance(temp, dict): return default
+                temp = temp.get(key)
+            return temp if temp is not None else default
         
-        # Extracting data with fallbacks
-        theme_analysis = qual_analysis.get('theme_analysis', {})
-        moat_analysis = qual_analysis.get('moat_analysis', {})
-        risk_analysis = qual_analysis.get('risk_analysis', {})
+        theme_analysis_score = safe_get(qual_analysis, ['theme_analysis', 'score'], 'N/A')
+        theme_analysis_justification = safe_get(qual_analysis, ['theme_analysis', 'justification'])
+        moat_analysis_description = safe_get(qual_analysis, ['moat_analysis', 'description'])
+        risk_analysis_summary = safe_get(qual_analysis, ['risk_analysis', 'summary'])
 
         dossier = f"""
         # Investment Idea Dossier: {quant_data.get('companyName', 'N/A')} ({quant_data.get('ticker', 'N/A')})
 
         **Theme:** {theme}
-        **Generated:** {pd.to_datetime('today').strftime('%Y-%m-%d')} | **AI Alignment Score:** {theme_analysis.get('score', 'N/A')}/10
+        **Generated:** {pd.to_datetime('today').strftime('%Y-%m-%d')} | **AI Alignment Score:** {theme_analysis_score}/10
 
         ## Executive Summary
-        {quant_data.get('companyName', 'N/A')} appears to be a strong candidate for the '{theme}' theme.
-        The company shows robust quantitative metrics, including high revenue growth and strong margins relative to peers.
-        Qualitative analysis of recent documents confirms direct exposure to the theme and indicates a defensible competitive moat. Key risks include customer concentration.
+        {quant_data.get('companyName', 'N/A')} appears to be a potential candidate for the '{theme}' theme.
+        The company shows robust quantitative metrics. Qualitative analysis confirms its alignment with the theme and highlights its competitive position. Key risks should be reviewed.
 
         ---
         ## Quantitative Snapshot
         | Metric              | Value                  |
         |---------------------|------------------------|
         | Market Cap          | ${quant_data.get('marketCapUSD', 0) / 1e6:,.0f}M |
-        | Revenue Growth (3Y) | {quant_data.get('revenueGrowth3Y', 0):.1%}      |
+        | Revenue Growth (3Y) | {quant_data.get('revenueGrowth', 0):.1%}      |
         | Gross Margin        | {quant_data.get('grossMargin', 0):.1%}          |
-        | ROIC                | {quant_data.get('roic', 0):.1%}                  |
+        | ROIC                | {quant_data.get('roic', 'N/A')}                  |
 
         ---
         ## Qualitative Deep Dive
 
         ### Thematic Alignment & Justification
-        {theme_analysis.get('justification', 'Analysis not available.')}
+        {theme_analysis_justification}
 
         ### Competitive Moat & Pricing Power
-        {moat_analysis.get('description', 'Analysis not available.')}
+        {moat_analysis_description}
 
         ### Key Risks Identified
-        {risk_analysis.get('summary', 'Analysis not available.')}
+        {risk_analysis_summary}
         """
         return dossier
 
@@ -5347,7 +5387,7 @@ def agent_ideagen_app():
 
     user_query = st.text_area(
         "Describe your investment idea",
-        "Find me non-US, small-cap industrial companies with high recurring revenue, strong pricing power, and exposure to the grid modernization theme.",
+        "Find me US-based semiconductor companies with a market cap below $50 billion and a gross margin above 50%.",
         height=100
     )
 
@@ -5357,38 +5397,31 @@ def agent_ideagen_app():
             return
 
         with st.spinner("Agent IdeaGen is running... This may take a minute."):
-            # Stage 1: Deconstruct
             structured_query = deconstruct_prompt(user_query)
-            if not structured_query:
-                return
+            if not structured_query: return
             
             st.success("✅ Stage 1 Complete: Deconstructed user prompt.")
             theme = structured_query.get('qualitative_theme', 'N/A')
 
-            # Stage 2: Quantitative Screen
             screened_companies_df = run_quantitative_screen(structured_query.get('quantitative_filters', {}))
-            if screened_companies_df.empty:
-                st.warning("No companies passed the initial quantitative screen.")
-                return
+            if screened_companies_df.empty: return
 
             st.success(f"✅ Stage 2 Complete: Found {len(screened_companies_df)} potential companies.")
             
-            # Stages 3, 4, 5: Loop through each company
-            for index, company_row in screened_companies_df.iterrows():
+            # Limit to the top 3 results for the demo to run quickly
+            for index, company_row in screened_companies_df.head(3).iterrows():
                 company_name = company_row['companyName']
                 ticker = company_row['ticker']
 
-                # Stage 3: Aggregate Data
-                qualitative_corpus = aggregate_qualitative_data([ticker])
-                if not qualitative_corpus.get(ticker):
-                    st.warning(f"Could not retrieve qualitative data for {company_name}. Skipping.")
+                qualitative_corpus = aggregate_qualitative_data(ticker)
+                if not qualitative_corpus or "No recent earnings transcript found." in qualitative_corpus:
+                    st.warning(f"Could not retrieve sufficient qualitative data for {company_name}. Skipping.")
                     continue
                 
                 st.success(f"✅ Stage 3 Complete: Aggregated data for {company_name}.")
 
-                # Stage 4: AI Analysis
                 qualitative_analysis = run_ai_qualitative_analysis(
-                    company_name, qualitative_corpus[ticker], theme
+                    company_name, qualitative_corpus, theme
                 )
                 if not qualitative_analysis:
                     st.warning(f"Qualitative analysis failed for {company_name}. Skipping.")
@@ -5396,11 +5429,9 @@ def agent_ideagen_app():
                 
                 st.success(f"✅ Stage 4 Complete: AI analysis finished for {company_name}.")
 
-                # Stage 5: Synthesize Dossier
                 final_dossier = synthesize_dossier(company_row, qualitative_analysis, theme)
                 st.success(f"✅ Stage 5 Complete: Dossier created for {company_name}.")
 
-                # Display the final output
                 st.markdown("---")
                 st.markdown(final_dossier)
 
