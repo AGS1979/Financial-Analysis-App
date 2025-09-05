@@ -5307,21 +5307,74 @@ def agent_ideagen_app():
             st.error(f"Error in Stage 4 (Qualitative Analysis): {e}")
             return {}
 
+
+    def enrich_quantitative_data(df: pd.DataFrame, api_key: str) -> pd.DataFrame:
+    """Enriches the screened DataFrame with detailed financial metrics from FMP."""
+    st.info("**(LIVE) Enriching screened companies with detailed financial metrics...**")
+    enriched_rows = []
+    for index, row in df.iterrows():
+        ticker = row['ticker']
+        try:
+            # API call for key metrics
+            url = f"https://financialmodelingprep.com/api/v3/key-metrics-ttm/{ticker}?apikey={api_key}"
+            response = requests.get(url)
+            response.raise_for_status()
+            metrics = response.json()
+            
+            if metrics:
+                # Update the row with new data
+                row['grossMargin'] = metrics[0].get('grossProfitMarginTTM', 0)
+                row['revenueGrowth'] = metrics[0].get('revenueGrowthTTM', 0)
+                row['roic'] = metrics[0].get('roicTTM', 'N/A')
+            
+            enriched_rows.append(row)
+        except Exception as e:
+            st.warning(f"Could not enrich data for {ticker}: {e}")
+            # Append the original row even if enrichment fails
+            enriched_rows.append(row)
+            
+    return pd.DataFrame(enriched_rows)        
+
     def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str) -> str:
-        # This function remains the same
+        """ (Stage 5) Assembles all data into the final Markdown Dossier with improved formatting. """
         st.info(f"**(LIVE) Stage 5: Synthesizing Dossier for {quant_data['companyName']}...**")
-        # ... (safe_get helper and dossier creation logic is unchanged)
-        def safe_get(data, keys, default='Analysis not available.'):
-            if not isinstance(data, dict): return default
+
+        # --- START OF FIX ---
+        def format_ai_content(content):
+            """Helper to format AI output, joining lists into paragraphs."""
+            if isinstance(content, list):
+                # Join list items into a single block of text with paragraph breaks
+                return "\n\n".join(str(item) for item in content)
+            elif isinstance(content, str):
+                # If it's already a string, just return it
+                return content
+            # Fallback for unexpected formats
+            return "Analysis not available or in an unexpected format."
+
+        def safe_get_and_format(data, keys):
+            """Helper to safely get and format nested dictionary values."""
+            if not isinstance(data, dict):
+                return "Analysis not available."
+            
             temp = data
             for key in keys:
-                if not isinstance(temp, dict): return default
+                if not isinstance(temp, dict):
+                    return "Analysis not available."
                 temp = temp.get(key)
-            return temp if temp is not None else default
-        theme_analysis_score = safe_get(qual_analysis, ['theme_analysis', 'score'], 'N/A')
-        theme_analysis_justification = safe_get(qual_analysis, ['theme_analysis', 'justification'])
-        moat_analysis_description = safe_get(qual_analysis, ['moat_analysis', 'description'])
-        risk_analysis_summary = safe_get(qual_analysis, ['risk_analysis', 'summary'])
+
+            if temp is None:
+                return "Analysis not available."
+            
+            return format_ai_content(temp)
+
+        theme_analysis_score = qual_analysis.get('theme_analysis', {}).get('score', 'N/A')
+        theme_analysis_justification = safe_get_and_format(qual_analysis, ['theme_analysis', 'justification'])
+        moat_analysis_description = safe_get_and_format(qual_analysis, ['moat_analysis', 'description'])
+        risk_analysis_summary = safe_get_and_format(qual_analysis, ['risk_analysis']) # Risks might be a list of dicts
+        # --- END OF FIX ---
+
+        # Note: Financial data is addressed in the next section of this answer.
+        # This dossier will still show 0s until the quantitative step is also updated.
         dossier = f"""
         # Investment Idea Dossier: {quant_data.get('companyName', 'N/A')} ({quant_data.get('ticker', 'N/A')})
 
@@ -5403,6 +5456,9 @@ def agent_ideagen_app():
 
             screened_companies_df = run_quantitative_screen(structured_query.get('quantitative_filters', {}))
             if screened_companies_df.empty: return
+
+            screened_companies_df = enrich_quantitative_data(screened_companies_df, fmp_api_key)
+
             st.success(f"✅ Stage 2 Complete: Found {len(screened_companies_df)} potential companies.")
             
             all_dossiers = []
