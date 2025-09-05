@@ -5177,11 +5177,14 @@ def agent_sentinel_app():
 def agent_ideagen_app():
     """
     A Streamlit app for a multi-stage, AI-powered investment idea generator
-    that outputs a single downloadable HTML report.
+    that outputs a single, clean, de-duplicated, and wide-format downloadable HTML report.
     """
     import json
     import pandas as pd
     import requests
+    import textwrap
+    import markdown
+    import html
     from openai import AzureOpenAI
 
     st.markdown("### 💡 Agent IdeaGen")
@@ -5207,21 +5210,13 @@ def agent_ideagen_app():
         return
 
     def deconstruct_prompt(user_input: str) -> dict:
-        # This function remains the same
         prompt = f"""
         You are a financial analysis assistant. Convert the user's natural language investment idea into a structured JSON object
         compatible with the Financial Modeling Prep (FMP) API screener. Infer reasonable quantitative thresholds if not specified.
-
         User request: "{user_input}"
-
         Map the user's request to FMP's available screening parameters like: marketCapMoreThan, marketCapLowerThan, betaMoreThan,
         sector, industry, country, exchange, dividendYieldMoreThan, grossProfitMarginMoreThan, etc.
-
-        Output a JSON object with these keys:
-        - "quantitative_filters": A dictionary of FMP-compatible filters (e.g., {{"marketCapLowerThan": 2000000000, "sector": "Industrials", "grossProfitMarginMoreThan": 0.4, "country": "DE"}}).
-        - "qualitative_theme": A concise, one-sentence description of the core investment idea.
-        - "positive_keywords": A list of keywords to search for in documents that would support the thesis.
-        - "negative_keywords": A list of keywords that would weaken the thesis.
+        Output a JSON object with keys: "quantitative_filters", "qualitative_theme", "positive_keywords", "negative_keywords".
         """
         try:
             response = client.chat.completions.create(
@@ -5236,12 +5231,11 @@ def agent_ideagen_app():
             return None
 
     def run_quantitative_screen(criteria: dict) -> pd.DataFrame:
-        # This function remains the same
         st.info("**(LIVE) Stage 2: Running Quantitative Screen with FMP API...**")
         base_url = "https://financialmodelingprep.com/api/v3/stock-screener"
         params = criteria.copy()
         params['apikey'] = fmp_api_key
-        params['limit'] = 100 # Increase limit to get a wider initial universe
+        params['limit'] = 100
         try:
             response = requests.get(base_url, params=params)
             response.raise_for_status()
@@ -5251,49 +5245,74 @@ def agent_ideagen_app():
                 return pd.DataFrame()
             df = pd.DataFrame(data)
             df.rename(columns={'symbol': 'ticker', 'marketCap': 'marketCapUSD'}, inplace=True)
-            st.write(f"Screening complete. Found {len(df)} matching companies.")
             return df
         except requests.exceptions.RequestException as e:
             st.error(f"Error calling FMP API for screening: {e}")
             return pd.DataFrame()
 
+    # --- CHANGE: More robust function to fetch detailed metrics ---
+    def enrich_quantitative_data(df: pd.DataFrame, api_key: str) -> pd.DataFrame:
+        st.info("**(LIVE) Enriching screened companies with detailed TTM financial metrics...**")
+        
+        # Prepare lists to hold the new data
+        new_gross_margins = []
+        new_rev_growths = []
+        new_roics = []
+
+        for ticker in df['ticker']:
+            try:
+                url = f"https://financialmodelingprep.com/api/v3/key-metrics-ttm/{ticker}?apikey={api_key}"
+                response = requests.get(url, timeout=10)
+                response.raise_for_status()
+                metrics = response.json()
+                if metrics and isinstance(metrics, list):
+                    new_gross_margins.append(metrics[0].get('grossProfitMarginTTM'))
+                    new_rev_growths.append(metrics[0].get('revenueGrowthTTM'))
+                    new_roics.append(metrics[0].get('roicTTM'))
+                else:
+                    raise ValueError("No metrics found")
+            except (requests.exceptions.RequestException, ValueError, IndexError) as e:
+                st.warning(f"Could not enrich TTM data for {ticker}, using screener data as fallback. Reason: {e}")
+                new_gross_margins.append(None)
+                new_rev_growths.append(None)
+                new_roics.append(None)
+
+        # Assign the new data as columns to the DataFrame
+        # This is more reliable than iterating and modifying rows
+        df['grossMargin_ttm'] = new_gross_margins
+        df['revenueGrowth_ttm'] = new_rev_growths
+        df['roic_ttm'] = new_roics
+        return df
+
     def aggregate_qualitative_data(ticker: str) -> str:
-        # Modified to fetch more news for better context
         st.info(f"**(LIVE) Stage 3: Aggregating Qualitative Data for {ticker}...**")
-        transcript_text = ""
+        transcript_text, news_text = "No recent earnings transcript found.", "Could not fetch recent news."
         try:
             url = f"https://financialmodelingprep.com/api/v3/earning_call_transcript/{ticker}?limit=1&apikey={fmp_api_key}"
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
+            response = requests.get(url, timeout=10); response.raise_for_status()
             transcript_data = response.json()
             if transcript_data and 'content' in transcript_data[0]:
                 transcript_text = f"From Q{transcript_data[0]['quarter']} {transcript_data[0]['year']} Earnings Call:\n{transcript_data[0]['content']}"
-        except Exception:
-            transcript_text = "No recent earnings transcript found."
-
-        news_text = ""
+        except Exception: pass
         try:
-            url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={ticker}&limit=10&apikey={fmp_api_key}" # Increased news limit to 10
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
+            url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={ticker}&limit=10&apikey={fmp_api_key}"
+            response = requests.get(url, timeout=10); response.raise_for_status()
             news_data = response.json()
             if news_data:
                 headlines = [f"- {item['title']} (Source: {item['site']})" for item in news_data]
                 news_text = "Recent News Headlines:\n" + "\n".join(headlines)
-        except Exception:
-            news_text = "Could not fetch recent news."
+        except Exception: pass
         return f"{transcript_text}\n\n---\n\n{news_text}"
 
     def run_ai_qualitative_analysis(company_name: str, text_corpus: str, theme: str) -> dict:
-        # This function remains the same
         st.info(f"**(LIVE) Stage 4: Running AI Qualitative Analysis for {company_name}...**")
         analysis_prompt = f"""
         You are an expert equity research analyst. Analyze the provided text corpus for '{company_name}'
         based on the investment theme: '{theme}'. TEXT CORPUS: --- {text_corpus} ---
-        Perform the following three tasks and return a single JSON object with the keys "theme_analysis", "moat_analysis", and "risk_analysis".
-        1.  **theme_analysis**: Score the company's alignment with the theme from 1-10. Provide a 2-paragraph justification with direct quotes as evidence.
-        2.  **moat_analysis**: Describe the company's competitive moat and its ability to exercise pricing power. Provide evidence.
-        3.  **risk_analysis**: Identify and summarize the top 3 risks to the business mentioned in the text.
+        Perform three tasks and return a single JSON object with keys "theme_analysis", "moat_analysis", and "risk_analysis".
+        1.  **theme_analysis**: Score alignment from 1-10. Provide a 2-paragraph justification with direct quotes.
+        2.  **moat_analysis**: Describe the competitive moat and pricing power. Provide evidence.
+        3.  **risk_analysis**: Summarize the top 3 risks mentioned in the text.
         """
         try:
             response = client.chat.completions.create(
@@ -5307,47 +5326,12 @@ def agent_ideagen_app():
             st.error(f"Error in Stage 4 (Qualitative Analysis): {e}")
             return {}
 
-
-    def enrich_quantitative_data(df: pd.DataFrame, api_key: str) -> pd.DataFrame:
-        """Enriches the screened DataFrame with detailed financial metrics from FMP."""
-        st.info("**(LIVE) Enriching screened companies with detailed financial metrics...**")
-        enriched_rows = []
-        for index, row in df.iterrows():
-            ticker = row['ticker']
-            try:
-                # API call for key metrics
-                url = f"https://financialmodelingprep.com/api/v3/key-metrics-ttm/{ticker}?apikey={api_key}"
-                response = requests.get(url)
-                response.raise_for_status()
-                metrics = response.json()
-                
-                if metrics:
-                    # Update the row with new data
-                    row['grossMargin'] = metrics[0].get('grossProfitMarginTTM', 0)
-                    row['revenueGrowth'] = metrics[0].get('revenueGrowthTTM', 0)
-                    row['roic'] = metrics[0].get('roicTTM', 'N/A')
-                
-                enriched_rows.append(row)
-            except Exception as e:
-                st.warning(f"Could not enrich data for {ticker}: {e}")
-                # Append the original row even if enrichment fails
-                enriched_rows.append(row)
-                
-        return pd.DataFrame(enriched_rows)        
-
     def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str) -> dict:
-        """
-        (Stage 5) Assembles all data into a structured DICTIONARY with robust error handling for missing data.
-        """
-        import textwrap
         st.info(f"**(LIVE) Stage 5: Synthesizing Dossier for {quant_data['companyName']}...**")
-
-        # Helper function to format AI content (joining lists into paragraphs)
         def format_ai_content(content):
             if isinstance(content, list): return "\n\n".join(str(item) for item in content)
             if isinstance(content, str): return content
             return "Analysis not available or in an unexpected format."
-
         def safe_get_and_format(data, keys):
             if not isinstance(data, dict): return "Analysis not available."
             temp = data
@@ -5359,21 +5343,18 @@ def agent_ideagen_app():
 
         theme_analysis_score = qual_analysis.get('theme_analysis', {}).get('score', 'N/A')
         
-        # --- START OF FIX: Add isinstance checks to all formatted metrics ---
+        # --- CHANGE: Use enriched TTM data first, with fallback to original screener data ---
         market_cap_val = quant_data.get('marketCapUSD', 0)
+        rev_growth_val = quant_data.get('revenueGrowth_ttm', quant_data.get('revenueGrowth'))
+        margin_val = quant_data.get('grossMargin_ttm', quant_data.get('grossMargin'))
+        roic_val = quant_data.get('roic_ttm', quant_data.get('roic'))
+
+        # Safely format the values, handling non-numeric data
         market_cap_str = f"${market_cap_val / 1e6:,.0f}M" if isinstance(market_cap_val, (int, float)) else 'N/A'
-        
-        rev_growth_val = quant_data.get('revenueGrowth', 0)
         rev_growth_str = f"{rev_growth_val:.1%}" if isinstance(rev_growth_val, (int, float)) else 'N/A'
-        
-        margin_val = quant_data.get('grossMargin', 0)
         margin_str = f"{margin_val:.1%}" if isinstance(margin_val, (int, float)) else 'N/A'
-        
-        roic_val = quant_data.get('roic')
         roic_str = f"{roic_val:.2f}" if isinstance(roic_val, (int, float)) else 'N/A'
-        # --- END OF FIX ---
         
-        # Create the quantitative table as a markdown string using the safe strings
         quant_table_md = textwrap.dedent(f"""
         | Metric              | Value                  |
         |---------------------|------------------------|
@@ -5383,31 +5364,25 @@ def agent_ideagen_app():
         | ROIC                | {roic_str}             |
         """)
 
-        # Return a dictionary of sections
+        # --- CHANGE: Simplified title ---
         dossier_dict = {
-            "dossier_title": f"Investment Idea Dossier: {quant_data.get('companyName', 'N/A')} ({quant_data.get('ticker', 'N/A')})",
+            "dossier_title": f"{quant_data.get('companyName', 'N/A')} ({quant_data.get('ticker', 'N/A')})",
             "metadata": f"**Theme:** {theme}\n**Generated:** {pd.to_datetime('today').strftime('%Y-%m-%d')} | **AI Alignment Score:** {theme_analysis_score}/10",
-            "Executive Summary": quant_data.get('companyName', 'N/A') + f" appears to be a potential candidate for the '{theme}' theme. The company shows robust quantitative metrics. Qualitative analysis confirms its alignment with the theme and highlights its competitive position. Key risks should be reviewed.",
+            "Executive Summary": quant_data.get('companyName', 'N/A') + f" appears to be a potential candidate for the '{theme}' theme...",
             "Quantitative Snapshot": quant_table_md,
             "Thematic Alignment & Justification": safe_get_and_format(qual_analysis, ['theme_analysis', 'justification']),
             "Competitive Moat & Pricing Power": safe_get_and_format(qual_analysis, ['moat_analysis', 'description']),
             "Key Risks Identified": safe_get_and_format(qual_analysis, ['risk_analysis'])
         }
-        
         return dossier_dict
 
-    # --- NEW HELPER FUNCTION TO GENERATE FINAL HTML REPORT ---
     def generate_final_html_report(dossier_list: list, theme: str) -> str:
-        """ 
-        Compiles a list of dossier DICTIONARIES into a single, styled HTML file.
-        """
-        import markdown
-        import html
-
+        safe_theme = html.escape(theme)
+        # --- CHANGE: Widened the container max-width ---
         styles = """
         <style>
             body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background-color: #f9fafb; color: #1f2937;}
-            .container { max-width: 850px; margin: auto; }
+            .container { max-width: 1200px; margin: auto; }
             .report-header h1 { font-size: 2.2em; color: #111827; border-bottom: 2px solid #d1d5db; padding-bottom: 10px; margin-bottom: 5px; }
             .report-header h2 { font-size: 1.2em; color: #6b7280; font-weight: 400; margin-top: 0; }
             .dossier { background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 30px; margin-bottom: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
@@ -5419,58 +5394,32 @@ def agent_ideagen_app():
             .dossier th { background-color: #f3f4f6; font-weight: 600; }
             .dossier hr { border: none; border-top: 1px solid #e5e7eb; margin: 25px 0; }
             .dossier p { line-height: 1.6; }
-            .dossier .metadata p { margin: 2px 0; } /* Tighter spacing for metadata */
+            .dossier .metadata p { margin: 2px 0; }
         </style>
         """
-        
-        safe_theme = html.escape(theme)
         html_body = f"<div class='report-header'><h1>Investment Idea Generation Report</h1><h2>Theme: {safe_theme}</h2></div>"
-        
-        # --- CHANGE: Loop through list of DICTIONARIES ---
         for dossier_dict in dossier_list:
             html_body += "<div class='dossier'>"
-            
-            # Add dossier title
             html_body += f"<h1>{html.escape(dossier_dict.get('dossier_title', ''))}</h1>"
-            
-            # Add metadata
             metadata_md = dossier_dict.get('metadata', '')
-            html_body += f"<div class='metadata'>{markdown.markdown(metadata_md)}</div>"
-            
-            # Add a separator
-            html_body += "<hr>"
-
-            # Loop through the main content sections
-            main_sections = [
-                "Executive Summary", "Quantitative Snapshot", "Thematic Alignment & Justification",
-                "Competitive Moat & Pricing Power", "Key Risks Identified"
-            ]
-            
+            html_body += f"<div class='metadata'>{markdown.markdown(metadata_md)}</div><hr>"
+            main_sections = ["Executive Summary", "Quantitative Snapshot", "Thematic Alignment & Justification", "Competitive Moat & Pricing Power", "Key Risks Identified"]
             for section_title in main_sections:
                 if section_title in dossier_dict:
                     html_body += f"<h2>{html.escape(section_title)}</h2>"
-                    section_content_md = dossier_dict[section_title]
-                    # Convert each section's markdown to HTML individually
-                    html_body += markdown.markdown(section_content_md, extensions=['tables'])
-
-            html_body += "</div>" # Close dossier div
-                
+                    html_body += markdown.markdown(dossier_dict[section_title], extensions=['tables'])
+            html_body += "</div>"
         return f"<!DOCTYPE html><html><head><title>IdeaGen Report: {safe_theme}</title>{styles}</head><body><div class='container'>{html_body}</div></body></html>"
 
     # --- 2. STREAMLIT UI AND ORCHESTRATION ---
 
-    user_query = st.text_area(
-        "Describe your investment idea",
-        "Find me US-based semiconductor companies with a market cap below $50 billion and a gross margin above 50%.",
-        height=100
-    )
+    user_query = st.text_area("Describe your investment idea", "Identify US-based solar energy companies with a market capitalization exceeding $10 billion.", height=100)
 
     if st.button("🚀 Generate & Download Report", type="primary"):
         if not user_query:
-            st.warning("Please describe your investment idea.")
-            return
+            st.warning("Please describe your investment idea."); return
 
-        with st.spinner("Agent IdeaGen is running... This may take several minutes for a large number of companies."):
+        with st.spinner("Agent IdeaGen is running..."):
             structured_query = deconstruct_prompt(user_query)
             if not structured_query: return
             st.success("✅ Stage 1 Complete: Deconstructed user prompt.")
@@ -5479,17 +5428,16 @@ def agent_ideagen_app():
             screened_companies_df = run_quantitative_screen(structured_query.get('quantitative_filters', {}))
             if screened_companies_df.empty: return
 
+            # --- CHANGE: De-duplicate companies based on name ---
+            screened_companies_df.drop_duplicates(subset='companyName', keep='first', inplace=True)
+            st.success(f"✅ Stage 2a Complete: Found {len(screened_companies_df)} unique companies.")
+            
             screened_companies_df = enrich_quantitative_data(screened_companies_df, fmp_api_key)
-
-            st.success(f"✅ Stage 2 Complete: Found {len(screened_companies_df)} potential companies.")
+            st.success("✅ Stage 2b Complete: Enriched companies with TTM financials.")
             
             all_dossiers = []
-            
-            # --- MODIFIED LOOP: REMOVED .head(3) TO PROCESS ALL COMPANIES ---
             for index, company_row in screened_companies_df.iterrows():
-                company_name = company_row['companyName']
-                ticker = company_row['ticker']
-
+                company_name, ticker = company_row['companyName'], company_row['ticker']
                 qualitative_corpus = aggregate_qualitative_data(ticker)
                 if not qualitative_corpus or "No recent earnings transcript found." in qualitative_corpus:
                     st.warning(f"Could not retrieve sufficient qualitative data for {company_name}. Skipping.")
@@ -5506,14 +5454,12 @@ def agent_ideagen_app():
                 st.success(f"✅ Stage 5 Complete: Dossier created for {company_name}.")
                 all_dossiers.append(final_dossier)
             
-            # --- NEW: GENERATE AND OFFER HTML DOWNLOAD ---
             if all_dossiers:
                 final_html_report = generate_final_html_report(all_dossiers, theme)
-                st.session_state.ideagen_report = final_html_report # Store in session state for download
+                st.session_state.ideagen_report = final_html_report
             else:
                 st.warning("Could not generate a report for any of the screened companies.")
     
-    # --- NEW: DOWNLOAD HANDLER (OUTSIDE THE BUTTON CLICK) ---
     if 'ideagen_report' in st.session_state:
         st.download_button(
             label="📥 Download Full HTML Report",
@@ -5521,7 +5467,6 @@ def agent_ideagen_app():
             file_name=f"IdeaGen_Report_{pd.to_datetime('today').strftime('%Y%m%d')}.html",
             mime="text/html"
         )
-        # Clear the state after offering the download to prevent it from reappearing
         del st.session_state.ideagen_report
 
 
