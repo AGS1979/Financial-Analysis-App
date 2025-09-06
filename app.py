@@ -5334,17 +5334,43 @@ def agent_ideagen_app():
         except Exception: pass
         return f"{transcript_text}\n\n---\n\n{news_text}"
 
-    # REVISED: Updated prompt for better risk formatting
+    # REVISED: Highly structured prompt to ensure consistent JSON output
     def run_ai_qualitative_analysis(company_name: str, text_corpus: str, theme: str) -> dict:
         st.info(f"**(LIVE) Stage 4: Running AI Qualitative Analysis for {company_name}...**")
         analysis_prompt = f"""
-        You are an expert equity research analyst. Analyze the provided text corpus for '{company_name}'
-        based on the investment theme: '{theme}'. TEXT CORPUS: --- {text_corpus} ---
-        
-        Perform three tasks and return a single JSON object with the keys "theme_analysis", "moat_analysis", and "risk_analysis".
-        1.  **theme_analysis**: Provide a 2-paragraph justification for the company's alignment with the theme, including direct quotes.
-        2.  **moat_analysis**: Describe the competitive moat and pricing power. Provide evidence.
-        3.  **risk_analysis**: Identify the top 3 risks. For this key, return a JSON object with a single key "top_risks" which is a list of objects. Each object should have two keys: "risk" (a short title) and "description" (a detailed explanation).
+        You are an expert equity research analyst. Your task is to analyze the provided text corpus for '{company_name}' based on the investment theme: '{theme}'.
+
+        Return a single, valid JSON object with the exact following structure. Do not add any extra commentary outside the JSON structure.
+
+        {{
+          "theme_analysis": {{
+            "justification": "A 2-paragraph justification for the company's alignment with the theme, including direct quotes from the text corpus."
+          }},
+          "moat_analysis": {{
+            "description": "A detailed description of the company's competitive moat and pricing power, with evidence from the text corpus."
+          }},
+          "risk_analysis": {{
+            "top_risks": [
+              {{
+                "risk": "A short title for the first risk.",
+                "description": "A detailed explanation of the first risk, based on the text corpus."
+              }},
+              {{
+                "risk": "A short title for the second risk.",
+                "description": "A detailed explanation of the second risk, based on the text corpus."
+              }},
+              {{
+                "risk": "A short title for the third risk.",
+                "description": "A detailed explanation of the third risk, based on the text corpus."
+              }}
+            ]
+          }}
+        }}
+
+        TEXT CORPUS:
+        ---
+        {text_corpus[:25000]}
+        ---
         """
         try:
             response = client.chat.completions.create(
@@ -5358,7 +5384,6 @@ def agent_ideagen_app():
             st.error(f"Error in Stage 4 (Qualitative Analysis): {e}")
             return {}
 
-    # REVISED: Logic to handle risk formatting and remove AI score
     def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str) -> dict:
         st.info(f"**(LIVE) Stage 5: Synthesizing Dossier for {quant_data['companyName']}...**")
         
@@ -5371,7 +5396,6 @@ def agent_ideagen_app():
             if temp is None: return "Analysis not available."
             return str(temp)
 
-        # --- NEW: Logic to parse and format the risk dictionary ---
         def format_risks(risk_data):
             if not isinstance(risk_data, dict) or 'top_risks' not in risk_data:
                 return "Risk analysis not available or in an unexpected format."
@@ -5429,7 +5453,7 @@ def agent_ideagen_app():
 
         dossier_dict = {
             "dossier_title": f"{quant_data.get('companyName', 'N/A')} ({quant_data.get('ticker', 'N/A')})",
-            "metadata": f"**Theme:** {theme}", # AI Score removed
+            "metadata": f"**Theme:** {theme}",
             "Executive Summary": executive_summary,
             "Quantitative Snapshot": quant_table_md,
             "Thematic Alignment & Justification": safe_get_and_format(qual_analysis, ['theme_analysis', 'justification']),
