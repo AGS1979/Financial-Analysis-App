@@ -5270,38 +5270,27 @@ def agent_ideagen_app():
 
     def enrich_data(df: pd.DataFrame, api_key: str) -> pd.DataFrame:
         st.info(f"**(LIVE) Enriching {len(df)} companies with financial data. This may take a moment...**")
-        
         enriched_data = []
         progress_bar = st.progress(0, text=f"Processing 0 / {len(df)} companies...")
 
         for i, row in df.iterrows():
             ticker = row['symbol']; fmp_ticker = ticker.replace('.', '-')
             progress_bar.progress((i + 1) / len(df), text=f"Processing {ticker} ({i+1}/{len(df)})...")
-            
-            # Combine data fetching to be more efficient
             try:
                 profile_url = f"https://financialmodelingprep.com/api/v3/profile/{fmp_ticker}?apikey={api_key}"
                 profile_data = requests.get(profile_url, timeout=10).json()
-                
                 ratios_url = f"https://financialmodelingprep.com/api/v3/ratios-ttm/{fmp_ticker}?apikey={api_key}"
                 ratios_data = requests.get(ratios_url, timeout=10).json()
-
                 new_row = row.to_dict()
-                if profile_data and isinstance(profile_data, list):
-                    new_row.update(profile_data[0])
-                if ratios_data and isinstance(ratios_data, list):
-                    new_row.update(ratios_data[0])
-                
+                if profile_data and isinstance(profile_data, list): new_row.update(profile_data[0])
+                if ratios_data and isinstance(ratios_data, list): new_row.update(ratios_data[0])
                 enriched_data.append(new_row)
-
             except Exception:
-                enriched_data.append(row.to_dict()) # Append original row if enrichment fails
+                enriched_data.append(row.to_dict())
                 continue
-        
         progress_bar.empty()
         return pd.DataFrame(enriched_data)
 
-    # All subsequent helper functions remain unchanged
     def aggregate_qualitative_data(ticker: str) -> str:
         st.info(f"**(LIVE) Aggregating Qualitative Data for {ticker}...**")
         transcript_text, news_text = "No recent earnings transcript found.", "Could not fetch recent news."
@@ -5385,9 +5374,7 @@ def agent_ideagen_app():
                     st.error(f"Could not identify a valid country. Please specify a known country."); st.session_state.ideagen_step = 1; return
                 quant_filters['country'] = country_code
                 
-                # New robust workflow
                 broad_df = get_company_universe(quant_filters, fmp_api_key)
-
                 if not broad_df.empty:
                     st.session_state.ideagen_enriched_df = enrich_data(broad_df, fmp_api_key)
                     st.session_state.ideagen_quant_filters = quant_filters
@@ -5402,24 +5389,26 @@ def agent_ideagen_app():
         df = st.session_state.ideagen_enriched_df
         quant_filters = st.session_state.ideagen_quant_filters
 
-        # --- Interactive Filter UI ---
-        mkt_cap_min = quant_filters.get('marketCapMoreThan', 0) / 1e9
-        margin_min = quant_filters.get('grossProfitMarginMoreThan', 0.0) * 100
+        # --- Interactive Filter UI with Robust Default Value Handling ---
+        mkt_cap_min_raw = quant_filters.get('marketCapMoreThan', 0) / 1e9
+        margin_min_raw = quant_filters.get('grossProfitMarginMoreThan', 0.0) * 100
+
+        # THIS IS THE FIX: Clamp the default values to be within the slider's range
+        mkt_cap_default = max(0.0, min(200.0, mkt_cap_min_raw))
+        margin_default = max(0.0, min(100.0, margin_min_raw))
 
         col1, col2 = st.columns(2)
         with col1:
-            mkt_cap_filter = st.slider("Minimum Market Cap (USD Billions)", 0.0, 200.0, mkt_cap_min, 0.5)
+            mkt_cap_filter = st.slider("Minimum Market Cap (USD Billions)", 0.0, 200.0, mkt_cap_default, 0.5)
         with col2:
-            margin_filter = st.slider("Minimum Gross Margin (TTM %)", 0.0, 100.0, margin_min, 1.0)
+            margin_filter = st.slider("Minimum Gross Margin (TTM %)", 0.0, 100.0, margin_default, 1.0)
 
-        # Apply interactive filters
         df_filtered = df.copy()
         df_filtered.dropna(subset=['mktCap', 'grossProfitMarginTTM'], inplace=True)
         df_filtered = df_filtered[df_filtered['mktCap'] > (mkt_cap_filter * 1e9)]
         df_filtered = df_filtered[df_filtered['grossProfitMarginTTM'] > (margin_filter / 100)]
 
-        # Display filtered results
-        st.write(f"Displaying {len(df_filtered)} companies matching your criteria:")
+        st.write(f"Displaying {len(df_filtered)} companies matching your interactive criteria:")
         df_display = df_filtered[['symbol', 'companyName', 'mktCap', 'grossProfitMarginTTM', 'industry', 'country']].copy()
         df_display.rename(columns={'symbol': 'Ticker', 'mktCap': 'Market Cap (USD)', 'grossProfitMarginTTM': 'Gross Margin (TTM)'}, inplace=True)
         df_display['Market Cap (USD)'] = df_display['Market Cap (USD)'].apply(lambda x: f"${x/1e9:,.1f}B" if pd.notnull(x) else 'N/A')
