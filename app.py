@@ -5265,26 +5265,39 @@ def agent_ideagen_app():
             st.error("FMP screener could not find any companies matching the basic criteria."); return pd.DataFrame()
         return pd.DataFrame(data)
 
+    # REVISED: This function now preserves the original ticker.
     def enrich_data(df: pd.DataFrame, api_key: str) -> pd.DataFrame:
         st.info(f"**(LIVE) Enriching {len(df)} companies with financial data. This may take a moment...**")
         enriched_data = []
         progress_bar = st.progress(0, text=f"Processing 0 / {len(df)} companies...")
 
         for i, row in df.iterrows():
-            ticker = row['symbol']; fmp_ticker = ticker.replace('.', '-')
-            progress_bar.progress((i + 1) / len(df), text=f"Processing {ticker} ({i+1}/{len(df)})...")
+            original_symbol = row['symbol'] # Store the original, country-specific symbol
+            fmp_ticker = original_symbol.replace('.', '-')
+            progress_bar.progress((i + 1) / len(df), text=f"Processing {original_symbol} ({i+1}/{len(df)})...")
+            
             try:
                 profile_url = f"https://financialmodelingprep.com/api/v3/profile/{fmp_ticker}?apikey={api_key}"
                 profile_data = requests.get(profile_url, timeout=10).json()
+                
                 ratios_url = f"https://financialmodelingprep.com/api/v3/ratios-ttm/{fmp_ticker}?apikey={api_key}"
                 ratios_data = requests.get(ratios_url, timeout=10).json()
+
                 new_row = row.to_dict()
-                if profile_data and isinstance(profile_data, list): new_row.update(profile_data[0])
-                if ratios_data and isinstance(ratios_data, list): new_row.update(ratios_data[0])
+                if profile_data and isinstance(profile_data, list):
+                    new_row.update(profile_data[0])
+                if ratios_data and isinstance(ratios_data, list):
+                    new_row.update(ratios_data[0])
+                
+                # THIS IS THE FIX: Ensure the original symbol is restored.
+                new_row['symbol'] = original_symbol
+                
                 enriched_data.append(new_row)
+
             except Exception:
                 enriched_data.append(row.to_dict())
                 continue
+        
         progress_bar.empty()
         return pd.DataFrame(enriched_data)
 
@@ -5404,7 +5417,6 @@ def agent_ideagen_app():
 
         st.write(f"Displaying {len(df_filtered)} companies matching your interactive criteria:")
         
-        # --- FIX: Use 'symbol' column for display and logic ---
         df_display = df_filtered[['symbol', 'companyName', 'mktCap', 'grossProfitMarginTTM', 'industry', 'country']].copy()
         df_display.rename(columns={'symbol': 'Ticker', 'mktCap': 'Market Cap (USD)', 'grossProfitMarginTTM': 'Gross Margin (TTM)'}, inplace=True)
         df_display['Market Cap (USD)'] = df_display['Market Cap (USD)'].apply(lambda x: f"${x/1e9:,.1f}B" if pd.notnull(x) else 'N/A')
