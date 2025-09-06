@@ -5226,12 +5226,9 @@ def agent_ideagen_app():
         3. Infer the main investment theme from the request. This should never be null.
         4. Extract the full country name (e.g., "India", "United States").
         5. The final JSON must have the keys: "quantitative_filters" and "qualitative_theme".
-        **VALID_SECTORS:**
-        {fmp_sectors}
-        **VALID_INDUSTRIES (Sample):**
-        {fmp_industries}
-        **FMP API Parameters:**
-        `marketCapMoreThan`, `marketCapLowerThan`, `grossProfitMarginMoreThan`, `country`, `sector`, `industry`.
+        **VALID_SECTORS:** {fmp_sectors}
+        **VALID_INDUSTRIES (Sample):** {fmp_industries}
+        **FMP API Parameters:** `marketCapMoreThan`, `marketCapLowerThan`, `grossProfitMarginMoreThan`, `country`, `sector`, `industry`.
         **User Request:** "{user_input}"
         Now, generate the complete JSON object.
         """
@@ -5338,7 +5335,7 @@ def agent_ideagen_app():
             summary_response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": summary_prompt}], temperature=0.2, max_tokens=150)
             executive_summary = summary_response.choices[0].message.content
         except Exception: executive_summary = f"{quant_data.get('companyName', 'N/A')} is a potential candidate for the '{theme}' theme."
-        return {"dossier_title": f"{quant_data.get('companyName', 'N/A')} ({quant_data.get('ticker', 'N/A')})","metadata": f"**Theme:** {theme}","Executive Summary": executive_summary,"Quantitative Snapshot": quant_table_md,"Thematic Alignment & Justification": safe_get_and_format(qual_analysis, ['theme_analysis', 'justification']),"Competitive Moat & Pricing Power": safe_get_and_format(qual_analysis, ['moat_analysis', 'description']),"Key Risks Identified": format_risks(qual_analysis.get('risk_analysis'))}
+        return {"dossier_title": f"{quant_data.get('companyName', 'N/A')} ({quant_data.get('symbol', 'N/A')})","metadata": f"**Theme:** {theme}","Executive Summary": executive_summary,"Quantitative Snapshot": quant_table_md,"Thematic Alignment & Justification": safe_get_and_format(qual_analysis, ['theme_analysis', 'justification']),"Competitive Moat & Pricing Power": safe_get_and_format(qual_analysis, ['moat_analysis', 'description']),"Key Risks Identified": format_risks(qual_analysis.get('risk_analysis'))}
 
     def generate_final_html_report(dossier_list: list, theme: str) -> str:
         safe_theme = html.escape(theme or "User-Defined Theme"); styles = """<style> body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background-color: #f9fafb; color: #1f2937;} .container { max-width: 1200px; margin: auto; } .report-header h1 { font-size: 2.2em; color: #111827; border-bottom: 2px solid #d1d5db; padding-bottom: 10px; margin-bottom: 5px; } .report-header h2 { font-size: 1.2em; color: #6b7280; font-weight: 400; margin-top: 0; } .dossier { background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 30px; margin-bottom: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); } .dossier h1, .dossier h2 { color: #111827; } .dossier h1 { font-size: 1.8em; } .dossier h2 { font-size: 1.4em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-top: 25px; } .dossier table { width: 100%; border-collapse: collapse; margin-top: 15px; } .dossier th, .dossier td { padding: 10px 12px; border: 1px solid #d1d5db; text-align: left; } .dossier th { background-color: #f3f4f6; font-weight: 600; } .dossier p { line-height: 1.6; } .dossier .metadata { color: #4b5563; font-size: 0.9em; } .dossier ul { padding-left: 20px; } .dossier li { margin-bottom: 0.5em; } </style>"""
@@ -5389,11 +5386,8 @@ def agent_ideagen_app():
         df = st.session_state.ideagen_enriched_df
         quant_filters = st.session_state.ideagen_quant_filters
 
-        # --- Interactive Filter UI with Robust Default Value Handling ---
         mkt_cap_min_raw = quant_filters.get('marketCapMoreThan', 0) / 1e9
         margin_min_raw = quant_filters.get('grossProfitMarginMoreThan', 0.0) * 100
-
-        # THIS IS THE FIX: Clamp the default values to be within the slider's range
         mkt_cap_default = max(0.0, min(200.0, mkt_cap_min_raw))
         margin_default = max(0.0, min(100.0, margin_min_raw))
 
@@ -5409,25 +5403,27 @@ def agent_ideagen_app():
         df_filtered = df_filtered[df_filtered['grossProfitMarginTTM'] > (margin_filter / 100)]
 
         st.write(f"Displaying {len(df_filtered)} companies matching your interactive criteria:")
+        
+        # --- FIX: Use 'symbol' column for display and logic ---
         df_display = df_filtered[['symbol', 'companyName', 'mktCap', 'grossProfitMarginTTM', 'industry', 'country']].copy()
         df_display.rename(columns={'symbol': 'Ticker', 'mktCap': 'Market Cap (USD)', 'grossProfitMarginTTM': 'Gross Margin (TTM)'}, inplace=True)
         df_display['Market Cap (USD)'] = df_display['Market Cap (USD)'].apply(lambda x: f"${x/1e9:,.1f}B" if pd.notnull(x) else 'N/A')
         df_display['Gross Margin (TTM)'] = df_display['Gross Margin (TTM)'].apply(lambda x: f"{x:.1%}" if pd.notnull(x) else 'N/A')
         st.dataframe(df_display, use_container_width=True, hide_index=True)
 
-        options = [f"{row['companyName']} ({row['ticker']})" for index, row in df_filtered.iterrows()]
+        options = [f"{row['companyName']} ({row['symbol']})" for index, row in df_filtered.iterrows()]
         selected_options = st.multiselect("Select companies for deeper qualitative analysis:", options, default=options)
         
         if st.button("🚀 Generate & Download Report for Selected", type="primary"):
             if not selected_options: st.warning("Please select at least one company.")
             else:
-                selected_tickers = [opt.split('(')[-1].replace(')', '') for opt in selected_options]
-                analysis_df = df_filtered[df_filtered['ticker'].isin(selected_tickers)]
+                selected_symbols = [opt.split('(')[-1].replace(')', '') for opt in selected_options]
+                analysis_df = df_filtered[df_filtered['symbol'].isin(selected_symbols)]
                 
                 with st.spinner("Running deeper analysis... This may take a few minutes."):
                     all_dossiers = []
                     for index, company_row in analysis_df.iterrows():
-                        qualitative_corpus = aggregate_qualitative_data(company_row['ticker'])
+                        qualitative_corpus = aggregate_qualitative_data(company_row['symbol'])
                         if not qualitative_corpus or "No recent earnings transcript found." in qualitative_corpus:
                             st.warning(f"Could not get qualitative data for {company_row['companyName']}. Skipping."); continue
                         qualitative_analysis = run_ai_qualitative_analysis(company_row['companyName'], qualitative_corpus, st.session_state.ideagen_theme)
