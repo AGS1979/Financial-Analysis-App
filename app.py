@@ -5253,6 +5253,14 @@ def agent_ideagen_app():
         if not screen_params.get('country'):
             st.error("A country must be specified to find companies."); return pd.DataFrame()
 
+        
+        # <<< START FIX >>>
+        # Specify the exchange for non-US countries to get local listings.
+        # For India, we will default to the National Stock Exchange (NSE).
+        if screen_params.get('country') == 'IN':
+            screen_params['exchange'] = 'NSE'
+        # <<< END FIX >>>    
+
         st.info(f"Attempting screen with: {screen_params}")
         data = _make_fmp_api_call(screen_params.copy())
         if not data and 'industry' in screen_params:
@@ -5273,7 +5281,7 @@ def agent_ideagen_app():
 
         for i, row in df.iterrows():
             original_symbol = row['symbol'] # Store the original, country-specific symbol
-            fmp_ticker = original_symbol.replace('.', '-')
+            fmp_ticker = original_symbol
             progress_bar.progress((i + 1) / len(df), text=f"Processing {original_symbol} ({i+1}/{len(df)})...")
             
             try:
@@ -5304,7 +5312,7 @@ def agent_ideagen_app():
     def aggregate_qualitative_data(ticker: str) -> str:
         st.info(f"**(LIVE) Aggregating Qualitative Data for {ticker}...**")
         transcript_text, news_text = "No recent earnings transcript found.", "Could not fetch recent news."
-        fmp_ticker = ticker.replace('.', '-')
+        fmp_ticker = ticker
         try:
             url = f"https://financialmodelingprep.com/api/v3/earning_call_transcript/{fmp_ticker}?limit=1&apikey={fmp_api_key}"
             response = requests.get(url, timeout=10); response.raise_for_status()
