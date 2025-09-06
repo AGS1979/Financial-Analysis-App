@@ -5177,7 +5177,7 @@ def agent_sentinel_app():
 def agent_ideagen_app():
     """
     A Streamlit app for a multi-stage, AI-powered investment idea generator
-    that outputs a single, clean, de-duplicated, and wide-format downloadable HTML report.
+    that now includes a user selection step and provides a downloadable HTML report.
     """
     import json
     import pandas as pd
@@ -5209,10 +5209,9 @@ def agent_ideagen_app():
         st.error(f"Could not initialize the LLM client. Please check your secrets. Error: {e}")
         return
 
+    # REVISED: More robust prompt for better accuracy
     def deconstruct_prompt(user_input: str) -> dict:
         """ (Stage 1) Uses a more robust LLM prompt to convert a natural language request into a structured query. """
-        
-        # --- CHANGE: This prompt is now much more explicit and provides clear examples ---
         prompt = f"""
         You are an expert financial data API assistant. Your sole task is to convert a user's natural language request into a valid JSON object for the FMP Stock Screener API.
 
@@ -5221,18 +5220,20 @@ def agent_ideagen_app():
         2.  Map these criteria to the available FMP API parameters listed below.
         3.  If a filter is not mentioned by the user, DO NOT include it in the JSON.
         4.  Convert numerical values correctly (e.g., '$10 billion' becomes `10000000000`).
+        5.  The final JSON must have four keys: "quantitative_filters", "qualitative_theme", "positive_keywords", and "negative_keywords".
 
         **FMP API Parameters:**
         `marketCapMoreThan`, `marketCapLowerThan`, `priceMoreThan`, `priceLowerThan`, `betaMoreThan`, `betaLowerThan`, `volumeMoreThan`, `volumeLowerThan`, `dividendYieldMoreThan`, `dividendYieldLowerThan`, `grossProfitMarginMoreThan`, `grossProfitMarginLowerThan`, `netProfitMarginMoreThan`, `returnOnEquityMoreThan`, `country`, `sector`, `industry`, `exchange`.
 
         **Example Mapping:**
-        - User says: "US-based solar energy companies" -> You output: `"country": "US", "industry": "Solar"`
-        - User says: "market capitalization exceeding $10 billion" -> You output: `"marketCapMoreThan": 10000000000`
-        - User says: "gross margin above 50%" -> You output: `"grossProfitMarginMoreThan": 0.50`
+        - User says: "US-based solar energy companies" -> You output: `"country": "US", "industry": "Solar"` in the filters.
+        - User says: "market capitalization exceeding $10 billion" -> You output: `"marketCapMoreThan": 10000000000` in the filters.
+        - User says: "gross margin above 50%" -> You output: `"grossProfitMarginMoreThan": 0.50` in the filters.
+        - User says: "I'm interested in the AI revolution" -> You output: `"qualitative_theme": "AI Revolution"` and `"positive_keywords": ["artificial intelligence", "machine learning"]`.
 
         **User Request:** "{user_input}"
 
-        Now, generate the complete JSON object with the keys "quantitative_filters", "qualitative_theme", "positive_keywords", and "negative_keywords".
+        Now, generate the complete JSON object.
         """
         try:
             response = client.chat.completions.create(
@@ -5266,14 +5267,10 @@ def agent_ideagen_app():
             st.error(f"Error calling FMP API for screening: {e}")
             return pd.DataFrame()
 
-    # --- CHANGE: More robust function to fetch detailed metrics ---
+    # REVISED: More robust data enrichment
     def enrich_quantitative_data(df: pd.DataFrame, api_key: str) -> pd.DataFrame:
         st.info("**(LIVE) Enriching screened companies with detailed TTM financial metrics...**")
-        
-        # Prepare lists to hold the new data
-        new_gross_margins = []
-        new_rev_growths = []
-        new_roics = []
+        new_gross_margins, new_rev_growths, new_roics = [], [], []
 
         for ticker in df['ticker']:
             try:
@@ -5288,13 +5285,10 @@ def agent_ideagen_app():
                 else:
                     raise ValueError("No metrics found")
             except (requests.exceptions.RequestException, ValueError, IndexError) as e:
-                st.warning(f"Could not enrich TTM data for {ticker}, using screener data as fallback. Reason: {e}")
                 new_gross_margins.append(None)
                 new_rev_growths.append(None)
                 new_roics.append(None)
-
-        # Assign the new data as columns to the DataFrame
-        # This is more reliable than iterating and modifying rows
+        
         df['grossMargin_ttm'] = new_gross_margins
         df['revenueGrowth_ttm'] = new_rev_growths
         df['roic_ttm'] = new_roics
@@ -5358,33 +5352,29 @@ def agent_ideagen_app():
             return format_ai_content(temp)
 
         theme_analysis_score = qual_analysis.get('theme_analysis', {}).get('score', 'N/A')
-        
-        # --- CHANGE: Use enriched TTM data first, with fallback to original screener data ---
         market_cap_val = quant_data.get('marketCapUSD', 0)
         rev_growth_val = quant_data.get('revenueGrowth_ttm', quant_data.get('revenueGrowth'))
         margin_val = quant_data.get('grossMargin_ttm', quant_data.get('grossMargin'))
         roic_val = quant_data.get('roic_ttm', quant_data.get('roic'))
 
-        # Safely format the values, handling non-numeric data
-        market_cap_str = f"${market_cap_val / 1e6:,.0f}M" if isinstance(market_cap_val, (int, float)) else 'N/A'
+        market_cap_str = f"${market_cap_val / 1e9:,.1f}B" if isinstance(market_cap_val, (int, float)) else 'N/A'
         rev_growth_str = f"{rev_growth_val:.1%}" if isinstance(rev_growth_val, (int, float)) else 'N/A'
         margin_str = f"{margin_val:.1%}" if isinstance(margin_val, (int, float)) else 'N/A'
-        roic_str = f"{roic_val:.2f}" if isinstance(roic_val, (int, float)) else 'N/A'
+        roic_str = f"{roic_val:.1%}" if isinstance(roic_val, (int, float)) else 'N/A'
         
         quant_table_md = textwrap.dedent(f"""
         | Metric              | Value                  |
         |---------------------|------------------------|
         | Market Cap          | {market_cap_str}       |
-        | Revenue Growth (3Y) | {rev_growth_str}       |
-        | Gross Margin        | {margin_str}           |
-        | ROIC                | {roic_str}             |
+        | Revenue Growth (TTM)| {rev_growth_str}       |
+        | Gross Margin (TTM)  | {margin_str}           |
+        | ROIC (TTM)          | {roic_str}             |
         """)
 
-        # --- CHANGE: Simplified title ---
         dossier_dict = {
             "dossier_title": f"{quant_data.get('companyName', 'N/A')} ({quant_data.get('ticker', 'N/A')})",
-            "metadata": f"**Theme:** {theme}\n**Generated:** {pd.to_datetime('today').strftime('%Y-%m-%d')} | **AI Alignment Score:** {theme_analysis_score}/10",
-            "Executive Summary": quant_data.get('companyName', 'N/A') + f" appears to be a potential candidate for the '{theme}' theme...",
+            "metadata": f"**Theme:** {theme} | **AI Alignment Score:** {theme_analysis_score}/10",
+            "Executive Summary": f"{quant_data.get('companyName', 'N/A')} is a potential candidate for the '{theme}' theme, operating in the {quant_data.get('industry', 'N/A')} industry with a market cap of {market_cap_str}.",
             "Quantitative Snapshot": quant_table_md,
             "Thematic Alignment & Justification": safe_get_and_format(qual_analysis, ['theme_analysis', 'justification']),
             "Competitive Moat & Pricing Power": safe_get_and_format(qual_analysis, ['moat_analysis', 'description']),
@@ -5394,7 +5384,6 @@ def agent_ideagen_app():
 
     def generate_final_html_report(dossier_list: list, theme: str) -> str:
         safe_theme = html.escape(theme)
-        # --- CHANGE: Widened the container max-width ---
         styles = """
         <style>
             body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background-color: #f9fafb; color: #1f2937;}
@@ -5402,15 +5391,14 @@ def agent_ideagen_app():
             .report-header h1 { font-size: 2.2em; color: #111827; border-bottom: 2px solid #d1d5db; padding-bottom: 10px; margin-bottom: 5px; }
             .report-header h2 { font-size: 1.2em; color: #6b7280; font-weight: 400; margin-top: 0; }
             .dossier { background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 30px; margin-bottom: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-            .dossier h1, .dossier h2, .dossier h3 { color: #111827; }
+            .dossier h1, .dossier h2 { color: #111827; }
             .dossier h1 { font-size: 1.8em; }
             .dossier h2 { font-size: 1.4em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-top: 25px; }
             .dossier table { width: 100%; border-collapse: collapse; margin-top: 15px; }
             .dossier th, .dossier td { padding: 10px 12px; border: 1px solid #d1d5db; text-align: left; }
             .dossier th { background-color: #f3f4f6; font-weight: 600; }
-            .dossier hr { border: none; border-top: 1px solid #e5e7eb; margin: 25px 0; }
             .dossier p { line-height: 1.6; }
-            .dossier .metadata p { margin: 2px 0; }
+            .dossier .metadata { color: #4b5563; font-size: 0.9em; }
         </style>
         """
         html_body = f"<div class='report-header'><h1>Investment Idea Generation Report</h1><h2>Theme: {safe_theme}</h2></div>"
@@ -5429,61 +5417,86 @@ def agent_ideagen_app():
 
     # --- 2. STREAMLIT UI AND ORCHESTRATION ---
 
-    user_query = st.text_area("Describe your investment idea", "Identify US-based solar energy companies with a market capitalization exceeding $10 billion.", height=100)
+    # Initialize session state
+    if 'ideagen_step' not in st.session_state:
+        st.session_state.ideagen_step = 1
 
-    if st.button("🚀 Generate & Download Report", type="primary"):
+    st.subheader("Step 1: Describe Your Investment Idea")
+    user_query = st.text_area("Enter your theme or criteria:", "Identify US-based solar energy companies with a market capitalization exceeding $10 billion and a gross margin above 20%.", height=100)
+
+    if st.button("🔍 Find Matching Companies"):
         if not user_query:
-            st.warning("Please describe your investment idea."); return
+            st.warning("Please describe your investment idea.")
+        else:
+            with st.spinner("Running initial screen..."):
+                structured_query = deconstruct_prompt(user_query)
+                if not structured_query:
+                    st.session_state.ideagen_step = 1
+                    return
 
-        with st.spinner("Agent IdeaGen is running..."):
-            structured_query = deconstruct_prompt(user_query)
-            if not structured_query: return
-            st.success("✅ Stage 1 Complete: Deconstructed user prompt.")
-            theme = structured_query.get('qualitative_theme', 'N/A')
+                st.session_state.ideagen_theme = structured_query.get('qualitative_theme', 'N/A')
+                screened_df = run_quantitative_screen(structured_query.get('quantitative_filters', {}))
 
-            screened_companies_df = run_quantitative_screen(structured_query.get('quantitative_filters', {}))
-            if screened_companies_df.empty: return
+                if not screened_df.empty:
+                    screened_df.drop_duplicates(subset='companyName', keep='first', inplace=True)
+                    enriched_df = enrich_quantitative_data(screened_df, fmp_api_key)
+                    st.session_state.ideagen_screened_df = enriched_df
+                    st.session_state.ideagen_step = 2
+                    st.rerun()
+                else:
+                    st.session_state.ideagen_step = 1
 
-            # --- CHANGE: De-duplicate companies based on name ---
-            screened_companies_df.drop_duplicates(subset='companyName', keep='first', inplace=True)
-            st.success(f"✅ Stage 2a Complete: Found {len(screened_companies_df)} unique companies.")
-            
-            screened_companies_df = enrich_quantitative_data(screened_companies_df, fmp_api_key)
-            st.success("✅ Stage 2b Complete: Enriched companies with TTM financials.")
-            
-            all_dossiers = []
-            for index, company_row in screened_companies_df.iterrows():
-                company_name, ticker = company_row['companyName'], company_row['ticker']
-                qualitative_corpus = aggregate_qualitative_data(ticker)
-                if not qualitative_corpus or "No recent earnings transcript found." in qualitative_corpus:
-                    st.warning(f"Could not retrieve sufficient qualitative data for {company_name}. Skipping.")
-                    continue
-                st.success(f"✅ Stage 3 Complete: Aggregated data for {company_name}.")
+    if st.session_state.ideagen_step == 2 and 'ideagen_screened_df' in st.session_state:
+        st.markdown("---")
+        st.subheader("Step 2: Select Companies for Deeper Analysis")
+        df = st.session_state.ideagen_screened_df
+        
+        # Format for display
+        df_display = df[['ticker', 'companyName', 'marketCapUSD', 'industry', 'country']].copy()
+        df_display['marketCapUSD'] = df_display['marketCapUSD'].apply(lambda x: f"${x/1e9:,.1f}B" if pd.notnull(x) else 'N/A')
+        st.dataframe(df_display, use_container_width=True)
 
-                qualitative_analysis = run_ai_qualitative_analysis(company_name, qualitative_corpus, theme)
-                if not qualitative_analysis:
-                    st.warning(f"Qualitative analysis failed for {company_name}. Skipping.")
-                    continue
-                st.success(f"✅ Stage 4 Complete: AI analysis finished for {company_name}.")
-
-                final_dossier = synthesize_dossier(company_row, qualitative_analysis, theme)
-                st.success(f"✅ Stage 5 Complete: Dossier created for {company_name}.")
-                all_dossiers.append(final_dossier)
-            
-            if all_dossiers:
-                final_html_report = generate_final_html_report(all_dossiers, theme)
-                st.session_state.ideagen_report = final_html_report
+        options = [f"{row['companyName']} ({row['ticker']})" for index, row in df.iterrows()]
+        selected_options = st.multiselect("Select companies to analyze further:", options, default=options)
+        
+        if st.button("🚀 Generate & Download Report for Selected", type="primary"):
+            if not selected_options:
+                st.warning("Please select at least one company.")
             else:
-                st.warning("Could not generate a report for any of the screened companies.")
-    
-    if 'ideagen_report' in st.session_state:
-        st.download_button(
-            label="📥 Download Full HTML Report",
-            data=st.session_state.ideagen_report,
-            file_name=f"IdeaGen_Report_{pd.to_datetime('today').strftime('%Y%m%d')}.html",
-            mime="text/html"
-        )
-        del st.session_state.ideagen_report
+                selected_tickers = [opt.split('(')[-1].replace(')', '') for opt in selected_options]
+                analysis_df = df[df['ticker'].isin(selected_tickers)]
+                
+                with st.spinner("Agent IdeaGen is running deeper analysis..."):
+                    all_dossiers = []
+                    for index, company_row in analysis_df.iterrows():
+                        company_name, ticker = company_row['companyName'], company_row['ticker']
+                        qualitative_corpus = aggregate_qualitative_data(ticker)
+                        if not qualitative_corpus or "No recent earnings transcript found." in qualitative_corpus:
+                            st.warning(f"Could not retrieve sufficient qualitative data for {company_name}. Skipping.")
+                            continue
+                        
+                        qualitative_analysis = run_ai_qualitative_analysis(company_name, qualitative_corpus, st.session_state.ideagen_theme)
+                        if not qualitative_analysis:
+                            st.warning(f"Qualitative analysis failed for {company_name}. Skipping.")
+                            continue
+
+                        final_dossier = synthesize_dossier(company_row, qualitative_analysis, st.session_state.ideagen_theme)
+                        all_dossiers.append(final_dossier)
+                    
+                    if all_dossiers:
+                        final_html_report = generate_final_html_report(all_dossiers, st.session_state.ideagen_theme)
+                        st.download_button(
+                            label="📥 Download Full HTML Report",
+                            data=final_html_report,
+                            file_name=f"IdeaGen_Report_{pd.to_datetime('today').strftime('%Y%m%d')}.html",
+                            mime="text/html"
+                        )
+                        # Reset state after completion
+                        for key in ['ideagen_step', 'ideagen_screened_df', 'ideagen_theme']:
+                            if key in st.session_state:
+                                del st.session_state[key]
+                    else:
+                        st.error("Could not generate a report for any of the selected companies.")
 
 
 
