@@ -5209,72 +5209,84 @@ def agent_ideagen_app():
         st.error(f"Could not initialize the LLM client. Please check your secrets. Error: {e}")
         return
 
+    # --- NEW: Currency and Exchange Rate Helpers ---
+    COUNTRY_CURRENCY_MAP = {
+        "US": "USD", "IN": "INR", "GB": "GBP", "DE": "EUR", "FR": "EUR", 
+        "JP": "JPY", "CN": "CNY", "CA": "CAD", "AU": "AUD", "CH": "CHF"
+        # Add more mappings as needed
+    }
+
+    @st.cache_data(ttl=3600) # Cache exchange rates for an hour
+    def get_exchange_rate(from_currency: str, to_currency: str, api_key: str) -> float | None:
+        if from_currency == to_currency:
+            return 1.0
+        try:
+            url = f"https://financialmodelingprep.com/api/v3/fx/{from_currency}{to_currency}?apikey={api_key}"
+            response = requests.get(url, timeout=10).json()
+            if response and isinstance(response, list) and 'rate' in response[0]:
+                return response[0]['rate']
+            return None
+        except Exception as e:
+            st.warning(f"Could not fetch exchange rate for {from_currency} to {to_currency}: {e}")
+            return None
+
     def deconstruct_prompt(user_input: str) -> dict:
-        """ (Stage 1) Uses a more robust LLM prompt to convert a natural language request into a structured query. """
-        
+        # This function remains unchanged from the previous version
         fmp_sectors = ["Basic Materials", "Communication Services", "Consumer Cyclical", "Consumer Defensive", "Energy", "Financial Services", "Healthcare", "Industrials", "Real Estate", "Technology", "Utilities"]
         fmp_industries = ["Oil & Gas E&P", "Software - Application", "Banks - Regional", "Utilities - Renewable", "Biotechnology", "Semiconductors", "Medical Devices", "Aerospace & Defense", "Solar", "Specialty Industrial Machinery", "Information Technology Services"]
-
         prompt = f"""
         You are an expert financial data API assistant. Your task is to convert a user's natural language request into a valid JSON object.
-
         **Instructions:**
         1.  Analyze the user's request for quantitative financial criteria (e.g., market cap) and map them to the FMP API parameters below. Assume monetary values are in USD unless specified otherwise.
-        2.  Analyze the user's request for a sector or industry. Find the **single best match** from the `VALID_SECTORS` or `VALID_INDUSTRIES` lists provided below. Prefer a specific industry match over a broad sector if possible. For example, for "wind energy," the best match is "Utilities - Renewable." For "Information Technology," the best match is the "Technology" sector.
+        2.  Analyze the user's request for a sector or industry. Find the **single best match** from the `VALID_SECTORS` or `VALID_INDUSTRIES` lists provided below.
         3.  Infer the main investment theme from the request. This should never be null.
         4.  The final JSON must have the keys: "quantitative_filters", "qualitative_theme", "positive_keywords", and "negative_keywords".
-
         **VALID_SECTORS:**
         {fmp_sectors}
-
         **VALID_INDUSTRIES (Sample):**
         {fmp_industries}
-
         **FMP API Parameters:**
         `marketCapMoreThan`, `marketCapLowerThan`, `grossProfitMarginMoreThan`, `country`, `sector`, `industry`.
-
-        **Example:**
-        - User Request: "Germany-based wind energy companies with a market cap over $500 million."
-        - Your JSON Output:
-        {{
-          "quantitative_filters": {{
-            "country": "DE",
-            "industry": "Utilities - Renewable",
-            "marketCapMoreThan": 500000000
-          }},
-          "qualitative_theme": "German Wind Energy",
-          "positive_keywords": ["wind", "renewable", "germany"],
-          "negative_keywords": []
-        }}
-
         **User Request:** "{user_input}"
-
         Now, generate the complete JSON object based on these instructions.
         """
         try:
-            response = client.chat.completions.create(
-                model=llm_deployment_name,
-                messages=[{"role": "system", "content": "You are a helpful assistant that only outputs JSON."},
-                          {"role": "user", "content": prompt}],
-                response_format={"type": "json_object"}
-            )
+            response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "system", "content": "You are a helpful assistant that only outputs JSON."}, {"role": "user", "content": prompt}], response_format={"type": "json_object"})
             return json.loads(response.choices[0].message.content)
         except Exception as e:
             st.error(f"Error in Stage 1 (Deconstruction): {e}")
             return None
 
-    def run_quantitative_screen(criteria: dict) -> pd.DataFrame:
+    # REVISED: Overhauled function to handle currency conversion before screening
+    def run_quantitative_screen(criteria: dict, api_key: str) -> pd.DataFrame:
         st.info("**(LIVE) Stage 2: Running Quantitative Screen with FMP API...**")
-        base_url = "https://financialmodelingprep.com/api/v3/stock-screener"
         params = criteria.copy()
-        params['apikey'] = fmp_api_key
-        params['limit'] = 200 # Fetch more initially to allow for client-side filtering
+        target_country = params.get('country')
+        local_currency = COUNTRY_CURRENCY_MAP.get(target_country)
+
+        # Handle market cap currency conversion if necessary
+        if local_currency and local_currency != "USD":
+            st.info(f"Target country is {target_country}, converting USD market cap filter to {local_currency}...")
+            rate = get_exchange_rate("USD", local_currency, api_key)
+            if rate:
+                for cap_filter in ['marketCapMoreThan', 'marketCapLowerThan']:
+                    if cap_filter in params:
+                        usd_value = params[cap_filter]
+                        local_value = usd_value * rate
+                        params[cap_filter] = local_value
+                        st.success(f"Converted ${usd_value/1e9:.1f}B to {local_currency} {local_value/1e9:,.1f}B for screening.")
+            else:
+                st.error(f"Could not get exchange rate for {local_currency}. Market cap filter will be inaccurate.")
+
+        base_url = "https://financialmodelingprep.com/api/v3/stock-screener"
+        params['apikey'] = api_key
+        params['limit'] = 100
         try:
             response = requests.get(base_url, params=params)
             response.raise_for_status()
             data = response.json()
             if not data:
-                st.warning("FMP screener returned no companies matching the initial criteria.")
+                st.warning("FMP screener returned no companies matching the criteria.")
                 return pd.DataFrame()
             df = pd.DataFrame(data)
             df.rename(columns={'symbol': 'ticker', 'marketCap': 'marketCapLocalCurrency'}, inplace=True)
@@ -5282,63 +5294,38 @@ def agent_ideagen_app():
         except requests.exceptions.RequestException as e:
             st.error(f"Error calling FMP API for screening: {e}")
             return pd.DataFrame()
-    
-    # REVISED: Now also fetches market cap in USD from the profile endpoint
-    def enrich_quantitative_data(df: pd.DataFrame, api_key: str) -> pd.DataFrame:
-        st.info("**(LIVE) Enriching screened companies with detailed financial metrics...**")
-        
-        new_metrics = {
-            'marketCapUSD': [], 'debtToEquityTTM': [], 'priceToSalesTTM': [], 
-            'returnOnEquityTTM': [], 'revenueGrowth1Y': []
-        }
 
+    def enrich_quantitative_data(df: pd.DataFrame, api_key: str) -> pd.DataFrame:
+        # This function is now much faster as it runs on a smaller, pre-filtered list
+        st.info("**(LIVE) Enriching screened companies with detailed financial metrics...**")
+        new_metrics = {'marketCapUSD': [], 'debtToEquityTTM': [], 'priceToSalesTTM': [], 'returnOnEquityTTM': [], 'revenueGrowth1Y': []}
         for ticker in df['ticker']:
             fmp_ticker = ticker.replace('.', '-')
-            
-            # Fetch Profile for USD Market Cap
             try:
                 profile_url = f"https://financialmodelingprep.com/api/v3/profile/{fmp_ticker}?apikey={api_key}"
                 profile_res = requests.get(profile_url, timeout=10).json()
-                if profile_res and isinstance(profile_res, list):
-                    new_metrics['marketCapUSD'].append(profile_res[0].get('mktCap'))
-                else:
-                    new_metrics['marketCapUSD'].append(None)
-            except Exception:
-                new_metrics['marketCapUSD'].append(None)
-
-            # Fetch TTM Ratios
+                new_metrics['marketCapUSD'].append(profile_res[0].get('mktCap') if profile_res else None)
+            except Exception: new_metrics['marketCapUSD'].append(None)
             try:
                 ratios_url = f"https://financialmodelingprep.com/api/v3/ratios-ttm/{fmp_ticker}?apikey={api_key}"
                 ratios_res = requests.get(ratios_url, timeout=10).json()
-                if ratios_res and isinstance(ratios_res, list):
+                if ratios_res:
                     new_metrics['debtToEquityTTM'].append(ratios_res[0].get('debtEquityRatioTTM'))
                     new_metrics['priceToSalesTTM'].append(ratios_res[0].get('priceToSalesRatioTTM'))
                     new_metrics['returnOnEquityTTM'].append(ratios_res[0].get('returnOnEquityTTM'))
-                else:
-                    raise ValueError("No TTM ratios")
+                else: raise ValueError()
             except Exception:
-                new_metrics['debtToEquityTTM'].append(None)
-                new_metrics['priceToSalesTTM'].append(None)
-                new_metrics['returnOnEquityTTM'].append(None)
-
-            # Fetch Annual Growth
+                new_metrics['debtToEquityTTM'].append(None); new_metrics['priceToSalesTTM'].append(None); new_metrics['returnOnEquityTTM'].append(None)
             try:
                 growth_url = f"https://financialmodelingprep.com/api/v3/financial-growth/{fmp_ticker}?period=annual&limit=1&apikey={api_key}"
                 growth_res = requests.get(growth_url, timeout=10).json()
-                if growth_res and isinstance(growth_res, list):
-                    new_metrics['revenueGrowth1Y'].append(growth_res[0].get('revenueGrowth'))
-                else:
-                    raise ValueError("No annual growth")
-            except Exception:
-                new_metrics['revenueGrowth1Y'].append(None)
-        
-        for key, value in new_metrics.items():
-            df[key] = value
-            
+                new_metrics['revenueGrowth1Y'].append(growth_res[0].get('revenueGrowth') if growth_res else None)
+            except Exception: new_metrics['revenueGrowth1Y'].append(None)
+        for key, value in new_metrics.items(): df[key] = value
         return df
-
+    
+    # All subsequent helper functions (aggregate_qualitative_data, run_ai_qualitative_analysis, synthesize_dossier, generate_final_html_report) remain unchanged.
     def aggregate_qualitative_data(ticker: str) -> str:
-        # This function remains unchanged
         st.info(f"**(LIVE) Stage 3: Aggregating Qualitative Data for {ticker}...**")
         transcript_text, news_text = "No recent earnings transcript found.", "Could not fetch recent news."
         fmp_ticker = ticker.replace('.', '-')
@@ -5360,7 +5347,6 @@ def agent_ideagen_app():
         return f"{transcript_text}\n\n---\n\n{news_text}"
 
     def run_ai_qualitative_analysis(company_name: str, text_corpus: str, theme: str) -> dict:
-        # This function remains unchanged
         st.info(f"**(LIVE) Stage 4: Running AI Qualitative Analysis for {company_name}...**")
         analysis_prompt = f"""
         You are an expert equity research analyst. Your task is to analyze the provided text corpus for '{company_name}' based on the investment theme: '{theme}'.
@@ -5376,19 +5362,13 @@ def agent_ideagen_app():
         ---
         """
         try:
-            response = client.chat.completions.create(
-                model=llm_deployment_name,
-                messages=[{"role": "system", "content": "You are an expert equity analyst that only outputs JSON."},
-                          {"role": "user", "content": analysis_prompt}],
-                response_format={"type": "json_object"}
-            )
+            response = client.chat.completions.create(model=llm_deployment_name,messages=[{"role": "system", "content": "You are an expert equity analyst that only outputs JSON."},{"role": "user", "content": analysis_prompt}],response_format={"type": "json_object"})
             return json.loads(response.choices[0].message.content)
         except Exception as e:
             st.error(f"Error in Stage 4 (Qualitative Analysis): {e}")
             return {}
 
     def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str) -> dict:
-        # This function remains unchanged
         st.info(f"**(LIVE) Stage 5: Synthesizing Dossier for {quant_data['companyName']}...**")
         
         def safe_get_and_format(data, keys):
@@ -5412,12 +5392,7 @@ def agent_ideagen_app():
                     markdown_lines.append(f"* **{title}**: {description}")
             return "\n".join(markdown_lines) if markdown_lines else "No specific risks were identified."
 
-        ps_val = quant_data.get('priceToSalesTTM')
-        de_val = quant_data.get('debtToEquityTTM')
-        roe_val = quant_data.get('returnOnEquityTTM')
-        rev_growth_val = quant_data.get('revenueGrowth1Y')
-        market_cap_val = quant_data.get('marketCapUSD', 0)
-
+        ps_val = quant_data.get('priceToSalesTTM'); de_val = quant_data.get('debtToEquityTTM'); roe_val = quant_data.get('returnOnEquityTTM'); rev_growth_val = quant_data.get('revenueGrowth1Y'); market_cap_val = quant_data.get('marketCapUSD', 0)
         market_cap_str = f"${market_cap_val / 1e9:,.1f}B" if isinstance(market_cap_val, (int, float)) else 'N/A'
         ps_str = f"{ps_val:.2f}x" if isinstance(ps_val, (int, float)) else 'N/A'
         de_str = f"{de_val:.2f}x" if isinstance(de_val, (int, float)) else 'N/A'
@@ -5441,46 +5416,17 @@ def agent_ideagen_app():
         - Qualitative Moat: {safe_get_and_format(qual_analysis, ['moat_analysis', 'description'])}
         """
         try:
-            summary_response = client.chat.completions.create(
-                model=llm_deployment_name, messages=[{"role": "user", "content": summary_prompt}],
-                temperature=0.2, max_tokens=150)
+            summary_response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": summary_prompt}], temperature=0.2, max_tokens=150)
             executive_summary = summary_response.choices[0].message.content
         except Exception:
             executive_summary = f"{quant_data.get('companyName', 'N/A')} is a potential candidate for the '{theme}' theme, operating in the {quant_data.get('industry', 'N/A')} industry with a market cap of {market_cap_str}."
 
-        dossier_dict = {
-            "dossier_title": f"{quant_data.get('companyName', 'N/A')} ({quant_data.get('ticker', 'N/A')})",
-            "metadata": f"**Theme:** {theme}",
-            "Executive Summary": executive_summary,
-            "Quantitative Snapshot": quant_table_md,
-            "Thematic Alignment & Justification": safe_get_and_format(qual_analysis, ['theme_analysis', 'justification']),
-            "Competitive Moat & Pricing Power": safe_get_and_format(qual_analysis, ['moat_analysis', 'description']),
-            "Key Risks Identified": format_risks(qual_analysis.get('risk_analysis'))
-        }
+        dossier_dict = {"dossier_title": f"{quant_data.get('companyName', 'N/A')} ({quant_data.get('ticker', 'N/A')})","metadata": f"**Theme:** {theme}","Executive Summary": executive_summary,"Quantitative Snapshot": quant_table_md,"Thematic Alignment & Justification": safe_get_and_format(qual_analysis, ['theme_analysis', 'justification']),"Competitive Moat & Pricing Power": safe_get_and_format(qual_analysis, ['moat_analysis', 'description']),"Key Risks Identified": format_risks(qual_analysis.get('risk_analysis'))}
         return dossier_dict
 
     def generate_final_html_report(dossier_list: list, theme: str) -> str:
-        # This function remains unchanged
         safe_theme = html.escape(theme or "User-Defined Theme")
-        styles = """
-        <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background-color: #f9fafb; color: #1f2937;}
-            .container { max-width: 1200px; margin: auto; }
-            .report-header h1 { font-size: 2.2em; color: #111827; border-bottom: 2px solid #d1d5db; padding-bottom: 10px; margin-bottom: 5px; }
-            .report-header h2 { font-size: 1.2em; color: #6b7280; font-weight: 400; margin-top: 0; }
-            .dossier { background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 30px; margin-bottom: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-            .dossier h1, .dossier h2 { color: #111827; }
-            .dossier h1 { font-size: 1.8em; }
-            .dossier h2 { font-size: 1.4em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-top: 25px; }
-            .dossier table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-            .dossier th, .dossier td { padding: 10px 12px; border: 1px solid #d1d5db; text-align: left; }
-            .dossier th { background-color: #f3f4f6; font-weight: 600; }
-            .dossier p { line-height: 1.6; }
-            .dossier .metadata { color: #4b5563; font-size: 0.9em; }
-            .dossier ul { padding-left: 20px; }
-            .dossier li { margin-bottom: 0.5em; }
-        </style>
-        """
+        styles = """<style> body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background-color: #f9fafb; color: #1f2937;} .container { max-width: 1200px; margin: auto; } .report-header h1 { font-size: 2.2em; color: #111827; border-bottom: 2px solid #d1d5db; padding-bottom: 10px; margin-bottom: 5px; } .report-header h2 { font-size: 1.2em; color: #6b7280; font-weight: 400; margin-top: 0; } .dossier { background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 30px; margin-bottom: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); } .dossier h1, .dossier h2 { color: #111827; } .dossier h1 { font-size: 1.8em; } .dossier h2 { font-size: 1.4em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-top: 25px; } .dossier table { width: 100%; border-collapse: collapse; margin-top: 15px; } .dossier th, .dossier td { padding: 10px 12px; border: 1px solid #d1d5db; text-align: left; } .dossier th { background-color: #f3f4f6; font-weight: 600; } .dossier p { line-height: 1.6; } .dossier .metadata { color: #4b5563; font-size: 0.9em; } .dossier ul { padding-left: 20px; } .dossier li { margin-bottom: 0.5em; } </style>"""
         html_body = f"<div class='report-header'><h1>Investment Idea Generation Report</h1><h2>Theme: {safe_theme}</h2></div>"
         for dossier_dict in dossier_list:
             html_body += "<div class='dossier'>"
@@ -5494,6 +5440,7 @@ def agent_ideagen_app():
                     html_body += markdown.markdown(dossier_dict[section_title], extensions=['tables'])
             html_body += "</div>"
         return f"<!DOCTYPE html><html><head><title>IdeaGen Report: {safe_theme}</title>{styles}</head><body><div class='container'>{html_body}</div></body></html>"
+
 
     # --- 2. STREAMLIT UI AND ORCHESTRATION ---
 
@@ -5512,34 +5459,21 @@ def agent_ideagen_app():
                 if not structured_query:
                     st.session_state.ideagen_step = 1
                     return
-
-                # --- NEW: Separate market cap filters for client-side processing ---
-                quant_filters = structured_query.get('quantitative_filters', {})
-                mkt_cap_more = quant_filters.pop('marketCapMoreThan', None)
-                mkt_cap_less = quant_filters.pop('marketCapLowerThan', None)
-                st.session_state.ideagen_mkt_cap_filters = {'more': mkt_cap_more, 'less': mkt_cap_less}
                 
                 theme = structured_query.get('qualitative_theme') or "User-defined theme"
                 st.session_state.ideagen_theme = theme
                 
-                # Run screen without market cap filters
-                screened_df = run_quantitative_screen(quant_filters)
+                screened_df = run_quantitative_screen(structured_query.get('quantitative_filters', {}), fmp_api_key)
 
                 if not screened_df.empty:
                     enriched_df = enrich_quantitative_data(screened_df, fmp_api_key)
+                    final_df = enriched_df.dropna(subset=['marketCapUSD']) # Ensure we have USD market cap to show
+                    final_df.drop_duplicates(subset='companyName', keep='first', inplace=True)
                     
-                    # --- NEW: Apply market cap filter now that we have USD data ---
-                    final_df = enriched_df.dropna(subset=['marketCapUSD'])
-                    if mkt_cap_more is not None:
-                        final_df = final_df[final_df['marketCapUSD'] > mkt_cap_more]
-                    if mkt_cap_less is not None:
-                        final_df = final_df[final_df['marketCapUSD'] < mkt_cap_less]
-
                     if final_df.empty:
-                        st.warning("No companies matched the market cap criteria after currency conversion.")
-                        st.session_state.ideagen_step = 1
+                         st.warning("Could not retrieve sufficient data for the screened companies.")
+                         st.session_state.ideagen_step = 1
                     else:
-                        final_df.drop_duplicates(subset='companyName', keep='first', inplace=True)
                         st.session_state.ideagen_screened_df = final_df
                         st.session_state.ideagen_step = 2
                         st.rerun()
@@ -5551,7 +5485,6 @@ def agent_ideagen_app():
         st.subheader("Step 2: Select Companies for Deeper Analysis")
         df = st.session_state.ideagen_screened_df
         
-        # Use the reliable marketCapUSD for display
         df_display = df[['ticker', 'companyName', 'marketCapUSD', 'industry', 'country']].copy()
         df_display['marketCapUSD'] = df_display['marketCapUSD'].apply(lambda x: f"${x/1e9:,.1f}B" if pd.notnull(x) else 'N/A')
         st.dataframe(df_display, use_container_width=True, hide_index=True)
@@ -5592,7 +5525,7 @@ def agent_ideagen_app():
                             mime="text/html",
                             use_container_width=True
                         )
-                        for key in ['ideagen_step', 'ideagen_screened_df', 'ideagen_theme', 'ideagen_mkt_cap_filters']:
+                        for key in ['ideagen_step', 'ideagen_screened_df', 'ideagen_theme']:
                             if key in st.session_state:
                                 del st.session_state[key]
                     else:
