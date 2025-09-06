@@ -5313,18 +5313,34 @@ def agent_ideagen_app():
         st.info(f"**(LIVE) Aggregating Qualitative Data for {ticker}...**")
         transcript_text, news_text = "No recent earnings transcript found.", "Could not fetch recent news."
         fmp_ticker = ticker
+        
+        # --- MODIFIED FOR DEBUGGING ---
         try:
             url = f"https://financialmodelingprep.com/api/v3/earning_call_transcript/{fmp_ticker}?limit=1&apikey={fmp_api_key}"
-            response = requests.get(url, timeout=10); response.raise_for_status()
+            response = requests.get(url, timeout=10)
+            response.raise_for_status() # This will raise an error for statuses like 401, 403, 404
             transcript_data = response.json()
-            if transcript_data and 'content' in transcript_data[0]: transcript_text = f"From Q{transcript_data[0]['quarter']} {transcript_data[0]['year']} Earnings Call:\n{transcript_data[0]['content']}"
-        except Exception: pass
+            if transcript_data and 'content' in transcript_data[0]:
+                transcript_text = f"From Q{transcript_data[0]['quarter']} {transcript_data[0]['year']} Earnings Call:\n{transcript_data[0]['content']}"
+        except Exception as e:
+            # Print the actual error to the Streamlit app UI
+            st.error(f"Error fetching transcript for {fmp_ticker}: {e}")
+            # We still 'pass' to allow the news fetcher to run
+            pass
+        
         try:
             url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={fmp_ticker}&limit=10&apikey={fmp_api_key}"
-            response = requests.get(url, timeout=10); response.raise_for_status()
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
             news_data = response.json()
-            if news_data: headlines = [f"- {item['title']} (Source: {item['site']})" for item in news_data]; news_text = "Recent News Headlines:\n" + "\n".join(headlines)
-        except Exception: pass
+            if news_data:
+                headlines = [f"- {item['title']} (Source: {item['site']})" for item in news_data]
+                news_text = "Recent News Headlines:\n" + "\n".join(headlines)
+        except Exception as e:
+            st.error(f"Error fetching news for {fmp_ticker}: {e}")
+            pass
+        # --- END MODIFICATION ---
+
         return f"{transcript_text}\n\n---\n\n{news_text}"
 
     def run_ai_qualitative_analysis(company_name: str, text_corpus: str, theme: str) -> dict:
