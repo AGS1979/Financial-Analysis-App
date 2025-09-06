@@ -5209,37 +5209,49 @@ def agent_ideagen_app():
         st.error(f"Could not initialize the LLM client. Please check your secrets. Error: {e}")
         return
 
+    # REVISED: Enhanced prompt with valid FMP categories for smart mapping
     def deconstruct_prompt(user_input: str) -> dict:
         """ (Stage 1) Uses a more robust LLM prompt to convert a natural language request into a structured query. """
+        
+        # Static list of valid FMP sectors and a sample of industries
+        fmp_sectors = ["Basic Materials", "Communication Services", "Consumer Cyclical", "Consumer Defensive", "Energy", "Financial Services", "Healthcare", "Industrials", "Real Estate", "Technology", "Utilities"]
+        fmp_industries = ["Oil & Gas E&P", "Software - Application", "Banks - Regional", "Utilities - Renewable", "Biotechnology", "Semiconductors", "Medical Devices", "Aerospace & Defense", "Solar", "Specialty Industrial Machinery", "Information Technology Services"]
+
         prompt = f"""
-        You are an expert financial data API assistant. Your sole task is to convert a user's natural language request into a valid JSON object.
+        You are an expert financial data API assistant. Your task is to convert a user's natural language request into a valid JSON object.
 
         **Instructions:**
-        1.  Analyze the user's request for quantitative financial criteria (e.g., market cap, margin) and map them to the FMP API parameters below. If a filter is not mentioned, DO NOT include it.
-        2.  Infer the main investment theme from the request. This is critical. For example, if the user asks for "solar energy companies," the theme is "Solar Energy." This should never be null.
-        3.  The final JSON must have four keys: "quantitative_filters", "qualitative_theme", "positive_keywords", and "negative_keywords".
+        1.  Analyze the user's request for quantitative financial criteria (e.g., market cap) and map them to the FMP API parameters below.
+        2.  Analyze the user's request for a sector or industry. Find the **single best match** from the `VALID_SECTORS` or `VALID_INDUSTRIES` lists provided below. Prefer a specific industry match over a broad sector if possible. For example, for "wind energy," the best match is "Utilities - Renewable." For "Information Technology," the best match is the "Technology" sector.
+        3.  Infer the main investment theme from the request. This should never be null.
+        4.  The final JSON must have the keys: "quantitative_filters", "qualitative_theme", "positive_keywords", and "negative_keywords".
+
+        **VALID_SECTORS:**
+        {fmp_sectors}
+
+        **VALID_INDUSTRIES (Sample):**
+        {fmp_industries}
 
         **FMP API Parameters:**
-        `marketCapMoreThan`, `marketCapLowerThan`, `priceMoreThan`, `priceLowerThan`, `betaMoreThan`, `betaLowerThan`, `volumeMoreThan`, `volumeLowerThan`, `dividendYieldMoreThan`, `dividendYieldLowerThan`, `grossProfitMarginMoreThan`, `grossProfitMarginLowerThan`, `netProfitMarginMoreThan`, `returnOnEquityMoreThan`, `country`, `sector`, `industry`, `exchange`.
+        `marketCapMoreThan`, `marketCapLowerThan`, `grossProfitMarginMoreThan`, `country`, `sector`, `industry`.
 
         **Example:**
-        - User Request: "US-based solar energy companies with a market cap over $10 billion and a gross margin above 20%."
+        - User Request: "Germany-based wind energy companies with a market cap over $500 million."
         - Your JSON Output:
         {{
           "quantitative_filters": {{
-            "country": "US",
-            "industry": "Solar",
-            "marketCapMoreThan": 10000000000,
-            "grossProfitMarginMoreThan": 0.20
+            "country": "DE",
+            "industry": "Utilities - Renewable",
+            "marketCapMoreThan": 500000000
           }},
-          "qualitative_theme": "Solar Energy Investment",
-          "positive_keywords": ["solar", "renewable energy"],
+          "qualitative_theme": "German Wind Energy",
+          "positive_keywords": ["wind", "renewable", "germany"],
           "negative_keywords": []
         }}
 
         **User Request:** "{user_input}"
 
-        Now, generate the complete JSON object.
+        Now, generate the complete JSON object based on these instructions.
         """
         try:
             response = client.chat.completions.create(
@@ -5334,7 +5346,6 @@ def agent_ideagen_app():
         except Exception: pass
         return f"{transcript_text}\n\n---\n\n{news_text}"
 
-    # REVISED: Highly structured prompt to ensure consistent JSON output
     def run_ai_qualitative_analysis(company_name: str, text_corpus: str, theme: str) -> dict:
         st.info(f"**(LIVE) Stage 4: Running AI Qualitative Analysis for {company_name}...**")
         analysis_prompt = f"""
