@@ -5209,11 +5209,9 @@ def agent_ideagen_app():
         st.error(f"Could not initialize the LLM client. Please check your secrets. Error: {e}")
         return
 
-    # REVISED: Enhanced prompt with valid FMP categories for smart mapping
     def deconstruct_prompt(user_input: str) -> dict:
         """ (Stage 1) Uses a more robust LLM prompt to convert a natural language request into a structured query. """
         
-        # Static list of valid FMP sectors and a sample of industries
         fmp_sectors = ["Basic Materials", "Communication Services", "Consumer Cyclical", "Consumer Defensive", "Energy", "Financial Services", "Healthcare", "Industrials", "Real Estate", "Technology", "Utilities"]
         fmp_industries = ["Oil & Gas E&P", "Software - Application", "Banks - Regional", "Utilities - Renewable", "Biotechnology", "Semiconductors", "Medical Devices", "Aerospace & Defense", "Solar", "Specialty Industrial Machinery", "Information Technology Services"]
 
@@ -5221,7 +5219,7 @@ def agent_ideagen_app():
         You are an expert financial data API assistant. Your task is to convert a user's natural language request into a valid JSON object.
 
         **Instructions:**
-        1.  Analyze the user's request for quantitative financial criteria (e.g., market cap) and map them to the FMP API parameters below.
+        1.  Analyze the user's request for quantitative financial criteria (e.g., market cap) and map them to the FMP API parameters below. Assume monetary values are in USD unless specified otherwise.
         2.  Analyze the user's request for a sector or industry. Find the **single best match** from the `VALID_SECTORS` or `VALID_INDUSTRIES` lists provided below. Prefer a specific industry match over a broad sector if possible. For example, for "wind energy," the best match is "Utilities - Renewable." For "Information Technology," the best match is the "Technology" sector.
         3.  Infer the main investment theme from the request. This should never be null.
         4.  The final JSON must have the keys: "quantitative_filters", "qualitative_theme", "positive_keywords", and "negative_keywords".
@@ -5270,32 +5268,45 @@ def agent_ideagen_app():
         base_url = "https://financialmodelingprep.com/api/v3/stock-screener"
         params = criteria.copy()
         params['apikey'] = fmp_api_key
-        params['limit'] = 100
+        params['limit'] = 200 # Fetch more initially to allow for client-side filtering
         try:
             response = requests.get(base_url, params=params)
             response.raise_for_status()
             data = response.json()
             if not data:
-                st.warning("FMP screener returned no companies matching the criteria.")
+                st.warning("FMP screener returned no companies matching the initial criteria.")
                 return pd.DataFrame()
             df = pd.DataFrame(data)
-            df.rename(columns={'symbol': 'ticker', 'marketCap': 'marketCapUSD'}, inplace=True)
+            df.rename(columns={'symbol': 'ticker', 'marketCap': 'marketCapLocalCurrency'}, inplace=True)
             return df
         except requests.exceptions.RequestException as e:
             st.error(f"Error calling FMP API for screening: {e}")
             return pd.DataFrame()
     
+    # REVISED: Now also fetches market cap in USD from the profile endpoint
     def enrich_quantitative_data(df: pd.DataFrame, api_key: str) -> pd.DataFrame:
-        st.info("**(LIVE) Enriching screened companies with detailed financial ratios and growth metrics...**")
+        st.info("**(LIVE) Enriching screened companies with detailed financial metrics...**")
         
         new_metrics = {
-            'debtToEquityTTM': [], 'priceToSalesTTM': [], 
+            'marketCapUSD': [], 'debtToEquityTTM': [], 'priceToSalesTTM': [], 
             'returnOnEquityTTM': [], 'revenueGrowth1Y': []
         }
 
         for ticker in df['ticker']:
             fmp_ticker = ticker.replace('.', '-')
             
+            # Fetch Profile for USD Market Cap
+            try:
+                profile_url = f"https://financialmodelingprep.com/api/v3/profile/{fmp_ticker}?apikey={api_key}"
+                profile_res = requests.get(profile_url, timeout=10).json()
+                if profile_res and isinstance(profile_res, list):
+                    new_metrics['marketCapUSD'].append(profile_res[0].get('mktCap'))
+                else:
+                    new_metrics['marketCapUSD'].append(None)
+            except Exception:
+                new_metrics['marketCapUSD'].append(None)
+
+            # Fetch TTM Ratios
             try:
                 ratios_url = f"https://financialmodelingprep.com/api/v3/ratios-ttm/{fmp_ticker}?apikey={api_key}"
                 ratios_res = requests.get(ratios_url, timeout=10).json()
@@ -5304,19 +5315,20 @@ def agent_ideagen_app():
                     new_metrics['priceToSalesTTM'].append(ratios_res[0].get('priceToSalesRatioTTM'))
                     new_metrics['returnOnEquityTTM'].append(ratios_res[0].get('returnOnEquityTTM'))
                 else:
-                    raise ValueError("No TTM ratios found")
+                    raise ValueError("No TTM ratios")
             except Exception:
                 new_metrics['debtToEquityTTM'].append(None)
                 new_metrics['priceToSalesTTM'].append(None)
                 new_metrics['returnOnEquityTTM'].append(None)
 
+            # Fetch Annual Growth
             try:
                 growth_url = f"https://financialmodelingprep.com/api/v3/financial-growth/{fmp_ticker}?period=annual&limit=1&apikey={api_key}"
                 growth_res = requests.get(growth_url, timeout=10).json()
                 if growth_res and isinstance(growth_res, list):
                     new_metrics['revenueGrowth1Y'].append(growth_res[0].get('revenueGrowth'))
                 else:
-                    raise ValueError("No annual growth data found")
+                    raise ValueError("No annual growth")
             except Exception:
                 new_metrics['revenueGrowth1Y'].append(None)
         
@@ -5326,6 +5338,7 @@ def agent_ideagen_app():
         return df
 
     def aggregate_qualitative_data(ticker: str) -> str:
+        # This function remains unchanged
         st.info(f"**(LIVE) Stage 3: Aggregating Qualitative Data for {ticker}...**")
         transcript_text, news_text = "No recent earnings transcript found.", "Could not fetch recent news."
         fmp_ticker = ticker.replace('.', '-')
@@ -5347,37 +5360,16 @@ def agent_ideagen_app():
         return f"{transcript_text}\n\n---\n\n{news_text}"
 
     def run_ai_qualitative_analysis(company_name: str, text_corpus: str, theme: str) -> dict:
+        # This function remains unchanged
         st.info(f"**(LIVE) Stage 4: Running AI Qualitative Analysis for {company_name}...**")
         analysis_prompt = f"""
         You are an expert equity research analyst. Your task is to analyze the provided text corpus for '{company_name}' based on the investment theme: '{theme}'.
-
         Return a single, valid JSON object with the exact following structure. Do not add any extra commentary outside the JSON structure.
-
         {{
-          "theme_analysis": {{
-            "justification": "A 2-paragraph justification for the company's alignment with the theme, including direct quotes from the text corpus."
-          }},
-          "moat_analysis": {{
-            "description": "A detailed description of the company's competitive moat and pricing power, with evidence from the text corpus."
-          }},
-          "risk_analysis": {{
-            "top_risks": [
-              {{
-                "risk": "A short title for the first risk.",
-                "description": "A detailed explanation of the first risk, based on the text corpus."
-              }},
-              {{
-                "risk": "A short title for the second risk.",
-                "description": "A detailed explanation of the second risk, based on the text corpus."
-              }},
-              {{
-                "risk": "A short title for the third risk.",
-                "description": "A detailed explanation of the third risk, based on the text corpus."
-              }}
-            ]
-          }}
+          "theme_analysis": {{"justification": "A 2-paragraph justification for the company's alignment with the theme, including direct quotes from the text corpus."}},
+          "moat_analysis": {{"description": "A detailed description of the company's competitive moat and pricing power, with evidence from the text corpus."}},
+          "risk_analysis": {{"top_risks": [{{"risk": "A short title for the first risk.","description": "A detailed explanation of the first risk, based on the text corpus."}},{{"risk": "A short title for the second risk.","description": "A detailed explanation of the second risk, based on the text corpus."}},{{"risk": "A short title for the third risk.","description": "A detailed explanation of the third risk, based on the text corpus."}}]}}
         }}
-
         TEXT CORPUS:
         ---
         {text_corpus[:25000]}
@@ -5396,6 +5388,7 @@ def agent_ideagen_app():
             return {}
 
     def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str) -> dict:
+        # This function remains unchanged
         st.info(f"**(LIVE) Stage 5: Synthesizing Dossier for {quant_data['companyName']}...**")
         
         def safe_get_and_format(data, keys):
@@ -5408,20 +5401,15 @@ def agent_ideagen_app():
             return str(temp)
 
         def format_risks(risk_data):
-            if not isinstance(risk_data, dict) or 'top_risks' not in risk_data:
-                return "Risk analysis not available or in an unexpected format."
-            
+            if not isinstance(risk_data, dict) or 'top_risks' not in risk_data: return "Risk analysis not available or in an unexpected format."
             risk_list = risk_data['top_risks']
-            if not isinstance(risk_list, list):
-                return "Risk data is not in the expected list format."
-
+            if not isinstance(risk_list, list): return "Risk data is not in the expected list format."
             markdown_lines = []
             for risk_item in risk_list:
                 if isinstance(risk_item, dict):
                     title = risk_item.get('risk', 'Untitled Risk')
                     description = risk_item.get('description', 'No description provided.')
                     markdown_lines.append(f"* **{title}**: {description}")
-            
             return "\n".join(markdown_lines) if markdown_lines else "No specific risks were identified."
 
         ps_val = quant_data.get('priceToSalesTTM')
@@ -5454,10 +5442,8 @@ def agent_ideagen_app():
         """
         try:
             summary_response = client.chat.completions.create(
-                model=llm_deployment_name,
-                messages=[{"role": "user", "content": summary_prompt}],
-                temperature=0.2, max_tokens=150
-            )
+                model=llm_deployment_name, messages=[{"role": "user", "content": summary_prompt}],
+                temperature=0.2, max_tokens=150)
             executive_summary = summary_response.choices[0].message.content
         except Exception:
             executive_summary = f"{quant_data.get('companyName', 'N/A')} is a potential candidate for the '{theme}' theme, operating in the {quant_data.get('industry', 'N/A')} industry with a market cap of {market_cap_str}."
@@ -5474,6 +5460,7 @@ def agent_ideagen_app():
         return dossier_dict
 
     def generate_final_html_report(dossier_list: list, theme: str) -> str:
+        # This function remains unchanged
         safe_theme = html.escape(theme or "User-Defined Theme")
         styles = """
         <style>
@@ -5514,7 +5501,7 @@ def agent_ideagen_app():
         st.session_state.ideagen_step = 1
 
     st.subheader("Step 1: Describe Your Investment Idea")
-    user_query = st.text_area("Enter your theme or criteria:", "Identify US-based solar energy companies with a market capitalization exceeding $10 billion and a gross margin above 20%.", height=100)
+    user_query = st.text_area("Enter your theme or criteria:", "Identify India-based Information Technology companies with a market capitalization exceeding $1 billion and a gross margin above 20%.", height=100)
 
     if st.button("🔍 Find Matching Companies"):
         if not user_query:
@@ -5526,17 +5513,36 @@ def agent_ideagen_app():
                     st.session_state.ideagen_step = 1
                     return
 
+                # --- NEW: Separate market cap filters for client-side processing ---
+                quant_filters = structured_query.get('quantitative_filters', {})
+                mkt_cap_more = quant_filters.pop('marketCapMoreThan', None)
+                mkt_cap_less = quant_filters.pop('marketCapLowerThan', None)
+                st.session_state.ideagen_mkt_cap_filters = {'more': mkt_cap_more, 'less': mkt_cap_less}
+                
                 theme = structured_query.get('qualitative_theme') or "User-defined theme"
                 st.session_state.ideagen_theme = theme
                 
-                screened_df = run_quantitative_screen(structured_query.get('quantitative_filters', {}))
+                # Run screen without market cap filters
+                screened_df = run_quantitative_screen(quant_filters)
 
                 if not screened_df.empty:
-                    screened_df.drop_duplicates(subset='companyName', keep='first', inplace=True)
                     enriched_df = enrich_quantitative_data(screened_df, fmp_api_key)
-                    st.session_state.ideagen_screened_df = enriched_df
-                    st.session_state.ideagen_step = 2
-                    st.rerun()
+                    
+                    # --- NEW: Apply market cap filter now that we have USD data ---
+                    final_df = enriched_df.dropna(subset=['marketCapUSD'])
+                    if mkt_cap_more is not None:
+                        final_df = final_df[final_df['marketCapUSD'] > mkt_cap_more]
+                    if mkt_cap_less is not None:
+                        final_df = final_df[final_df['marketCapUSD'] < mkt_cap_less]
+
+                    if final_df.empty:
+                        st.warning("No companies matched the market cap criteria after currency conversion.")
+                        st.session_state.ideagen_step = 1
+                    else:
+                        final_df.drop_duplicates(subset='companyName', keep='first', inplace=True)
+                        st.session_state.ideagen_screened_df = final_df
+                        st.session_state.ideagen_step = 2
+                        st.rerun()
                 else:
                     st.session_state.ideagen_step = 1
 
@@ -5545,6 +5551,7 @@ def agent_ideagen_app():
         st.subheader("Step 2: Select Companies for Deeper Analysis")
         df = st.session_state.ideagen_screened_df
         
+        # Use the reliable marketCapUSD for display
         df_display = df[['ticker', 'companyName', 'marketCapUSD', 'industry', 'country']].copy()
         df_display['marketCapUSD'] = df_display['marketCapUSD'].apply(lambda x: f"${x/1e9:,.1f}B" if pd.notnull(x) else 'N/A')
         st.dataframe(df_display, use_container_width=True, hide_index=True)
@@ -5585,7 +5592,7 @@ def agent_ideagen_app():
                             mime="text/html",
                             use_container_width=True
                         )
-                        for key in ['ideagen_step', 'ideagen_screened_df', 'ideagen_theme']:
+                        for key in ['ideagen_step', 'ideagen_screened_df', 'ideagen_theme', 'ideagen_mkt_cap_filters']:
                             if key in st.session_state:
                                 del st.session_state[key]
                     else:
