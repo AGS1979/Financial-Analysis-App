@@ -5273,7 +5273,6 @@ def agent_ideagen_app():
             st.error(f"Error calling FMP API for screening: {e}")
             return pd.DataFrame()
     
-    # REVISED: Overhauled function to use more reliable endpoints
     def enrich_quantitative_data(df: pd.DataFrame, api_key: str) -> pd.DataFrame:
         st.info("**(LIVE) Enriching screened companies with detailed financial ratios and growth metrics...**")
         
@@ -5283,10 +5282,8 @@ def agent_ideagen_app():
         }
 
         for ticker in df['ticker']:
-            # FMP often requires '-' instead of '.' for tickers like BRK.B
             fmp_ticker = ticker.replace('.', '-')
             
-            # Fetch TTM Ratios
             try:
                 ratios_url = f"https://financialmodelingprep.com/api/v3/ratios-ttm/{fmp_ticker}?apikey={api_key}"
                 ratios_res = requests.get(ratios_url, timeout=10).json()
@@ -5301,7 +5298,6 @@ def agent_ideagen_app():
                 new_metrics['priceToSalesTTM'].append(None)
                 new_metrics['returnOnEquityTTM'].append(None)
 
-            # Fetch Annual Growth
             try:
                 growth_url = f"https://financialmodelingprep.com/api/v3/financial-growth/{fmp_ticker}?period=annual&limit=1&apikey={api_key}"
                 growth_res = requests.get(growth_url, timeout=10).json()
@@ -5316,7 +5312,6 @@ def agent_ideagen_app():
             df[key] = value
             
         return df
-
 
     def aggregate_qualitative_data(ticker: str) -> str:
         st.info(f"**(LIVE) Stage 3: Aggregating Qualitative Data for {ticker}...**")
@@ -5339,15 +5334,17 @@ def agent_ideagen_app():
         except Exception: pass
         return f"{transcript_text}\n\n---\n\n{news_text}"
 
+    # REVISED: Updated prompt for better risk formatting
     def run_ai_qualitative_analysis(company_name: str, text_corpus: str, theme: str) -> dict:
         st.info(f"**(LIVE) Stage 4: Running AI Qualitative Analysis for {company_name}...**")
         analysis_prompt = f"""
         You are an expert equity research analyst. Analyze the provided text corpus for '{company_name}'
         based on the investment theme: '{theme}'. TEXT CORPUS: --- {text_corpus} ---
-        Perform three tasks and return a single JSON object with keys "theme_analysis", "moat_analysis", and "risk_analysis".
-        1.  **theme_analysis**: Score alignment from 1-10. Provide a 2-paragraph justification with direct quotes.
+        
+        Perform three tasks and return a single JSON object with the keys "theme_analysis", "moat_analysis", and "risk_analysis".
+        1.  **theme_analysis**: Provide a 2-paragraph justification for the company's alignment with the theme, including direct quotes.
         2.  **moat_analysis**: Describe the competitive moat and pricing power. Provide evidence.
-        3.  **risk_analysis**: Summarize the top 3 risks mentioned in the text.
+        3.  **risk_analysis**: Identify the top 3 risks. For this key, return a JSON object with a single key "top_risks" which is a list of objects. Each object should have two keys: "risk" (a short title) and "description" (a detailed explanation).
         """
         try:
             response = client.chat.completions.create(
@@ -5361,12 +5358,11 @@ def agent_ideagen_app():
             st.error(f"Error in Stage 4 (Qualitative Analysis): {e}")
             return {}
 
+    # REVISED: Logic to handle risk formatting and remove AI score
     def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str) -> dict:
         st.info(f"**(LIVE) Stage 5: Synthesizing Dossier for {quant_data['companyName']}...**")
         
-        # --- Helper for formatting AI text ---
         def safe_get_and_format(data, keys):
-            # ... (this helper function remains the same)
             if not isinstance(data, dict): return "Analysis not available."
             temp = data
             for key in keys:
@@ -5375,13 +5371,29 @@ def agent_ideagen_app():
             if temp is None: return "Analysis not available."
             return str(temp)
 
-        # --- Prepare quantitative data for summary and table ---
-        theme_score = qual_analysis.get('theme_analysis', {}).get('score', 'N/A')
-        market_cap_val = quant_data.get('marketCapUSD', 0)
+        # --- NEW: Logic to parse and format the risk dictionary ---
+        def format_risks(risk_data):
+            if not isinstance(risk_data, dict) or 'top_risks' not in risk_data:
+                return "Risk analysis not available or in an unexpected format."
+            
+            risk_list = risk_data['top_risks']
+            if not isinstance(risk_list, list):
+                return "Risk data is not in the expected list format."
+
+            markdown_lines = []
+            for risk_item in risk_list:
+                if isinstance(risk_item, dict):
+                    title = risk_item.get('risk', 'Untitled Risk')
+                    description = risk_item.get('description', 'No description provided.')
+                    markdown_lines.append(f"* **{title}**: {description}")
+            
+            return "\n".join(markdown_lines) if markdown_lines else "No specific risks were identified."
+
         ps_val = quant_data.get('priceToSalesTTM')
         de_val = quant_data.get('debtToEquityTTM')
         roe_val = quant_data.get('returnOnEquityTTM')
         rev_growth_val = quant_data.get('revenueGrowth1Y')
+        market_cap_val = quant_data.get('marketCapUSD', 0)
 
         market_cap_str = f"${market_cap_val / 1e9:,.1f}B" if isinstance(market_cap_val, (int, float)) else 'N/A'
         ps_str = f"{ps_val:.2f}x" if isinstance(ps_val, (int, float)) else 'N/A'
@@ -5399,11 +5411,9 @@ def agent_ideagen_app():
         | Revenue Growth (1Y)     | {rev_growth_str}  |
         """)
         
-        # --- NEW: AI-powered executive summary ---
         summary_prompt = f"""
         Based on the following data for {quant_data['companyName']}, write a concise 2-3 sentence executive summary for an investment memo.
         - Investment Theme: {theme}
-        - AI Theme Alignment Score: {theme_score}/10
         - Quantitative Data: Market Cap of {market_cap_str}, P/S Ratio of {ps_str}, D/E Ratio of {de_str}, ROE of {roe_str}.
         - Qualitative Moat: {safe_get_and_format(qual_analysis, ['moat_analysis', 'description'])}
         """
@@ -5419,17 +5429,16 @@ def agent_ideagen_app():
 
         dossier_dict = {
             "dossier_title": f"{quant_data.get('companyName', 'N/A')} ({quant_data.get('ticker', 'N/A')})",
-            "metadata": f"**Theme:** {theme} | **AI Alignment Score:** {theme_score}/10",
+            "metadata": f"**Theme:** {theme}", # AI Score removed
             "Executive Summary": executive_summary,
             "Quantitative Snapshot": quant_table_md,
             "Thematic Alignment & Justification": safe_get_and_format(qual_analysis, ['theme_analysis', 'justification']),
             "Competitive Moat & Pricing Power": safe_get_and_format(qual_analysis, ['moat_analysis', 'description']),
-            "Key Risks Identified": safe_get_and_format(qual_analysis, ['risk_analysis'])
+            "Key Risks Identified": format_risks(qual_analysis.get('risk_analysis'))
         }
         return dossier_dict
 
     def generate_final_html_report(dossier_list: list, theme: str) -> str:
-        # ... (this helper function remains the same)
         safe_theme = html.escape(theme or "User-Defined Theme")
         styles = """
         <style>
@@ -5446,6 +5455,8 @@ def agent_ideagen_app():
             .dossier th { background-color: #f3f4f6; font-weight: 600; }
             .dossier p { line-height: 1.6; }
             .dossier .metadata { color: #4b5563; font-size: 0.9em; }
+            .dossier ul { padding-left: 20px; }
+            .dossier li { margin-bottom: 0.5em; }
         </style>
         """
         html_body = f"<div class='report-header'><h1>Investment Idea Generation Report</h1><h2>Theme: {safe_theme}</h2></div>"
