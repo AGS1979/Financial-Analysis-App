@@ -5209,7 +5209,6 @@ def agent_ideagen_app():
         st.error(f"Could not initialize the LLM client. Please check your secrets. Error: {e}")
         return
 
-    # REVISED: More robust prompt for better accuracy
     def deconstruct_prompt(user_input: str) -> dict:
         """ (Stage 1) Uses a more robust LLM prompt to convert a natural language request into a structured query. """
         prompt = f"""
@@ -5267,7 +5266,6 @@ def agent_ideagen_app():
             st.error(f"Error calling FMP API for screening: {e}")
             return pd.DataFrame()
 
-    # REVISED: More robust data enrichment
     def enrich_quantitative_data(df: pd.DataFrame, api_key: str) -> pd.DataFrame:
         st.info("**(LIVE) Enriching screened companies with detailed TTM financial metrics...**")
         new_gross_margins, new_rev_growths, new_roics = [], [], []
@@ -5383,7 +5381,10 @@ def agent_ideagen_app():
         return dossier_dict
 
     def generate_final_html_report(dossier_list: list, theme: str) -> str:
-        safe_theme = html.escape(theme)
+        # --- THIS IS THE FIX ---
+        # It ensures that if 'theme' is None, it defaults to a string before escaping.
+        safe_theme = html.escape(theme or "User-Defined Theme")
+        
         styles = """
         <style>
             body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background-color: #f9fafb; color: #1f2937;}
@@ -5417,7 +5418,6 @@ def agent_ideagen_app():
 
     # --- 2. STREAMLIT UI AND ORCHESTRATION ---
 
-    # Initialize session state
     if 'ideagen_step' not in st.session_state:
         st.session_state.ideagen_step = 1
 
@@ -5434,7 +5434,10 @@ def agent_ideagen_app():
                     st.session_state.ideagen_step = 1
                     return
 
-                st.session_state.ideagen_theme = structured_query.get('qualitative_theme', 'N/A')
+                # This handles the case where the theme is None or an empty string
+                theme = structured_query.get('qualitative_theme') or "User-defined theme"
+                st.session_state.ideagen_theme = theme
+                
                 screened_df = run_quantitative_screen(structured_query.get('quantitative_filters', {}))
 
                 if not screened_df.empty:
@@ -5451,10 +5454,9 @@ def agent_ideagen_app():
         st.subheader("Step 2: Select Companies for Deeper Analysis")
         df = st.session_state.ideagen_screened_df
         
-        # Format for display
         df_display = df[['ticker', 'companyName', 'marketCapUSD', 'industry', 'country']].copy()
         df_display['marketCapUSD'] = df_display['marketCapUSD'].apply(lambda x: f"${x/1e9:,.1f}B" if pd.notnull(x) else 'N/A')
-        st.dataframe(df_display, use_container_width=True)
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
 
         options = [f"{row['companyName']} ({row['ticker']})" for index, row in df.iterrows()]
         selected_options = st.multiselect("Select companies to analyze further:", options, default=options)
@@ -5489,7 +5491,8 @@ def agent_ideagen_app():
                             label="📥 Download Full HTML Report",
                             data=final_html_report,
                             file_name=f"IdeaGen_Report_{pd.to_datetime('today').strftime('%Y%m%d')}.html",
-                            mime="text/html"
+                            mime="text/html",
+                            use_container_width=True
                         )
                         # Reset state after completion
                         for key in ['ideagen_step', 'ideagen_screened_df', 'ideagen_theme']:
