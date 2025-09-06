@@ -5212,23 +5212,30 @@ def agent_ideagen_app():
     def deconstruct_prompt(user_input: str) -> dict:
         """ (Stage 1) Uses a more robust LLM prompt to convert a natural language request into a structured query. """
         prompt = f"""
-        You are an expert financial data API assistant. Your sole task is to convert a user's natural language request into a valid JSON object for the FMP Stock Screener API.
+        You are an expert financial data API assistant. Your sole task is to convert a user's natural language request into a valid JSON object.
 
         **Instructions:**
-        1.  Analyze the user's request and identify criteria for filtering stocks.
-        2.  Map these criteria to the available FMP API parameters listed below.
-        3.  If a filter is not mentioned by the user, DO NOT include it in the JSON.
-        4.  Convert numerical values correctly (e.g., '$10 billion' becomes `10000000000`).
-        5.  The final JSON must have four keys: "quantitative_filters", "qualitative_theme", "positive_keywords", and "negative_keywords".
+        1.  Analyze the user's request for quantitative financial criteria (e.g., market cap, margin) and map them to the FMP API parameters below. If a filter is not mentioned, DO NOT include it.
+        2.  Infer the main investment theme from the request. This is critical. For example, if the user asks for "solar energy companies," the theme is "Solar Energy." This should never be null.
+        3.  The final JSON must have four keys: "quantitative_filters", "qualitative_theme", "positive_keywords", and "negative_keywords".
 
         **FMP API Parameters:**
         `marketCapMoreThan`, `marketCapLowerThan`, `priceMoreThan`, `priceLowerThan`, `betaMoreThan`, `betaLowerThan`, `volumeMoreThan`, `volumeLowerThan`, `dividendYieldMoreThan`, `dividendYieldLowerThan`, `grossProfitMarginMoreThan`, `grossProfitMarginLowerThan`, `netProfitMarginMoreThan`, `returnOnEquityMoreThan`, `country`, `sector`, `industry`, `exchange`.
 
-        **Example Mapping:**
-        - User says: "US-based solar energy companies" -> You output: `"country": "US", "industry": "Solar"` in the filters.
-        - User says: "market capitalization exceeding $10 billion" -> You output: `"marketCapMoreThan": 10000000000` in the filters.
-        - User says: "gross margin above 50%" -> You output: `"grossProfitMarginMoreThan": 0.50` in the filters.
-        - User says: "I'm interested in the AI revolution" -> You output: `"qualitative_theme": "AI Revolution"` and `"positive_keywords": ["artificial intelligence", "machine learning"]`.
+        **Example:**
+        - User Request: "US-based solar energy companies with a market cap over $10 billion and a gross margin above 20%."
+        - Your JSON Output:
+        {{
+          "quantitative_filters": {{
+            "country": "US",
+            "industry": "Solar",
+            "marketCapMoreThan": 10000000000,
+            "grossProfitMarginMoreThan": 0.20
+          }},
+          "qualitative_theme": "Solar Energy Investment",
+          "positive_keywords": ["solar", "renewable energy"],
+          "negative_keywords": []
+        }}
 
         **User Request:** "{user_input}"
 
@@ -5265,45 +5272,65 @@ def agent_ideagen_app():
         except requests.exceptions.RequestException as e:
             st.error(f"Error calling FMP API for screening: {e}")
             return pd.DataFrame()
-
+    
+    # REVISED: Overhauled function to use more reliable endpoints
     def enrich_quantitative_data(df: pd.DataFrame, api_key: str) -> pd.DataFrame:
-        st.info("**(LIVE) Enriching screened companies with detailed TTM financial metrics...**")
-        new_gross_margins, new_rev_growths, new_roics = [], [], []
+        st.info("**(LIVE) Enriching screened companies with detailed financial ratios and growth metrics...**")
+        
+        new_metrics = {
+            'debtToEquityTTM': [], 'priceToSalesTTM': [], 
+            'returnOnEquityTTM': [], 'revenueGrowth1Y': []
+        }
 
         for ticker in df['ticker']:
+            # FMP often requires '-' instead of '.' for tickers like BRK.B
+            fmp_ticker = ticker.replace('.', '-')
+            
+            # Fetch TTM Ratios
             try:
-                url = f"https://financialmodelingprep.com/api/v3/key-metrics-ttm/{ticker}?apikey={api_key}"
-                response = requests.get(url, timeout=10)
-                response.raise_for_status()
-                metrics = response.json()
-                if metrics and isinstance(metrics, list):
-                    new_gross_margins.append(metrics[0].get('grossProfitMarginTTM'))
-                    new_rev_growths.append(metrics[0].get('revenueGrowthTTM'))
-                    new_roics.append(metrics[0].get('roicTTM'))
+                ratios_url = f"https://financialmodelingprep.com/api/v3/ratios-ttm/{fmp_ticker}?apikey={api_key}"
+                ratios_res = requests.get(ratios_url, timeout=10).json()
+                if ratios_res and isinstance(ratios_res, list):
+                    new_metrics['debtToEquityTTM'].append(ratios_res[0].get('debtEquityRatioTTM'))
+                    new_metrics['priceToSalesTTM'].append(ratios_res[0].get('priceToSalesRatioTTM'))
+                    new_metrics['returnOnEquityTTM'].append(ratios_res[0].get('returnOnEquityTTM'))
                 else:
-                    raise ValueError("No metrics found")
-            except (requests.exceptions.RequestException, ValueError, IndexError) as e:
-                new_gross_margins.append(None)
-                new_rev_growths.append(None)
-                new_roics.append(None)
+                    raise ValueError("No TTM ratios found")
+            except Exception:
+                new_metrics['debtToEquityTTM'].append(None)
+                new_metrics['priceToSalesTTM'].append(None)
+                new_metrics['returnOnEquityTTM'].append(None)
+
+            # Fetch Annual Growth
+            try:
+                growth_url = f"https://financialmodelingprep.com/api/v3/financial-growth/{fmp_ticker}?period=annual&limit=1&apikey={api_key}"
+                growth_res = requests.get(growth_url, timeout=10).json()
+                if growth_res and isinstance(growth_res, list):
+                    new_metrics['revenueGrowth1Y'].append(growth_res[0].get('revenueGrowth'))
+                else:
+                    raise ValueError("No annual growth data found")
+            except Exception:
+                new_metrics['revenueGrowth1Y'].append(None)
         
-        df['grossMargin_ttm'] = new_gross_margins
-        df['revenueGrowth_ttm'] = new_rev_growths
-        df['roic_ttm'] = new_roics
+        for key, value in new_metrics.items():
+            df[key] = value
+            
         return df
+
 
     def aggregate_qualitative_data(ticker: str) -> str:
         st.info(f"**(LIVE) Stage 3: Aggregating Qualitative Data for {ticker}...**")
         transcript_text, news_text = "No recent earnings transcript found.", "Could not fetch recent news."
+        fmp_ticker = ticker.replace('.', '-')
         try:
-            url = f"https://financialmodelingprep.com/api/v3/earning_call_transcript/{ticker}?limit=1&apikey={fmp_api_key}"
+            url = f"https://financialmodelingprep.com/api/v3/earning_call_transcript/{fmp_ticker}?limit=1&apikey={fmp_api_key}"
             response = requests.get(url, timeout=10); response.raise_for_status()
             transcript_data = response.json()
             if transcript_data and 'content' in transcript_data[0]:
                 transcript_text = f"From Q{transcript_data[0]['quarter']} {transcript_data[0]['year']} Earnings Call:\n{transcript_data[0]['content']}"
         except Exception: pass
         try:
-            url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={ticker}&limit=10&apikey={fmp_api_key}"
+            url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={fmp_ticker}&limit=10&apikey={fmp_api_key}"
             response = requests.get(url, timeout=10); response.raise_for_status()
             news_data = response.json()
             if news_data:
@@ -5336,43 +5363,64 @@ def agent_ideagen_app():
 
     def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str) -> dict:
         st.info(f"**(LIVE) Stage 5: Synthesizing Dossier for {quant_data['companyName']}...**")
-        def format_ai_content(content):
-            if isinstance(content, list): return "\n\n".join(str(item) for item in content)
-            if isinstance(content, str): return content
-            return "Analysis not available or in an unexpected format."
+        
+        # --- Helper for formatting AI text ---
         def safe_get_and_format(data, keys):
+            # ... (this helper function remains the same)
             if not isinstance(data, dict): return "Analysis not available."
             temp = data
             for key in keys:
                 if not isinstance(temp, dict): return "Analysis not available."
                 temp = temp.get(key)
             if temp is None: return "Analysis not available."
-            return format_ai_content(temp)
+            return str(temp)
 
-        theme_analysis_score = qual_analysis.get('theme_analysis', {}).get('score', 'N/A')
+        # --- Prepare quantitative data for summary and table ---
+        theme_score = qual_analysis.get('theme_analysis', {}).get('score', 'N/A')
         market_cap_val = quant_data.get('marketCapUSD', 0)
-        rev_growth_val = quant_data.get('revenueGrowth_ttm', quant_data.get('revenueGrowth'))
-        margin_val = quant_data.get('grossMargin_ttm', quant_data.get('grossMargin'))
-        roic_val = quant_data.get('roic_ttm', quant_data.get('roic'))
+        ps_val = quant_data.get('priceToSalesTTM')
+        de_val = quant_data.get('debtToEquityTTM')
+        roe_val = quant_data.get('returnOnEquityTTM')
+        rev_growth_val = quant_data.get('revenueGrowth1Y')
 
         market_cap_str = f"${market_cap_val / 1e9:,.1f}B" if isinstance(market_cap_val, (int, float)) else 'N/A'
+        ps_str = f"{ps_val:.2f}x" if isinstance(ps_val, (int, float)) else 'N/A'
+        de_str = f"{de_val:.2f}x" if isinstance(de_val, (int, float)) else 'N/A'
+        roe_str = f"{roe_val:.1%}" if isinstance(roe_val, (int, float)) else 'N/A'
         rev_growth_str = f"{rev_growth_val:.1%}" if isinstance(rev_growth_val, (int, float)) else 'N/A'
-        margin_str = f"{margin_val:.1%}" if isinstance(margin_val, (int, float)) else 'N/A'
-        roic_str = f"{roic_val:.1%}" if isinstance(roic_val, (int, float)) else 'N/A'
         
         quant_table_md = textwrap.dedent(f"""
-        | Metric              | Value                  |
-        |---------------------|------------------------|
-        | Market Cap          | {market_cap_str}       |
-        | Revenue Growth (TTM)| {rev_growth_str}       |
-        | Gross Margin (TTM)  | {margin_str}           |
-        | ROIC (TTM)          | {roic_str}             |
+        | Metric                  | Value             |
+        |-------------------------|-------------------|
+        | Market Cap              | {market_cap_str}  |
+        | P/S Ratio (TTM)         | {ps_str}          |
+        | Debt / Equity (TTM)     | {de_str}          |
+        | ROE (TTM)               | {roe_str}         |
+        | Revenue Growth (1Y)     | {rev_growth_str}  |
         """)
+        
+        # --- NEW: AI-powered executive summary ---
+        summary_prompt = f"""
+        Based on the following data for {quant_data['companyName']}, write a concise 2-3 sentence executive summary for an investment memo.
+        - Investment Theme: {theme}
+        - AI Theme Alignment Score: {theme_score}/10
+        - Quantitative Data: Market Cap of {market_cap_str}, P/S Ratio of {ps_str}, D/E Ratio of {de_str}, ROE of {roe_str}.
+        - Qualitative Moat: {safe_get_and_format(qual_analysis, ['moat_analysis', 'description'])}
+        """
+        try:
+            summary_response = client.chat.completions.create(
+                model=llm_deployment_name,
+                messages=[{"role": "user", "content": summary_prompt}],
+                temperature=0.2, max_tokens=150
+            )
+            executive_summary = summary_response.choices[0].message.content
+        except Exception:
+            executive_summary = f"{quant_data.get('companyName', 'N/A')} is a potential candidate for the '{theme}' theme, operating in the {quant_data.get('industry', 'N/A')} industry with a market cap of {market_cap_str}."
 
         dossier_dict = {
             "dossier_title": f"{quant_data.get('companyName', 'N/A')} ({quant_data.get('ticker', 'N/A')})",
-            "metadata": f"**Theme:** {theme} | **AI Alignment Score:** {theme_analysis_score}/10",
-            "Executive Summary": f"{quant_data.get('companyName', 'N/A')} is a potential candidate for the '{theme}' theme, operating in the {quant_data.get('industry', 'N/A')} industry with a market cap of {market_cap_str}.",
+            "metadata": f"**Theme:** {theme} | **AI Alignment Score:** {theme_score}/10",
+            "Executive Summary": executive_summary,
             "Quantitative Snapshot": quant_table_md,
             "Thematic Alignment & Justification": safe_get_and_format(qual_analysis, ['theme_analysis', 'justification']),
             "Competitive Moat & Pricing Power": safe_get_and_format(qual_analysis, ['moat_analysis', 'description']),
@@ -5381,10 +5429,8 @@ def agent_ideagen_app():
         return dossier_dict
 
     def generate_final_html_report(dossier_list: list, theme: str) -> str:
-        # --- THIS IS THE FIX ---
-        # It ensures that if 'theme' is None, it defaults to a string before escaping.
+        # ... (this helper function remains the same)
         safe_theme = html.escape(theme or "User-Defined Theme")
-        
         styles = """
         <style>
             body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background-color: #f9fafb; color: #1f2937;}
@@ -5434,7 +5480,6 @@ def agent_ideagen_app():
                     st.session_state.ideagen_step = 1
                     return
 
-                # This handles the case where the theme is None or an empty string
                 theme = structured_query.get('qualitative_theme') or "User-defined theme"
                 st.session_state.ideagen_theme = theme
                 
@@ -5468,7 +5513,7 @@ def agent_ideagen_app():
                 selected_tickers = [opt.split('(')[-1].replace(')', '') for opt in selected_options]
                 analysis_df = df[df['ticker'].isin(selected_tickers)]
                 
-                with st.spinner("Agent IdeaGen is running deeper analysis..."):
+                with st.spinner("Agent IdeaGen is running deeper analysis... This may take a few minutes."):
                     all_dossiers = []
                     for index, company_row in analysis_df.iterrows():
                         company_name, ticker = company_row['companyName'], company_row['ticker']
@@ -5494,7 +5539,6 @@ def agent_ideagen_app():
                             mime="text/html",
                             use_container_width=True
                         )
-                        # Reset state after completion
                         for key in ['ideagen_step', 'ideagen_screened_df', 'ideagen_theme']:
                             if key in st.session_state:
                                 del st.session_state[key]
