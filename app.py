@@ -5177,9 +5177,8 @@ def agent_sentinel_app():
 def agent_ideagen_app():
     """
     A Streamlit app for a multi-stage, AI-powered investment idea generator.
-    COMPLETE OVERHAUL: This version uses a decomposed AI prompt analysis and sequential,
-    country-specific API calls to ensure query accuracy and prevent processing of large,
-    irrelevant datasets.
+    CORRECTION: Adds robust data validation to handle non-numeric values (e.g., "20%")
+    returned by the LLM for financial filters, preventing TypeErrors.
     """
     import json
     import pandas as pd
@@ -5192,10 +5191,9 @@ def agent_ideagen_app():
     st.markdown("### 💡 Agent IdeaGen")
     st.markdown("Generate new investment ideas by describing a theme. The agent screens for quantitative and qualitative alignment and produces a downloadable HTML report.")
 
-    # --- 1. HELPER FUNCTIONS (REBUILT) ---
+    # --- 1. HELPER FUNCTIONS (WITH FIX) ---
     MAX_COMPANIES_TO_ENRICH = 75
 
-    # Configuration and API clients
     try:
         fmp_api_key = st.secrets["fmp"]["api_key"]
     except Exception as e:
@@ -5211,16 +5209,19 @@ def agent_ideagen_app():
     except Exception as e:
         st.error(f"Could not initialize the LLM client. Please check your secrets. Error: {e}"); return
 
-    # --- NEW: Decomposed Prompt Analysis ---
+    COUNTRY_NAME_TO_CODE = {
+        "india": "IN", "united states": "US", "usa": "US", "germany": "DE",
+        "united kingdom": "GB", "uk": "GB", "china": "CN", "japan": "JP",
+        "canada": "CA", "france": "FR", "australia": "AU", "switzerland": "CH"
+    }
+
     def deconstruct_prompt_v2(user_input: str) -> dict:
-        """NEW: Uses a more robust, two-stage process to deconstruct the user's prompt."""
-        # Stage 1: Extract specific entities for API filtering.
         entity_prompt = f"""
         You are a financial API assistant. Extract entities from the user's request into a JSON object.
         1.  `countries`: A list of full country names mentioned (e.g., ["India", "United States"]).
         2.  `sector`: The single best-matching sector from this list: ["Basic Materials", "Communication Services", "Consumer Cyclical", "Consumer Defensive", "Energy", "Financial Services", "Healthcare", "Industrials", "Real Estate", "Technology", "Utilities"].
         3.  `industry`: The single best-matching industry.
-        4.  `filters`: An object with FMP API numeric filters like `marketCapMoreThan`, `marketCapLowerThan`, `grossProfitMarginMoreThan`. Assume monetary values are in USD.
+        4.  `filters`: An object with FMP API numeric filters like `marketCapMoreThan`, `marketCapLowerThan`, `grossProfitMarginMoreThan`. The value for margins should be a decimal (e.g., 20% -> 0.2). Assume monetary values are in USD.
         Return ONLY the JSON. If a value is not found, use an empty list or null.
         USER REQUEST: "{user_input}"
         """
@@ -5230,8 +5231,7 @@ def agent_ideagen_app():
             entities = json.loads(entity_response.choices[0].message.content)
         except Exception as e:
             st.error(f"Error extracting entities from your request: {e}"); return None
-
-        # Stage 2: Infer the qualitative theme.
+        
         theme_prompt = f"Based on the following request, what is the core investment theme in 5-10 words? REQUEST: \"{user_input}\""
         try:
             st.info("**(LIVE) Stage 1b: Inferring investment theme...**")
@@ -5242,36 +5242,28 @@ def agent_ideagen_app():
 
         return {"entities": entities, "qualitative_theme": theme}
 
-    # --- NEW: Country-by-Country API Calls ---
     def get_company_universe_v2(entities: dict, api_key: str) -> pd.DataFrame:
-        """NEW: Makes separate, targeted API calls for each country to ensure accuracy."""
         st.info("**(LIVE) Stage 2: Fetching company universe using FMP screener...**")
-        
-        COUNTRY_NAME_TO_CODE = {"india": "IN", "united states": "US", "usa": "US", "germany": "DE", "united kingdom": "GB", "uk": "GB", "china": "CN", "japan": "JP", "canada": "CA", "france": "FR", "australia": "AU", "switzerland": "CH"}
-        
         country_names = entities.get('countries', [])
         if not country_names:
             st.error("Could not identify any valid countries in your request. Please specify a country (e.g., 'in the US', 'Indian companies').")
             return pd.DataFrame()
 
         all_companies_df = pd.DataFrame()
-        
         for country_name in country_names:
             country_code = COUNTRY_NAME_TO_CODE.get(country_name.lower())
             if not country_code:
                 st.warning(f"Skipping unsupported country: '{country_name}'"); continue
 
-            screen_params = entities.get('filters', {})
+            screen_params = entities.get('filters', {}) if entities.get('filters') else {}
             if entities.get('sector'): screen_params['sector'] = entities['sector']
             if entities.get('industry'): screen_params['industry'] = entities['industry']
             screen_params['country'] = country_code
             if country_code == 'IN': screen_params['exchange'] = 'NSE'
 
             st.info(f"Searching for companies in {country_name} with parameters: {screen_params}")
-            
             base_url = "https://financialmodelingprep.com/api/v3/stock-screener"
-            screen_params['apikey'] = api_key
-            screen_params['limit'] = 1000
+            screen_params['apikey'] = api_key; screen_params['limit'] = 1000
             try:
                 response = requests.get(base_url, params=screen_params); response.raise_for_status()
                 data = response.json()
@@ -5284,10 +5276,8 @@ def agent_ideagen_app():
              st.error("FMP screener could not find any companies matching the specified criteria in the requested countries.")
         return all_companies_df
 
-    # Other helper functions (enrich_data, aggregate_qualitative_data, etc.) remain the same as the previous version.
-    # I am including them here for completeness.
     def enrich_data(df: pd.DataFrame, api_key: str) -> pd.DataFrame:
-        st.info(f"**(LIVE) Enriching {len(df)} companies with financial data. This may take a moment...**")
+        st.info(f"**(LIVE) Enriching {len(df)} companies with financial data...**")
         enriched_data = []
         progress_bar = st.progress(0, text=f"Processing 0 / {len(df)} companies...")
         for i, row in df.iterrows():
@@ -5412,8 +5402,27 @@ def agent_ideagen_app():
         
         df = st.session_state.ideagen_enriched_df
         quant_filters = st.session_state.ideagen_entities.get('filters', {})
-        mkt_cap_min_raw = quant_filters.get('marketCapMoreThan', 0) / 1e9; margin_min_raw = quant_filters.get('grossProfitMarginMoreThan', 0.0) * 100
-        mkt_cap_default = max(0.0, min(200.0, mkt_cap_min_raw)); margin_default = max(0.0, min(100.0, margin_min_raw))
+        
+        # --- FIX: ADDED SAFE DATA VALIDATION AND CONVERSION ---
+        def safe_float_convert(value, default=0.0):
+            """A helper to safely convert a value from the LLM to a float."""
+            if value is None: return default
+            try:
+                if isinstance(value, str):
+                    value = value.replace('%', '').replace(',', '').strip()
+                return float(value)
+            except (ValueError, TypeError):
+                return default
+
+        mkt_cap_val_raw = quant_filters.get('marketCapMoreThan')
+        margin_val_raw = quant_filters.get('grossProfitMarginMoreThan')
+
+        mkt_cap_min_raw = safe_float_convert(mkt_cap_val_raw, default=0) / 1e9
+        margin_min_raw = safe_float_convert(margin_val_raw, default=0.0) * 100
+        # --- END FIX ---
+        
+        mkt_cap_default = max(0.0, min(200.0, mkt_cap_min_raw))
+        margin_default = max(0.0, min(100.0, margin_min_raw))
 
         col1, col2 = st.columns(2)
         with col1: mkt_cap_filter = st.slider("Minimum Market Cap (USD Billions)", 0.0, 200.0, mkt_cap_default, 0.5)
