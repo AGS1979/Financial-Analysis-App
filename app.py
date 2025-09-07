@@ -5176,8 +5176,12 @@ def agent_sentinel_app():
 
 def agent_ideagen_app():
     """
-    A Streamlit app for a multi-stage, AI-powered investment idea generator
-    that now includes a user selection step and provides a downloadable HTML report.
+    A Streamlit app for a multi-stage, AI-powered investment idea generator.
+    IMPROVEMENTS:
+    1. PERFORMANCE: Applies quantitative filters directly in the initial FMP API call for faster screening.
+    2. GLOBAL DATA: Adapts qualitative analysis if earnings transcripts are unavailable (common for non-US firms).
+    3. CURRENCY HANDLING: Informs the user that monetary values are treated as USD and displays reporting currency.
+    4. MULTI-COUNTRY: Supports screening across multiple countries in a single query.
     """
     import json
     import pandas as pd
@@ -5192,6 +5196,7 @@ def agent_ideagen_app():
 
     # --- 1. HELPER FUNCTIONS ---
 
+    # Configuration and API clients
     try:
         fmp_api_key = st.secrets["fmp"]["api_key"]
     except Exception as e:
@@ -5218,17 +5223,18 @@ def agent_ideagen_app():
     def deconstruct_prompt(user_input: str) -> dict:
         fmp_sectors = ["Basic Materials", "Communication Services", "Consumer Cyclical", "Consumer Defensive", "Energy", "Financial Services", "Healthcare", "Industrials", "Real Estate", "Technology", "Utilities"]
         fmp_industries = ["Oil & Gas E&P", "Software - Application", "Banks - Regional", "Utilities - Renewable", "Biotechnology", "Semiconductors", "Medical Devices", "Aerospace & Defense", "Solar", "Specialty Industrial Machinery", "Information Technology Services"]
+        # IMPROVEMENT: Prompt now asks for a list/comma-separated string for countries.
         prompt = f"""
         You are an expert financial data API assistant. Your task is to convert a user's natural language request into a valid JSON object.
         **Instructions:**
         1. Analyze the user's request for quantitative financial criteria (e.g., market cap) and map them to the FMP API parameters below. Assume monetary values are in USD.
-        2. Analyze the user's request for a sector or industry. Find the **single best match** from the `VALID_SECTORS` or `VALID_INDUSTRIES` lists provided below.
-        3. Infer the main investment theme from the request. This should never be null.
-        4. Extract the full country name (e.g., "India", "United States").
+        2. Analyze for a sector or industry and find the best match from the valid lists.
+        3. Infer the main investment theme. This should never be null.
+        4. Extract all full country names (e.g., "India", "United States"). If multiple, provide a comma-separated string.
         5. The final JSON must have the keys: "quantitative_filters" and "qualitative_theme".
         **VALID_SECTORS:** {fmp_sectors}
         **VALID_INDUSTRIES (Sample):** {fmp_industries}
-        **FMP API Parameters:** `marketCapMoreThan`, `marketCapLowerThan`, `grossProfitMarginMoreThan`, `country`, `sector`, `industry`.
+        **FMP API Parameters:** `marketCapMoreThan`, `marketCapLowerThan`, `grossProfitMarginMoreThan`, `country` (can be 'US,DE'), `sector`, `industry`.
         **User Request:** "{user_input}"
         Now, generate the complete JSON object.
         """
@@ -5239,7 +5245,8 @@ def agent_ideagen_app():
             st.error(f"Error in Stage 1 (Deconstruction): {e}"); return None
 
     def get_company_universe(criteria: dict, api_key: str) -> pd.DataFrame:
-        st.info("**(LIVE) Stage 2: Fetching company universe using FMP screener...**")
+        # IMPROVEMENT: Now applies all quantitative filters directly in the API call for efficiency.
+        st.info("**(LIVE) Stage 2: Fetching targeted company universe using FMP screener...**")
         def _make_fmp_api_call(params_to_use):
             base_url = "https://financialmodelingprep.com/api/v3/stock-screener"
             params_to_use['apikey'] = api_key; params_to_use['limit'] = 1000
@@ -5249,19 +5256,17 @@ def agent_ideagen_app():
                 return response.json()
             except requests.exceptions.RequestException: return None
 
-        screen_params = {k: v for k, v in criteria.items() if k in ['country', 'sector', 'industry']}
+        screen_params = criteria.copy()
         if not screen_params.get('country'):
             st.error("A country must be specified to find companies."); return pd.DataFrame()
 
+        # IMPROVEMENT: Smarter exchange handling for single vs. multi-country searches.
+        country_list = screen_params.get('country', '').split(',')
+        if len(country_list) == 1:
+            if country_list[0] == 'IN': screen_params['exchange'] = 'NSE'
+            # Add other single-country exchange logic here (e.g., 'LSE' for GB)
         
-        # <<< START FIX >>>
-        # Specify the exchange for non-US countries to get local listings.
-        # For India, we will default to the National Stock Exchange (NSE).
-        if screen_params.get('country') == 'IN':
-            screen_params['exchange'] = 'NSE'
-        # <<< END FIX >>>    
-
-        st.info(f"Attempting screen with: {screen_params}")
+        st.info(f"Attempting targeted screen with: {screen_params}")
         data = _make_fmp_api_call(screen_params.copy())
         if not data and 'industry' in screen_params:
             st.warning("Initial screen was too specific. Broadening search to sector level...")
@@ -5270,82 +5275,62 @@ def agent_ideagen_app():
             st.warning("Sector screen failed. Broadening search to country level...")
             screen_params.pop('sector', None); data = _make_fmp_api_call(screen_params.copy())
         if not data:
-            st.error("FMP screener could not find any companies matching the basic criteria."); return pd.DataFrame()
+            st.error("FMP screener could not find any companies matching the specified criteria."); return pd.DataFrame()
         return pd.DataFrame(data)
 
-    # REVISED: This function now preserves the original ticker.
     def enrich_data(df: pd.DataFrame, api_key: str) -> pd.DataFrame:
         st.info(f"**(LIVE) Enriching {len(df)} companies with financial data. This may take a moment...**")
         enriched_data = []
         progress_bar = st.progress(0, text=f"Processing 0 / {len(df)} companies...")
 
         for i, row in df.iterrows():
-            original_symbol = row['symbol'] # Store the original, country-specific symbol
-            fmp_ticker = original_symbol
+            original_symbol = row['symbol']
             progress_bar.progress((i + 1) / len(df), text=f"Processing {original_symbol} ({i+1}/{len(df)})...")
-            
             try:
-                profile_url = f"https://financialmodelingprep.com/api/v3/profile/{fmp_ticker}?apikey={api_key}"
+                profile_url = f"https://financialmodelingprep.com/api/v3/profile/{original_symbol}?apikey={api_key}"
                 profile_data = requests.get(profile_url, timeout=10).json()
                 
-                ratios_url = f"https://financialmodelingprep.com/api/v3/ratios-ttm/{fmp_ticker}?apikey={api_key}"
+                ratios_url = f"https://financialmodelingprep.com/api/v3/ratios-ttm/{original_symbol}?apikey={api_key}"
                 ratios_data = requests.get(ratios_url, timeout=10).json()
 
                 new_row = row.to_dict()
-                if profile_data and isinstance(profile_data, list):
-                    new_row.update(profile_data[0])
-                if ratios_data and isinstance(ratios_data, list):
-                    new_row.update(ratios_data[0])
-                
-                # THIS IS THE FIX: Ensure the original symbol is restored.
-                new_row['symbol'] = original_symbol
-                
+                if profile_data and isinstance(profile_data, list): new_row.update(profile_data[0])
+                if ratios_data and isinstance(ratios_data, list): new_row.update(ratios_data[0])
+                new_row['symbol'] = original_symbol # Ensure original ticker is preserved
                 enriched_data.append(new_row)
-
             except Exception:
-                enriched_data.append(row.to_dict())
-                continue
-        
+                enriched_data.append(row.to_dict()); continue
         progress_bar.empty()
         return pd.DataFrame(enriched_data)
 
     def aggregate_qualitative_data(ticker: str) -> str:
         st.info(f"**(LIVE) Aggregating Qualitative Data for {ticker}...**")
         transcript_text, news_text = "No recent earnings transcript found.", "Could not fetch recent news."
-        fmp_ticker = ticker
-        
-        # --- MODIFIED FOR DEBUGGING ---
         try:
-            url = f"https://financialmodelingprep.com/api/v3/earning_call_transcript/{fmp_ticker}?limit=1&apikey={fmp_api_key}"
-            response = requests.get(url, timeout=10)
-            response.raise_for_status() # This will raise an error for statuses like 401, 403, 404
+            url = f"https://financialmodelingprep.com/api/v3/earning_call_transcript/{ticker}?limit=1&apikey={fmp_api_key}"
+            response = requests.get(url, timeout=10); response.raise_for_status()
             transcript_data = response.json()
             if transcript_data and 'content' in transcript_data[0]:
                 transcript_text = f"From Q{transcript_data[0]['quarter']} {transcript_data[0]['year']} Earnings Call:\n{transcript_data[0]['content']}"
-        except Exception as e:
-            # Print the actual error to the Streamlit app UI
-            st.error(f"Error fetching transcript for {fmp_ticker}: {e}")
-            # We still 'pass' to allow the news fetcher to run
-            pass
+        except Exception: pass # Fails gracefully if no transcript is found
         
         try:
-            url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={fmp_ticker}&limit=10&apikey={fmp_api_key}"
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
+            url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={ticker}&limit=10&apikey={fmp_api_key}"
+            response = requests.get(url, timeout=10); response.raise_for_status()
             news_data = response.json()
             if news_data:
                 headlines = [f"- {item['title']} (Source: {item['site']})" for item in news_data]
                 news_text = "Recent News Headlines:\n" + "\n".join(headlines)
-        except Exception as e:
-            st.error(f"Error fetching news for {fmp_ticker}: {e}")
-            pass
-        # --- END MODIFICATION ---
-
+        except Exception: pass # Fails gracefully if no news is found
         return f"{transcript_text}\n\n---\n\n{news_text}"
 
     def run_ai_qualitative_analysis(company_name: str, text_corpus: str, theme: str) -> dict:
         st.info(f"**(LIVE) Running AI Qualitative Analysis for {company_name}...**")
-        analysis_prompt = f"""You are an expert equity research analyst. Analyze '{company_name}' for the theme '{theme}' using the text below. Return a JSON with keys "theme_analysis", "moat_analysis", "risk_analysis". For "risk_analysis", provide a "top_risks" list of objects, each with "risk" and "description". TEXT: --- {text_corpus[:25000]} ---"""
+        # IMPROVEMENT: Prompt now adapts if transcript data is missing.
+        analysis_prompt = f"""You are an expert equity research analyst. Analyze '{company_name}' for the theme '{theme}' using the text below. 
+        **CRITICAL INSTRUCTION**: If the text explicitly states 'No recent earnings transcript found', you MUST base your analysis on the provided news headlines and acknowledge that the analysis is based on limited public information.
+        Return a JSON with keys "theme_analysis", "moat_analysis", "risk_analysis". For "risk_analysis", provide a "top_risks" list of objects, each with "risk" and "description". 
+        TEXT: --- {text_corpus[:25000]} ---"""
         try:
             response = client.chat.completions.create(model=llm_deployment_name,messages=[{"role": "system", "content": "You are an expert equity analyst that only outputs JSON."},{"role": "user", "content": analysis_prompt}],response_format={"type": "json_object"})
             return json.loads(response.choices[0].message.content)
@@ -5363,10 +5348,14 @@ def agent_ideagen_app():
             risk_list = risk_data['top_risks'];
             if not isinstance(risk_list, list): return "Risk data format incorrect."
             return "\n".join([f"* **{r.get('risk', 'N/A')}**: {r.get('description', 'N/A')}" for r in risk_list]) or "No risks identified."
+        
         market_cap_val = quant_data.get('mktCap', 0); gross_margin_val = quant_data.get('grossProfitMarginTTM')
+        currency = quant_data.get('currency', 'USD')
         market_cap_str = f"${market_cap_val / 1e9:,.1f}B" if pd.notnull(market_cap_val) else 'N/A'
         gross_margin_str = f"{gross_margin_val:.1%}" if pd.notnull(gross_margin_val) else 'N/A'
-        quant_table_md = textwrap.dedent(f"| Metric | Value |\n|---|---|\n| Market Cap (USD) | {market_cap_str} |\n| Gross Margin (TTM) | {gross_margin_str}|")
+        # IMPROVEMENT: Added reporting currency to the quantitative snapshot.
+        quant_table_md = textwrap.dedent(f"| Metric | Value |\n|---|---|\n| Market Cap (USD) | {market_cap_str} |\n| Gross Margin (TTM) | {gross_margin_str}|\n| Reporting Currency | {currency} |")
+        
         summary_prompt = f"Write a 2-3 sentence executive summary for an investment memo on {quant_data['companyName']} based on this data:\n- Theme: {theme}\n- Moat: {safe_get_and_format(qual_analysis, ['moat_analysis', 'description'])}"
         try:
             summary_response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": summary_prompt}], temperature=0.2, max_tokens=150)
@@ -5390,7 +5379,7 @@ def agent_ideagen_app():
     if 'ideagen_step' not in st.session_state: st.session_state.ideagen_step = 1
 
     st.subheader("Step 1: Describe Your Investment Idea")
-    user_query = st.text_area("Enter your theme or criteria:", "Identify India-based Information Technology companies with a market capitalization exceeding $1 billion and a gross margin above 20%.", height=100)
+    user_query = st.text_area("Enter your theme or criteria:", "Find information technology companies in the US and India with a market capitalization over $1 billion.", height=100)
 
     if st.button("🔍 Find Matching Companies"):
         if not user_query: st.warning("Please describe your investment idea.")
@@ -5402,42 +5391,38 @@ def agent_ideagen_app():
                 st.session_state.ideagen_theme = structured_query.get('qualitative_theme') or "User-defined theme"
                 quant_filters = structured_query.get('quantitative_filters', {})
                 
-                country_name = quant_filters.get('country', '').lower()
-                country_code = COUNTRY_NAME_TO_CODE.get(country_name)
-                if not country_code:
-                    st.error(f"Could not identify a valid country. Please specify a known country."); st.session_state.ideagen_step = 1; return
-                quant_filters['country'] = country_code
+                # IMPROVEMENT: Handles multi-country prompts and warns about USD interpretation.
+                country_input = quant_filters.get('country', ''); country_names = []
+                if isinstance(country_input, str): country_names = [name.strip().lower() for name in country_input.split(',')]
+                elif isinstance(country_input, list): country_names = [str(name).strip().lower() for name in country_input]
+                
+                valid_codes = [code for code in [COUNTRY_NAME_TO_CODE.get(name) for name in country_names] if code]
+                if not valid_codes: st.error("Could not identify any valid countries in your request."); return
+
+                quant_filters['country'] = ",".join(valid_codes)
+                if any(k in quant_filters for k in ['marketCapMoreThan', 'marketCapLowerThan']) and 'US' not in valid_codes:
+                    st.info("Note: Monetary values in your prompt (e.g., market cap) were interpreted as USD for screening purposes.", icon="ℹ️")
                 
                 broad_df = get_company_universe(quant_filters, fmp_api_key)
                 if not broad_df.empty:
                     st.session_state.ideagen_enriched_df = enrich_data(broad_df, fmp_api_key)
                     st.session_state.ideagen_quant_filters = quant_filters
-                    st.session_state.ideagen_step = 2
-                    st.rerun()
+                    st.session_state.ideagen_step = 2; st.rerun()
                 else: st.session_state.ideagen_step = 1
 
     if st.session_state.ideagen_step == 2 and 'ideagen_enriched_df' in st.session_state:
-        st.markdown("---")
-        st.subheader("Step 2: Interactively Filter Companies and Select for Analysis")
+        st.markdown("---"); st.subheader("Step 2: Interactively Filter Companies and Select for Analysis")
         
-        df = st.session_state.ideagen_enriched_df
-        quant_filters = st.session_state.ideagen_quant_filters
-
-        mkt_cap_min_raw = quant_filters.get('marketCapMoreThan', 0) / 1e9
-        margin_min_raw = quant_filters.get('grossProfitMarginMoreThan', 0.0) * 100
-        mkt_cap_default = max(0.0, min(200.0, mkt_cap_min_raw))
-        margin_default = max(0.0, min(100.0, margin_min_raw))
+        df = st.session_state.ideagen_enriched_df; quant_filters = st.session_state.ideagen_quant_filters
+        mkt_cap_min_raw = quant_filters.get('marketCapMoreThan', 0) / 1e9; margin_min_raw = quant_filters.get('grossProfitMarginMoreThan', 0.0) * 100
+        mkt_cap_default = max(0.0, min(200.0, mkt_cap_min_raw)); margin_default = max(0.0, min(100.0, margin_min_raw))
 
         col1, col2 = st.columns(2)
-        with col1:
-            mkt_cap_filter = st.slider("Minimum Market Cap (USD Billions)", 0.0, 200.0, mkt_cap_default, 0.5)
-        with col2:
-            margin_filter = st.slider("Minimum Gross Margin (TTM %)", 0.0, 100.0, margin_default, 1.0)
+        with col1: mkt_cap_filter = st.slider("Minimum Market Cap (USD Billions)", 0.0, 200.0, mkt_cap_default, 0.5)
+        with col2: margin_filter = st.slider("Minimum Gross Margin (TTM %)", 0.0, 100.0, margin_default, 1.0)
 
-        df_filtered = df.copy()
-        df_filtered.dropna(subset=['mktCap', 'grossProfitMarginTTM'], inplace=True)
-        df_filtered = df_filtered[df_filtered['mktCap'] > (mkt_cap_filter * 1e9)]
-        df_filtered = df_filtered[df_filtered['grossProfitMarginTTM'] > (margin_filter / 100)]
+        df_filtered = df.copy(); df_filtered.dropna(subset=['mktCap', 'grossProfitMarginTTM'], inplace=True)
+        df_filtered = df_filtered[df_filtered['mktCap'] > (mkt_cap_filter * 1e9)]; df_filtered = df_filtered[df_filtered['grossProfitMarginTTM'] > (margin_filter / 100)]
 
         st.write(f"Displaying {len(df_filtered)} companies matching your interactive criteria:")
         
@@ -5448,20 +5433,20 @@ def agent_ideagen_app():
         st.dataframe(df_display, use_container_width=True, hide_index=True)
 
         options = [f"{row['companyName']} ({row['symbol']})" for index, row in df_filtered.iterrows()]
-        selected_options = st.multiselect("Select companies for deeper qualitative analysis:", options, default=options)
+        selected_options = st.multiselect("Select companies for deeper qualitative analysis:", options, default=options[:5]) # Default to first 5
         
         if st.button("🚀 Generate & Download Report for Selected", type="primary"):
             if not selected_options: st.warning("Please select at least one company.")
             else:
-                selected_symbols = [opt.split('(')[-1].replace(')', '') for opt in selected_options]
+                selected_symbols = [opt.split('(')[-1].replace(')', '').strip() for opt in selected_options]
                 analysis_df = df_filtered[df_filtered['symbol'].isin(selected_symbols)]
                 
                 with st.spinner("Running deeper analysis... This may take a few minutes."):
                     all_dossiers = []
                     for index, company_row in analysis_df.iterrows():
                         qualitative_corpus = aggregate_qualitative_data(company_row['symbol'])
-                        if not qualitative_corpus or "No recent earnings transcript found." in qualitative_corpus:
-                            st.warning(f"Could not get qualitative data for {company_row['companyName']}. Skipping."); continue
+                        if not qualitative_corpus or ("No recent earnings transcript found." in qualitative_corpus and "Could not fetch recent news." in qualitative_corpus):
+                            st.warning(f"Could not get any qualitative data for {company_row['companyName']}. Skipping."); continue
                         qualitative_analysis = run_ai_qualitative_analysis(company_row['companyName'], qualitative_corpus, st.session_state.ideagen_theme)
                         if not qualitative_analysis:
                             st.warning(f"Qualitative analysis failed for {company_row['companyName']}. Skipping."); continue
