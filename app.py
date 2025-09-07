@@ -5179,9 +5179,10 @@ def agent_ideagen_app():
     A Streamlit app for a multi-stage, AI-powered investment idea generator.
     IMPROVEMENTS:
     1. PERFORMANCE: Applies quantitative filters directly in the initial FMP API call for faster screening.
-    2. GLOBAL DATA: Adapts qualitative analysis if earnings transcripts are unavailable (common for non-US firms).
-    3. CURRENCY HANDLING: Informs the user that monetary values are treated as USD and displays reporting currency.
-    4. MULTI-COUNTRY: Supports screening across multiple countries in a single query.
+    2. SAFEGUARD: Prevents slow enrichment of overly broad queries (>75 companies) and guides user to refine criteria.
+    3. GLOBAL DATA: Adapts qualitative analysis if earnings transcripts are unavailable (common for non-US firms).
+    4. CURRENCY HANDLING: Informs the user that monetary values are treated as USD and displays reporting currency.
+    5. MULTI-COUNTRY: Supports screening across multiple countries in a single query.
     """
     import json
     import pandas as pd
@@ -5195,6 +5196,7 @@ def agent_ideagen_app():
     st.markdown("Generate new investment ideas by describing a theme. The agent screens for quantitative and qualitative alignment and produces a downloadable HTML report.")
 
     # --- 1. HELPER FUNCTIONS ---
+    MAX_COMPANIES_TO_ENRICH = 75 # Safeguard to prevent slow processing of very broad queries
 
     # Configuration and API clients
     try:
@@ -5223,7 +5225,6 @@ def agent_ideagen_app():
     def deconstruct_prompt(user_input: str) -> dict:
         fmp_sectors = ["Basic Materials", "Communication Services", "Consumer Cyclical", "Consumer Defensive", "Energy", "Financial Services", "Healthcare", "Industrials", "Real Estate", "Technology", "Utilities"]
         fmp_industries = ["Oil & Gas E&P", "Software - Application", "Banks - Regional", "Utilities - Renewable", "Biotechnology", "Semiconductors", "Medical Devices", "Aerospace & Defense", "Solar", "Specialty Industrial Machinery", "Information Technology Services"]
-        # IMPROVEMENT: Prompt now asks for a list/comma-separated string for countries.
         prompt = f"""
         You are an expert financial data API assistant. Your task is to convert a user's natural language request into a valid JSON object.
         **Instructions:**
@@ -5245,7 +5246,6 @@ def agent_ideagen_app():
             st.error(f"Error in Stage 1 (Deconstruction): {e}"); return None
 
     def get_company_universe(criteria: dict, api_key: str) -> pd.DataFrame:
-        # IMPROVEMENT: Now applies all quantitative filters directly in the API call for efficiency.
         st.info("**(LIVE) Stage 2: Fetching targeted company universe using FMP screener...**")
         def _make_fmp_api_call(params_to_use):
             base_url = "https://financialmodelingprep.com/api/v3/stock-screener"
@@ -5260,11 +5260,9 @@ def agent_ideagen_app():
         if not screen_params.get('country'):
             st.error("A country must be specified to find companies."); return pd.DataFrame()
 
-        # IMPROVEMENT: Smarter exchange handling for single vs. multi-country searches.
         country_list = screen_params.get('country', '').split(',')
         if len(country_list) == 1:
             if country_list[0] == 'IN': screen_params['exchange'] = 'NSE'
-            # Add other single-country exchange logic here (e.g., 'LSE' for GB)
         
         st.info(f"Attempting targeted screen with: {screen_params}")
         data = _make_fmp_api_call(screen_params.copy())
@@ -5296,7 +5294,7 @@ def agent_ideagen_app():
                 new_row = row.to_dict()
                 if profile_data and isinstance(profile_data, list): new_row.update(profile_data[0])
                 if ratios_data and isinstance(ratios_data, list): new_row.update(ratios_data[0])
-                new_row['symbol'] = original_symbol # Ensure original ticker is preserved
+                new_row['symbol'] = original_symbol
                 enriched_data.append(new_row)
             except Exception:
                 enriched_data.append(row.to_dict()); continue
@@ -5312,7 +5310,7 @@ def agent_ideagen_app():
             transcript_data = response.json()
             if transcript_data and 'content' in transcript_data[0]:
                 transcript_text = f"From Q{transcript_data[0]['quarter']} {transcript_data[0]['year']} Earnings Call:\n{transcript_data[0]['content']}"
-        except Exception: pass # Fails gracefully if no transcript is found
+        except Exception: pass
         
         try:
             url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={ticker}&limit=10&apikey={fmp_api_key}"
@@ -5321,12 +5319,11 @@ def agent_ideagen_app():
             if news_data:
                 headlines = [f"- {item['title']} (Source: {item['site']})" for item in news_data]
                 news_text = "Recent News Headlines:\n" + "\n".join(headlines)
-        except Exception: pass # Fails gracefully if no news is found
+        except Exception: pass
         return f"{transcript_text}\n\n---\n\n{news_text}"
 
     def run_ai_qualitative_analysis(company_name: str, text_corpus: str, theme: str) -> dict:
         st.info(f"**(LIVE) Running AI Qualitative Analysis for {company_name}...**")
-        # IMPROVEMENT: Prompt now adapts if transcript data is missing.
         analysis_prompt = f"""You are an expert equity research analyst. Analyze '{company_name}' for the theme '{theme}' using the text below. 
         **CRITICAL INSTRUCTION**: If the text explicitly states 'No recent earnings transcript found', you MUST base your analysis on the provided news headlines and acknowledge that the analysis is based on limited public information.
         Return a JSON with keys "theme_analysis", "moat_analysis", "risk_analysis". For "risk_analysis", provide a "top_risks" list of objects, each with "risk" and "description". 
@@ -5353,7 +5350,6 @@ def agent_ideagen_app():
         currency = quant_data.get('currency', 'USD')
         market_cap_str = f"${market_cap_val / 1e9:,.1f}B" if pd.notnull(market_cap_val) else 'N/A'
         gross_margin_str = f"{gross_margin_val:.1%}" if pd.notnull(gross_margin_val) else 'N/A'
-        # IMPROVEMENT: Added reporting currency to the quantitative snapshot.
         quant_table_md = textwrap.dedent(f"| Metric | Value |\n|---|---|\n| Market Cap (USD) | {market_cap_str} |\n| Gross Margin (TTM) | {gross_margin_str}|\n| Reporting Currency | {currency} |")
         
         summary_prompt = f"Write a 2-3 sentence executive summary for an investment memo on {quant_data['companyName']} based on this data:\n- Theme: {theme}\n- Moat: {safe_get_and_format(qual_analysis, ['moat_analysis', 'description'])}"
@@ -5391,7 +5387,6 @@ def agent_ideagen_app():
                 st.session_state.ideagen_theme = structured_query.get('qualitative_theme') or "User-defined theme"
                 quant_filters = structured_query.get('quantitative_filters', {})
                 
-                # IMPROVEMENT: Handles multi-country prompts and warns about USD interpretation.
                 country_input = quant_filters.get('country', ''); country_names = []
                 if isinstance(country_input, str): country_names = [name.strip().lower() for name in country_input.split(',')]
                 elif isinstance(country_input, list): country_names = [str(name).strip().lower() for name in country_input]
@@ -5404,11 +5399,32 @@ def agent_ideagen_app():
                     st.info("Note: Monetary values in your prompt (e.g., market cap) were interpreted as USD for screening purposes.", icon="ℹ️")
                 
                 broad_df = get_company_universe(quant_filters, fmp_api_key)
-                if not broad_df.empty:
-                    st.session_state.ideagen_enriched_df = enrich_data(broad_df, fmp_api_key)
-                    st.session_state.ideagen_quant_filters = quant_filters
-                    st.session_state.ideagen_step = 2; st.rerun()
-                else: st.session_state.ideagen_step = 1
+                
+                # --- NEW SAFEGUARD LOGIC ---
+                if broad_df.empty:
+                    st.session_state.ideagen_step = 1
+                    # The get_company_universe function already shows an error, so no need to repeat.
+                    return
+                    
+                if len(broad_df) > MAX_COMPANIES_TO_ENRICH:
+                    st.warning(f"Your query returned {len(broad_df)} companies, which is too broad for a deep analysis.", icon="⚠️")
+                    st.info(f"Please refine your prompt with more specific criteria to get under {MAX_COMPANIES_TO_ENRICH} results. Try adding or tightening filters like:", icon="💡")
+                    st.markdown("""
+                    * **A more specific industry** (e.g., `"semiconductor companies"` instead of `"technology companies"`)
+                    * **A higher market capitalization** (e.g., `"over $10 billion"`)
+                    * **Stricter financial metrics** (e.g., `"gross margin above 40%"`)
+                    """)
+                    st.subheader("Preview of Initial Results")
+                    preview_df = broad_df.head(20)[['symbol', 'companyName', 'marketCap', 'sector', 'industry']]
+                    st.dataframe(preview_df, hide_index=True)
+                    st.session_state.ideagen_step = 1 # Reset to start
+                    return
+                # --- END SAFEGUARD LOGIC ---
+
+                st.session_state.ideagen_enriched_df = enrich_data(broad_df, fmp_api_key)
+                st.session_state.ideagen_quant_filters = quant_filters
+                st.session_state.ideagen_step = 2
+                st.rerun()
 
     if st.session_state.ideagen_step == 2 and 'ideagen_enriched_df' in st.session_state:
         st.markdown("---"); st.subheader("Step 2: Interactively Filter Companies and Select for Analysis")
