@@ -5174,7 +5174,7 @@ def agent_sentinel_app():
 # 12. Agent Sentinel (Proactive Monitoring) - NEW
 # ==============================================================================
 
-def agent_ideagen_app_v2():
+def agent_ideagen_app():
     """
     A completely overhauled Streamlit app for a multi-stage, AI-powered investment idea generator.
 
