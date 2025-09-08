@@ -5419,7 +5419,7 @@ def agent_ideagen_app():
         return f"<!DOCTYPE html><html><head><title>IdeaGen Report: {safe_theme}</title>{styles}</head><body><div class='container'>{html_body}</div></body></html>"
 
 
-    # --- 4. STREAMLIT UI AND ORCHESTRATION (REBUILT) ---
+    # --- 4. STREAMLIT UI AND ORCHESTRATION (MODIFIED) ---
 
     # --- Step 1: Define Theme and Filters ---
     st.subheader("Step 1: Define Theme and Screening Criteria")
@@ -5430,29 +5430,31 @@ def agent_ideagen_app():
         height=75
     )
 
-    with st.expander("Show Quantitative & Categorical Filters", expanded=True):
-        # Mappings
-        COUNTRY_TO_EXCHANGE = {
-            "USA": "US", "India": "INDX", "Germany": "F", "United Kingdom": "LSE",
-            "Canada": "TO", "Japan": "TSE", "China": "SS", "Australia": "AU"
-        }
-        SECTORS = [
-            "Basic Materials", "Communication Services", "Consumer Cyclical",
-            "Consumer Defensive", "Energy", "Financial Services", "Healthcare",
-            "Industrials", "Real Estate", "Technology", "Utilities"
-        ]
+    # REPLACED st.expander with st.subheader and un-indented the filters
+    st.subheader("Quantitative & Categorical Filters")
 
-        # UI Components
-        selected_countries = st.multiselect("Countries", options=list(COUNTRY_TO_EXCHANGE.keys()), default=["USA", "India"])
-        selected_sectors = st.multiselect("Sectors", options=SECTORS, default=["Technology"])
+    # Mappings
+    COUNTRY_TO_EXCHANGE = {
+        "USA": "US", "India": "INDX", "Germany": "F", "United Kingdom": "LSE",
+        "Canada": "TO", "Japan": "TSE", "China": "SS", "Australia": "AU"
+    }
+    SECTORS = [
+        "Basic Materials", "Communication Services", "Consumer Cyclical",
+        "Consumer Defensive", "Energy", "Financial Services", "Healthcare",
+        "Industrials", "Real Estate", "Technology", "Utilities"
+    ]
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            mkt_cap_min = st.slider("Min Market Cap (Billion USD)", 0.0, 500.0, 10.0, 1.0)
-        with col2:
-            pe_ratio_max = st.slider("Max P/E Ratio (TTM)", 0, 200, 50, 1)
-        with col3:
-            dividend_yield_min = st.slider("Min Dividend Yield (%)", 0.0, 10.0, 0.0, 0.1)
+    # UI Components are now always visible
+    selected_countries = st.multiselect("Countries", options=list(COUNTRY_TO_EXCHANGE.keys()), default=["USA", "India"])
+    selected_sectors = st.multiselect("Sectors", options=SECTORS, default=["Technology"])
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        mkt_cap_min = st.slider("Min Market Cap (Billion USD)", 0.0, 500.0, 10.0, 1.0)
+    with col2:
+        pe_ratio_max = st.slider("Max P/E Ratio (TTM)", 0, 200, 50, 1)
+    with col3:
+        dividend_yield_min = st.slider("Min Dividend Yield (%)", 0.0, 10.0, 0.0, 0.1)
 
     # --- Step 2: Run and Display Results ---
     st.subheader("Step 2: Generate Report")
