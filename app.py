@@ -5197,7 +5197,7 @@ def agent_ideagen_app():
     from openai import AzureOpenAI
     import streamlit as st # Assuming st is imported in the main app file
 
-    st.markdown("### 💡 Agent IdeaGen v2")
+    st.markdown("### 💡 Agent IdeaGen")
     st.markdown(
         "Generate new investment ideas. Define a **qualitative theme** and then use the **quantitative filters** below to screen for companies. The agent will analyze the top results and produce a downloadable HTML report."
     )
@@ -5431,7 +5431,7 @@ def agent_ideagen_app():
     )
 
     # REPLACED st.expander with st.subheader and un-indented the filters
-    st.subheader("Quantitative & Categorical Filters")
+    st.subheader("Quantitative Filters")
 
     # Mappings
     COUNTRY_TO_EXCHANGE = {
@@ -5457,9 +5457,9 @@ def agent_ideagen_app():
         dividend_yield_min = st.slider("Min Dividend Yield (%)", 0.0, 10.0, 0.0, 0.1)
 
     # --- Step 2: Run and Display Results ---
-    st.subheader("Step 2: Generate Report")
+    st.subheader("Step 2: Generate Screen")
 
-    if st.button("🚀 Find Companies & Generate Report", type="primary"):
+    if st.button("🚀 Find Companies & Generate Screen", type="primary"):
         if not qualitative_theme:
             st.warning("Please describe your investment theme.")
             return
@@ -5472,7 +5472,7 @@ def agent_ideagen_app():
             "dividend_yield_min": dividend_yield_min
         }
 
-        with st.spinner("Finding, analyzing, and building your report... This may take a few minutes."):
+        with st.spinner("Finding, analyzing, and building your screen... This may take a few minutes."):
             # 1. Screen for companies
             screener_df = get_eodhd_screener_results(user_filters, eodhd_api_key)
 
