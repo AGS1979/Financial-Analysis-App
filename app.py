@@ -5174,11 +5174,19 @@ def agent_sentinel_app():
 # 12. Agent Sentinel (Proactive Monitoring) - NEW
 # ==============================================================================
 
-def agent_ideagen_app():
+def agent_ideagen_app_v2():
     """
-    A Streamlit app for a multi-stage, AI-powered investment idea generator.
-    CORRECTION: Adds robust data validation to handle non-numeric values (e.g., "20%")
-    returned by the LLM for financial filters, preventing TypeErrors.
+    A completely overhauled Streamlit app for a multi-stage, AI-powered investment idea generator.
+
+    Key Changes:
+    1.  **API Migration**: Replaced the Financial Modeling Prep (FMP) API with the more powerful
+        EOD Historical Data (EODHD) API for robust company screening.
+    2.  **UI Overhaul**: Replaced ambiguous natural language parsing for quantitative filters
+        with a structured UI using sliders and multi-select boxes for precise user control.
+    3.  **Refined AI Role**: The LLM's role is now focused on qualitative theme interpretation
+        and analysis, not on parsing quantitative criteria.
+    4.  **Streamlined Workflow**: A single-step process where the user defines all criteria,
+        finds companies, and generates a report on the top results.
     """
     import json
     import pandas as pd
@@ -5187,17 +5195,21 @@ def agent_ideagen_app():
     import markdown
     import html
     from openai import AzureOpenAI
+    import streamlit as st # Assuming st is imported in the main app file
 
-    st.markdown("### 💡 Agent IdeaGen")
-    st.markdown("Generate new investment ideas by describing a theme. The agent screens for quantitative and qualitative alignment and produces a downloadable HTML report.")
+    st.markdown("### 💡 Agent IdeaGen v2")
+    st.markdown(
+        "Generate new investment ideas. Define a **qualitative theme** and then use the **quantitative filters** below to screen for companies. The agent will analyze the top results and produce a downloadable HTML report."
+    )
 
-    # --- 1. HELPER FUNCTIONS (WITH FIX) ---
-    MAX_COMPANIES_TO_ENRICH = 75
+    # --- 1. API AND CLIENT SETUP ---
+    MAX_COMPANIES_TO_ANALYZE = 10  # Set a hard limit for deep analysis to manage cost/time
 
     try:
-        fmp_api_key = st.secrets["fmp"]["api_key"]
-    except Exception as e:
-        st.error("FMP API key not found in Streamlit secrets. Please add it to continue."); return
+        eodhd_api_key = st.secrets["eodhd"]["api_key"]
+    except Exception:
+        st.error("EODHD API key not found in Streamlit secrets. Please add it to continue.")
+        return
 
     try:
         client = AzureOpenAI(
@@ -5207,153 +5219,194 @@ def agent_ideagen_app():
         )
         llm_deployment_name = st.secrets["azure"]["openai_deployment_name"]
     except Exception as e:
-        st.error(f"Could not initialize the LLM client. Please check your secrets. Error: {e}"); return
-
-    COUNTRY_NAME_TO_CODE = {
-        "india": "IN", "united states": "US", "usa": "US", "germany": "DE",
-        "united kingdom": "GB", "uk": "GB", "china": "CN", "japan": "JP",
-        "canada": "CA", "france": "FR", "australia": "AU", "switzerland": "CH"
-    }
-
-    def deconstruct_prompt_v2(user_input: str) -> dict:
-        entity_prompt = f"""
-        You are a financial API assistant. Extract entities from the user's request into a JSON object.
-        1.  `countries`: A list of full country names mentioned (e.g., ["India", "United States"]).
-        2.  `sector`: The single best-matching sector from this list: ["Basic Materials", "Communication Services", "Consumer Cyclical", "Consumer Defensive", "Energy", "Financial Services", "Healthcare", "Industrials", "Real Estate", "Technology", "Utilities"].
-        3.  `industry`: The single best-matching industry.
-        4.  `filters`: An object with FMP API numeric filters like `marketCapMoreThan`, `marketCapLowerThan`, `grossProfitMarginMoreThan`. The value for margins should be a decimal (e.g., 20% -> 0.2). Assume monetary values are in USD.
-        Return ONLY the JSON. If a value is not found, use an empty list or null.
-        USER REQUEST: "{user_input}"
-        """
-        try:
-            st.info("**(LIVE) Stage 1a: Extracting entities from prompt...**")
-            entity_response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": entity_prompt}], response_format={"type": "json_object"})
-            entities = json.loads(entity_response.choices[0].message.content)
-        except Exception as e:
-            st.error(f"Error extracting entities from your request: {e}"); return None
+        st.error(f"Could not initialize the LLM client. Please check your secrets. Error: {e}")
+        return
         
-        theme_prompt = f"Based on the following request, what is the core investment theme in 5-10 words? REQUEST: \"{user_input}\""
-        try:
-            st.info("**(LIVE) Stage 1b: Inferring investment theme...**")
-            theme_response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": theme_prompt}])
-            theme = theme_response.choices[0].message.content.strip()
-        except Exception:
-            theme = "User-defined theme"
+    # --- 2. DATA FETCHING & PROCESSING FUNCTIONS (REBUILT FOR EODHD) ---
 
-        return {"entities": entities, "qualitative_theme": theme}
+    def get_eodhd_screener_results(filters: dict, api_key: str) -> pd.DataFrame:
+        """
+        Constructs and executes a request to the EODHD Stock Screener API.
+        """
+        st.info("**(LIVE) Stage 1: Screening for companies with EODHD...**")
+        base_url = "https://eodhistoricaldata.com/api/screener"
+        
+        # EODHD's filter format is a JSON array of arrays: [["field", "operation", "value"], ...]
+        eodhd_filters = []
+        
+        # Map user-friendly filter names to EODHD API field names
+        if filters.get("market_cap_min"):
+            eodhd_filters.append(["market_capitalization", ">", filters["market_cap_min"] * 1e9])
+        if filters.get("pe_ratio_max"):
+            eodhd_filters.append(["trailing_pe", "<", filters["pe_ratio_max"]])
+        if filters.get("dividend_yield_min"):
+            # EODHD stores dividend yield as a percentage, not a decimal
+            eodhd_filters.append(["dividend_yield", ">", filters["dividend_yield_min"]])
+            
+        # Add sector filters
+        if filters.get("sectors"):
+            sector_filters = [["sector", "=", sector] for sector in filters["sectors"]]
+            eodhd_filters.extend(sector_filters)
 
-    def get_company_universe_v2(entities: dict, api_key: str) -> pd.DataFrame:
-        st.info("**(LIVE) Stage 2: Fetching company universe using FMP screener...**")
-        country_names = entities.get('countries', [])
-        if not country_names:
-            st.error("Could not identify any valid countries in your request. Please specify a country (e.g., 'in the US', 'Indian companies').")
+        # Add exchange filters based on selected countries
+        if filters.get("exchanges"):
+            exchange_filters = [["exchange", "=", exchange] for exchange in filters["exchanges"]]
+            eodhd_filters.extend(exchange_filters)
+
+        if not eodhd_filters:
+            st.warning("Please define at least one filter.")
             return pd.DataFrame()
 
-        all_companies_df = pd.DataFrame()
-        for country_name in country_names:
-            country_code = COUNTRY_NAME_TO_CODE.get(country_name.lower())
-            if not country_code:
-                st.warning(f"Skipping unsupported country: '{country_name}'"); continue
-
-            screen_params = entities.get('filters', {}) if entities.get('filters') else {}
-            if entities.get('sector'): screen_params['sector'] = entities['sector']
-            if entities.get('industry'): screen_params['industry'] = entities['industry']
-            screen_params['country'] = country_code
-            if country_code == 'IN': screen_params['exchange'] = 'NSE'
-
-            st.info(f"Searching for companies in {country_name} with parameters: {screen_params}")
-            base_url = "https://financialmodelingprep.com/api/v3/stock-screener"
-            screen_params['apikey'] = api_key; screen_params['limit'] = 1000
-            try:
-                response = requests.get(base_url, params=screen_params); response.raise_for_status()
-                data = response.json()
-                if data:
-                    all_companies_df = pd.concat([all_companies_df, pd.DataFrame(data)], ignore_index=True)
-            except requests.exceptions.RequestException as e:
-                st.error(f"API Error while fetching data for {country_name}: {e}"); continue
+        params = {
+            "api_token": api_key,
+            "filters": json.dumps(eodhd_filters),
+            "limit": 100 # Fetch a broad list to sort and analyze the top N
+        }
         
-        if all_companies_df.empty:
-             st.error("FMP screener could not find any companies matching the specified criteria in the requested countries.")
-        return all_companies_df
+        st.info(f"Applying filters: {filters}")
 
-    def enrich_data(df: pd.DataFrame, api_key: str) -> pd.DataFrame:
-        st.info(f"**(LIVE) Enriching {len(df)} companies with financial data...**")
-        enriched_data = []
-        progress_bar = st.progress(0, text=f"Processing 0 / {len(df)} companies...")
-        for i, row in df.iterrows():
-            original_symbol = row['symbol']
-            progress_bar.progress((i + 1) / len(df), text=f"Processing {original_symbol} ({i+1}/{len(df)})...")
-            try:
-                profile_url = f"https://financialmodelingprep.com/api/v3/profile/{original_symbol}?apikey={api_key}"
-                profile_data = requests.get(profile_url, timeout=10).json()
-                ratios_url = f"https://financialmodelingprep.com/api/v3/ratios-ttm/{original_symbol}?apikey={api_key}"
-                ratios_data = requests.get(ratios_url, timeout=10).json()
-                new_row = row.to_dict()
-                if profile_data and isinstance(profile_data, list): new_row.update(profile_data[0])
-                if ratios_data and isinstance(ratios_data, list): new_row.update(ratios_data[0])
-                new_row['symbol'] = original_symbol
-                enriched_data.append(new_row)
-            except Exception:
-                enriched_data.append(row.to_dict()); continue
-        progress_bar.empty()
-        return pd.DataFrame(enriched_data)
+        try:
+            response = requests.get(base_url, params=params, timeout=20)
+            response.raise_for_status()
+            data = response.json()
+            
+            if not data or 'data' not in data or not data['data']:
+                st.error("EODHD screener did not find any companies matching your criteria.")
+                return pd.DataFrame()
+            
+            df = pd.DataFrame(data['data'])
+            # Sort by market cap descending to get the most relevant companies first
+            if 'market_capitalization' in df.columns:
+                df = df.sort_values(by='market_capitalization', ascending=False).reset_index(drop=True)
+            return df
 
-    def aggregate_qualitative_data(ticker: str) -> str:
-        st.info(f"**(LIVE) Aggregating Qualitative Data for {ticker}...**")
-        transcript_text, news_text = "No recent earnings transcript found.", "Could not fetch recent news."
+        except requests.exceptions.RequestException as e:
+            st.error(f"API Error during screening: {e}")
+            return pd.DataFrame()
+        except Exception as e:
+            st.error(f"An error occurred while processing screening results: {e}")
+            return pd.DataFrame()
+
+    def enrich_company_data_eodhd(ticker_code: str, api_key: str) -> dict:
+        """
+        Fetches detailed fundamental data for a single ticker.
+        EODHD uses ticker.exchange format, e.g., 'AAPL.US'.
+        """
+        st.info(f"**(LIVE) Enriching {ticker_code} with fundamental data...**")
+        base_url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker_code}"
+        params = {"api_token": api_key}
         try:
-            url = f"https://financialmodelingprep.com/api/v3/earning_call_transcript/{ticker}?limit=1&apikey={fmp_api_key}"
-            response = requests.get(url, timeout=10); response.raise_for_status()
-            transcript_data = response.json()
-            if transcript_data and 'content' in transcript_data[0]:
-                transcript_text = f"From Q{transcript_data[0]['quarter']} {transcript_data[0]['year']} Earnings Call:\n{transcript_data[0]['content']}"
-        except Exception: pass
+            response = requests.get(base_url, params=params, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            # Extract key fields needed for analysis and reporting
+            description = data.get('General', {}).get('Description', 'No description available.')
+            news = aggregate_qualitative_data_eodhd(ticker_code, api_key)
+            
+            return {
+                "description": description,
+                "qualitative_corpus": f"Company Description:\n{description}\n\n---\n\nRecent News:\n{news}"
+            }
+        except Exception:
+            return {
+                "description": "Data enrichment failed.",
+                "qualitative_corpus": "Could not fetch qualitative data."
+            }
+
+    def aggregate_qualitative_data_eodhd(ticker_code: str, api_key: str) -> str:
+        """
+        Fetches recent news headlines from EODHD.
+        NOTE: EODHD does not provide earnings call transcripts like FMP.
+        """
+        base_url = "https://eodhistoricaldata.com/api/news"
+        # EODHD news API uses the ticker without the exchange for some reason.
+        ticker_only = ticker_code.split('.')[0]
+        params = {"api_token": api_key, "t": ticker_only, "limit": 10}
         try:
-            url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={ticker}&limit=10&apikey={fmp_api_key}"
-            response = requests.get(url, timeout=10); response.raise_for_status()
+            response = requests.get(base_url, params=params, timeout=15)
+            response.raise_for_status()
             news_data = response.json()
-            if news_data:
-                headlines = [f"- {item['title']} (Source: {item['site']})" for item in news_data]
-                news_text = "Recent News Headlines:\n" + "\n".join(headlines)
-        except Exception: pass
-        return f"{transcript_text}\n\n---\n\n{news_text}"
+            if news_data and isinstance(news_data, list):
+                headlines = [f"- {item['title']} ({item['date']})" for item in news_data]
+                return "\n".join(headlines)
+            return "No recent news found."
+        except Exception:
+            return "Could not fetch recent news."
+
+    # --- 3. AI ANALYSIS AND REPORTING FUNCTIONS (ADAPTED) ---
 
     def run_ai_qualitative_analysis(company_name: str, text_corpus: str, theme: str) -> dict:
         st.info(f"**(LIVE) Running AI Qualitative Analysis for {company_name}...**")
-        analysis_prompt = f"""You are an expert equity research analyst. Analyze '{company_name}' for the theme '{theme}' using the text below.
-        **CRITICAL INSTRUCTION**: If the text explicitly states 'No recent earnings transcript found', you MUST base your analysis on the provided news headlines and acknowledge that the analysis is based on limited public information.
+        analysis_prompt = f"""You are an expert equity research analyst. Analyze '{company_name}' for the theme '{theme}' using the company description and recent news below.
+        
         Return a JSON with keys "theme_analysis", "moat_analysis", "risk_analysis". For "risk_analysis", provide a "top_risks" list of objects, each with "risk" and "description".
+        
         TEXT: --- {text_corpus[:25000]} ---"""
         try:
-            response = client.chat.completions.create(model=llm_deployment_name,messages=[{"role": "system", "content": "You are an expert equity analyst that only outputs JSON."},{"role": "user", "content": analysis_prompt}],response_format={"type": "json_object"})
+            response = client.chat.completions.create(
+                model=llm_deployment_name,
+                messages=[
+                    {"role": "system", "content": "You are an expert equity analyst that only outputs JSON."},
+                    {"role": "user", "content": analysis_prompt}
+                ],
+                response_format={"type": "json_object"}
+            )
             return json.loads(response.choices[0].message.content)
         except Exception as e:
-            st.error(f"Error in AI Analysis: {e}"); return {}
+            st.error(f"Error in AI Analysis: {e}")
+            return {}
 
     def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str) -> dict:
-        st.info(f"**(LIVE) Synthesizing Dossier for {quant_data['companyName']}...**")
-        def safe_get_and_format(data, keys):
-            temp = data;
-            for key in keys: temp = temp.get(key) if isinstance(temp, dict) else None
-            return str(temp) if temp is not None else "Analysis not available."
+        """Synthesizes the final dossier for one company."""
+        st.info(f"**(LIVE) Synthesizing Dossier for {quant_data.get('name', 'N/A')}...**")
+        
+        # Helper to safely extract nested dictionary data
+        def safe_get(data, keys, default="Analysis not available."):
+            temp = data
+            for key in keys:
+                temp = temp.get(key) if isinstance(temp, dict) else None
+            return temp if temp is not None else default
+
         def format_risks(risk_data):
-            if not isinstance(risk_data, dict) or 'top_risks' not in risk_data: return "Risk analysis not available."
-            risk_list = risk_data['top_risks'];
-            if not isinstance(risk_list, list): return "Risk data format incorrect."
-            return "\n".join([f"* **{r.get('risk', 'N/A')}**: {r.get('description', 'N/A')}" for r in risk_list]) or "No risks identified."
-        market_cap_val = quant_data.get('mktCap', 0); gross_margin_val = quant_data.get('grossProfitMarginTTM')
-        currency = quant_data.get('currency', 'USD')
+            risk_list = safe_get(risk_data, ['top_risks'], default=[])
+            if not isinstance(risk_list, list) or not risk_list:
+                return "No specific risks identified or analysis failed."
+            return "\n".join(
+                f"* **{r.get('risk', 'N/A')}**: {r.get('description', 'N/A')}" for r in risk_list
+            )
+
+        # Mapping EODHD columns to a consistent format
+        market_cap_val = quant_data.get('market_capitalization', 0)
+        gross_margin_val = quant_data.get('gross_profit_margin_ttm') # Assuming this column name exists
+        
         market_cap_str = f"${market_cap_val / 1e9:,.1f}B" if pd.notnull(market_cap_val) else 'N/A'
         gross_margin_str = f"{gross_margin_val:.1%}" if pd.notnull(gross_margin_val) else 'N/A'
-        quant_table_md = textwrap.dedent(f"| Metric | Value |\n|---|---|\n| Market Cap (USD) | {market_cap_str} |\n| Gross Margin (TTM) | {gross_margin_str}|\n| Reporting Currency | {currency} |")
-        summary_prompt = f"Write a 2-3 sentence executive summary for an investment memo on {quant_data['companyName']} based on this data:\n- Theme: {theme}\n- Moat: {safe_get_and_format(qual_analysis, ['moat_analysis', 'description'])}"
-        try:
-            summary_response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": summary_prompt}], temperature=0.2, max_tokens=150)
-            executive_summary = summary_response.choices[0].message.content
-        except Exception: executive_summary = f"{quant_data.get('companyName', 'N/A')} is a potential candidate for the '{theme}' theme."
-        return {"dossier_title": f"{quant_data.get('companyName', 'N/A')} ({quant_data.get('symbol', 'N/A')})","metadata": f"**Theme:** {theme}","Executive Summary": executive_summary,"Quantitative Snapshot": quant_table_md,"Thematic Alignment & Justification": safe_get_and_format(qual_analysis, ['theme_analysis', 'justification']),"Competitive Moat & Pricing Power": safe_get_and_format(qual_analysis, ['moat_analysis', 'description']),"Key Risks Identified": format_risks(qual_analysis.get('risk_analysis'))}
+        
+        quant_table_md = textwrap.dedent(f"""
+        | Metric | Value |
+        |---|---|
+        | Market Cap (USD) | {market_cap_str} |
+        | P/E Ratio (TTM) | {quant_data.get('trailing_pe', 'N/A'):.1f} |
+        | Dividend Yield | {quant_data.get('dividend_yield', 'N/A'):.2%} |
+        | Currency | {quant_data.get('currency_symbol', 'USD')} |
+        """)
+
+        executive_summary = f"{quant_data.get('name', 'N/A')} is a company operating in the {quant_data.get('sector', 'N/A')} sector, identified as a potential candidate for the '{theme}' theme."
+        
+        # Simplified summary, can be enhanced with another LLM call if needed
+        
+        return {
+            "dossier_title": f"{quant_data.get('name', 'N/A')} ({quant_data.get('code', 'N/A')}.{quant_data.get('exchange', '')})",
+            "metadata": f"**Theme:** {theme}",
+            "Executive Summary": executive_summary,
+            "Quantitative Snapshot": quant_table_md,
+            "Thematic Alignment & Justification": safe_get(qual_analysis, ['theme_analysis']),
+            "Competitive Moat & Pricing Power": safe_get(qual_analysis, ['moat_analysis']),
+            "Key Risks Identified": format_risks(qual_analysis.get('risk_analysis'))
+        }
 
     def generate_final_html_report(dossier_list: list, theme: str) -> str:
+        # This function remains largely the same as it's for formatting the final output.
         safe_theme = html.escape(theme or "User-Defined Theme"); styles = """<style> body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background-color: #f9fafb; color: #1f2937;} .container { max-width: 1200px; margin: auto; } .report-header h1 { font-size: 2.2em; color: #111827; border-bottom: 2px solid #d1d5db; padding-bottom: 10px; margin-bottom: 5px; } .report-header h2 { font-size: 1.2em; color: #6b7280; font-weight: 400; margin-top: 0; } .dossier { background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 30px; margin-bottom: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); } .dossier h1, .dossier h2 { color: #111827; } .dossier h1 { font-size: 1.8em; } .dossier h2 { font-size: 1.4em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-top: 25px; } .dossier table { width: 100%; border-collapse: collapse; margin-top: 15px; } .dossier th, .dossier td { padding: 10px 12px; border: 1px solid #d1d5db; text-align: left; } .dossier th { background-color: #f3f4f6; font-weight: 600; } .dossier p { line-height: 1.6; } .dossier .metadata { color: #4b5563; font-size: 0.9em; } .dossier ul { padding-left: 20px; } .dossier li { margin-bottom: 0.5em; } </style>"""
         html_body = f"<div class='report-header'><h1>Investment Idea Generation Report</h1><h2>Theme: {safe_theme}</h2></div>"
         for dossier_dict in dossier_list:
@@ -5361,110 +5414,124 @@ def agent_ideagen_app():
             metadata_md = dossier_dict.get('metadata', ''); html_body += f"<div class='metadata'>{markdown.markdown(metadata_md)}</div><hr>"
             main_sections = ["Executive Summary", "Quantitative Snapshot", "Thematic Alignment & Justification", "Competitive Moat & Pricing Power", "Key Risks Identified"]
             for section_title in main_sections:
-                if section_title in dossier_dict: html_body += f"<h2>{html.escape(section_title)}</h2>" + markdown.markdown(dossier_dict[section_title], extensions=['tables'])
+                if section_title in dossier_dict: html_body += f"<h2>{html.escape(section_title)}</h2>" + markdown.markdown(str(dossier_dict[section_title]), extensions=['tables'])
             html_body += "</div>"
         return f"<!DOCTYPE html><html><head><title>IdeaGen Report: {safe_theme}</title>{styles}</head><body><div class='container'>{html_body}</div></body></html>"
 
-    # --- 2. STREAMLIT UI AND ORCHESTRATION (REBUILT) ---
-    if 'ideagen_step' not in st.session_state: st.session_state.ideagen_step = 1
 
-    st.subheader("Step 1: Describe Your Investment Idea")
-    user_query = st.text_area("Enter your theme or criteria:", "Find information technology companies in the US and India with a market capitalization over $1 billion.", height=100)
+    # --- 4. STREAMLIT UI AND ORCHESTRATION (REBUILT) ---
 
-    if st.button("🔍 Find Matching Companies"):
-        if not user_query: st.warning("Please describe your investment idea.")
-        else:
-            with st.spinner("Analyzing request and finding companies..."):
-                structured_query = deconstruct_prompt_v2(user_query)
-                if not structured_query or not structured_query.get('entities'):
-                    st.error("Could not understand the request. Please try rephrasing."); return
+    # --- Step 1: Define Theme and Filters ---
+    st.subheader("Step 1: Define Theme and Screening Criteria")
+    
+    qualitative_theme = st.text_area(
+        "**Describe the Qualitative Theme**",
+        "Companies leading the artificial intelligence revolution in enterprise software.",
+        height=75
+    )
 
-                st.session_state.ideagen_theme = structured_query.get('qualitative_theme', "User-defined theme")
-                st.session_state.ideagen_entities = structured_query.get('entities')
+    with st.expander("Show Quantitative & Categorical Filters", expanded=True):
+        # Mappings
+        COUNTRY_TO_EXCHANGE = {
+            "USA": "US", "India": "INDX", "Germany": "F", "United Kingdom": "LSE",
+            "Canada": "TO", "Japan": "TSE", "China": "SS", "Australia": "AU"
+        }
+        SECTORS = [
+            "Basic Materials", "Communication Services", "Consumer Cyclical",
+            "Consumer Defensive", "Energy", "Financial Services", "Healthcare",
+            "Industrials", "Real Estate", "Technology", "Utilities"
+        ]
+
+        # UI Components
+        selected_countries = st.multiselect("Countries", options=list(COUNTRY_TO_EXCHANGE.keys()), default=["USA", "India"])
+        selected_sectors = st.multiselect("Sectors", options=SECTORS, default=["Technology"])
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            mkt_cap_min = st.slider("Min Market Cap (Billion USD)", 0.0, 500.0, 10.0, 1.0)
+        with col2:
+            pe_ratio_max = st.slider("Max P/E Ratio (TTM)", 0, 200, 50, 1)
+        with col3:
+            dividend_yield_min = st.slider("Min Dividend Yield (%)", 0.0, 10.0, 0.0, 0.1)
+
+    # --- Step 2: Run and Display Results ---
+    st.subheader("Step 2: Generate Report")
+
+    if st.button("🚀 Find Companies & Generate Report", type="primary"):
+        if not qualitative_theme:
+            st.warning("Please describe your investment theme.")
+            return
+
+        user_filters = {
+            "exchanges": [COUNTRY_TO_EXCHANGE[c] for c in selected_countries],
+            "sectors": selected_sectors,
+            "market_cap_min": mkt_cap_min,
+            "pe_ratio_max": pe_ratio_max,
+            "dividend_yield_min": dividend_yield_min
+        }
+
+        with st.spinner("Finding, analyzing, and building your report... This may take a few minutes."):
+            # 1. Screen for companies
+            screener_df = get_eodhd_screener_results(user_filters, eodhd_api_key)
+
+            if screener_df.empty:
+                return # Error messages are handled inside the function
+
+            # 2. Select top N companies for the expensive analysis step
+            analysis_df = screener_df.head(MAX_COMPANIES_TO_ANALYZE)
+            st.success(f"Found {len(screener_df)} companies. Performing deep analysis on the top {len(analysis_df)} by market cap.")
+            
+            # Display the companies being analyzed
+            st.dataframe(
+                analysis_df[['code', 'name', 'exchange', 'sector', 'market_capitalization']],
+                hide_index=True,
+                use_container_width=True
+            )
+
+            # 3. Enrich, Analyze, and Synthesize
+            all_dossiers = []
+            progress_bar = st.progress(0, text=f"Analyzing 0 / {len(analysis_df)} companies...")
+            for i, company_row in analysis_df.iterrows():
+                ticker_code = f"{company_row['code']}.{company_row['exchange']}"
+                progress_bar.progress((i + 1) / len(analysis_df), text=f"Analyzing {company_row['name']}...")
+
+                enrichment_data = enrich_company_data_eodhd(ticker_code, eodhd_api_key)
                 
-                broad_df = get_company_universe_v2(st.session_state.ideagen_entities, fmp_api_key)
+                if "failed" in enrichment_data.get("description", ""):
+                    st.warning(f"Could not enrich data for {company_row['name']}. Skipping.")
+                    continue
+
+                qualitative_analysis = run_ai_qualitative_analysis(
+                    company_row['name'],
+                    enrichment_data['qualitative_corpus'],
+                    qualitative_theme
+                )
                 
-                if broad_df.empty:
-                    st.session_state.ideagen_step = 1; return
-                    
-                if len(broad_df) > MAX_COMPANIES_TO_ENRICH:
-                    st.warning(f"Your query returned {len(broad_df)} companies. To avoid a long wait, please refine your prompt.", icon="⚠️")
-                    st.info(f"Suggestions: add a specific industry, increase the market cap, or add a margin requirement.", icon="💡")
-                    st.dataframe(broad_df.head(20)[['symbol', 'companyName', 'marketCap', 'sector', 'industry']], hide_index=True)
-                    st.session_state.ideagen_step = 1; return
+                if not qualitative_analysis:
+                    st.warning(f"Qualitative analysis failed for {company_row['name']}. Skipping.")
+                    continue
 
-                st.session_state.ideagen_enriched_df = enrich_data(broad_df, fmp_api_key)
-                st.session_state.ideagen_step = 2
-                st.rerun()
+                # Merge enrichment data back into the main series for dossier synthesis
+                full_company_data = pd.concat([company_row, pd.Series(enrichment_data)])
+                all_dossiers.append(synthesize_dossier(full_company_data, qualitative_analysis, qualitative_theme))
+            
+            progress_bar.empty()
 
-    if st.session_state.ideagen_step == 2 and 'ideagen_enriched_df' in st.session_state:
-        st.markdown("---"); st.subheader("Step 2: Interactively Filter Companies and Select for Analysis")
-        
-        df = st.session_state.ideagen_enriched_df
-        quant_filters = st.session_state.ideagen_entities.get('filters', {})
-        
-        # --- FIX: ADDED SAFE DATA VALIDATION AND CONVERSION ---
-        def safe_float_convert(value, default=0.0):
-            """A helper to safely convert a value from the LLM to a float."""
-            if value is None: return default
-            try:
-                if isinstance(value, str):
-                    value = value.replace('%', '').replace(',', '').strip()
-                return float(value)
-            except (ValueError, TypeError):
-                return default
-
-        mkt_cap_val_raw = quant_filters.get('marketCapMoreThan')
-        margin_val_raw = quant_filters.get('grossProfitMarginMoreThan')
-
-        mkt_cap_min_raw = safe_float_convert(mkt_cap_val_raw, default=0) / 1e9
-        margin_min_raw = safe_float_convert(margin_val_raw, default=0.0) * 100
-        # --- END FIX ---
-        
-        mkt_cap_default = max(0.0, min(200.0, mkt_cap_min_raw))
-        margin_default = max(0.0, min(100.0, margin_min_raw))
-
-        col1, col2 = st.columns(2)
-        with col1: mkt_cap_filter = st.slider("Minimum Market Cap (USD Billions)", 0.0, 200.0, mkt_cap_default, 0.5)
-        with col2: margin_filter = st.slider("Minimum Gross Margin (TTM %)", 0.0, 100.0, margin_default, 1.0)
-
-        df_filtered = df.copy(); df_filtered.dropna(subset=['mktCap', 'grossProfitMarginTTM'], inplace=True)
-        df_filtered = df_filtered[df_filtered['mktCap'] > (mkt_cap_filter * 1e9)]; df_filtered = df_filtered[df_filtered['grossProfitMarginTTM'] > (margin_filter / 100)]
-
-        st.write(f"Displaying {len(df_filtered)} companies matching your interactive criteria:")
-        
-        df_display = df_filtered[['symbol', 'companyName', 'mktCap', 'grossProfitMarginTTM', 'industry', 'country']].copy()
-        df_display.rename(columns={'symbol': 'Ticker', 'mktCap': 'Market Cap (USD)', 'grossProfitMarginTTM': 'Gross Margin (TTM)'}, inplace=True)
-        df_display['Market Cap (USD)'] = df_display['Market Cap (USD)'].apply(lambda x: f"${x/1e9:,.1f}B" if pd.notnull(x) else 'N/A')
-        df_display['Gross Margin (TTM)'] = df_display['Gross Margin (TTM)'].apply(lambda x: f"{x:.1%}" if pd.notnull(x) else 'N/A')
-        st.dataframe(df_display, use_container_width=True, hide_index=True)
-
-        options = [f"{row['companyName']} ({row['symbol']})" for index, row in df_filtered.iterrows()]
-        selected_options = st.multiselect("Select companies for deeper qualitative analysis:", options, default=options[:5])
-        
-        if st.button("🚀 Generate & Download Report for Selected", type="primary"):
-            if not selected_options: st.warning("Please select at least one company.")
+            # 4. Generate and offer download
+            if all_dossiers:
+                final_html_report = generate_final_html_report(all_dossiers, qualitative_theme)
+                st.download_button(
+                    label="📥 Download Full HTML Report",
+                    data=final_html_report,
+                    file_name=f"IdeaGen_Report_{qualitative_theme[:20].replace(' ', '_')}.html",
+                    mime="text/html",
+                    use_container_width=True
+                )
             else:
-                selected_symbols = [opt.split('(')[-1].replace(')', '').strip() for opt in selected_options]
-                analysis_df = df_filtered[df_filtered['symbol'].isin(selected_symbols)]
-                
-                with st.spinner("Running deeper analysis... This may take a few minutes."):
-                    all_dossiers = []
-                    for index, company_row in analysis_df.iterrows():
-                        qualitative_corpus = aggregate_qualitative_data(company_row['symbol'])
-                        if not qualitative_corpus or ("No recent earnings transcript found." in qualitative_corpus and "Could not fetch recent news." in qualitative_corpus):
-                            st.warning(f"Could not get any qualitative data for {company_row['companyName']}. Skipping."); continue
-                        qualitative_analysis = run_ai_qualitative_analysis(company_row['companyName'], qualitative_corpus, st.session_state.ideagen_theme)
-                        if not qualitative_analysis:
-                            st.warning(f"Qualitative analysis failed for {company_row['companyName']}. Skipping."); continue
-                        all_dossiers.append(synthesize_dossier(company_row, qualitative_analysis, st.session_state.ideagen_theme))
-                    
-                    if all_dossiers:
-                        final_html_report = generate_final_html_report(all_dossiers, st.session_state.ideagen_theme)
-                        st.download_button(label="📥 Download Full HTML Report", data=final_html_report, file_name=f"IdeaGen_Report.html", mime="text/html", use_container_width=True)
-                        for key in list(st.session_state.keys()):
-                            if key.startswith('ideagen_'): del st.session_state[key]
-                    else: st.error("Could not generate a report for any of the selected companies.")
+                st.error("Could not generate a report for any of the found companies. This might be due to data availability issues.")
+
+
+
 
 
 
