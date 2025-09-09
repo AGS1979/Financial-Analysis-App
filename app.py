@@ -5331,15 +5331,14 @@ def agent_ideagen_app():
             # EODHD stores dividend yield as a percentage, not a decimal
             eodhd_filters.append(["dividend_yield", ">", filters["dividend_yield_min"]])
             
-        # Add sector filters
+        # --- CORRECTED LOGIC FOR SECTORS AND EXCHANGES ---
+        # Add sector filters using the "in" operator for multiple selections
         if filters.get("sectors"):
-            sector_filters = [["sector", "=", sector] for sector in filters["sectors"]]
-            eodhd_filters.extend(sector_filters)
+            eodhd_filters.append(["sector", "in", filters["sectors"]])
 
-        # Add exchange filters based on selected countries
+        # Add exchange filters using the "in" operator for multiple selections
         if filters.get("exchanges"):
-            exchange_filters = [["exchange", "=", exchange] for exchange in filters["exchanges"]]
-            eodhd_filters.extend(exchange_filters)
+            eodhd_filters.append(["exchange", "in", filters["exchanges"]])
 
         if not eodhd_filters:
             st.warning("Please define at least one filter.")
@@ -5348,6 +5347,7 @@ def agent_ideagen_app():
         params = {
             "api_token": api_key,
             "filters": json.dumps(eodhd_filters),
+            "sort": "market_capitalization.desc", # Added sorting for consistency
             "limit": 100 # Fetch a broad list to sort and analyze the top N
         }
         
@@ -5363,13 +5363,15 @@ def agent_ideagen_app():
                 return pd.DataFrame()
             
             df = pd.DataFrame(data['data'])
-            # Sort by market cap descending to get the most relevant companies first
+            # The API sorts now, but we can ensure it's correct just in case.
             if 'market_capitalization' in df.columns:
                 df = df.sort_values(by='market_capitalization', ascending=False).reset_index(drop=True)
             return df
 
         except requests.exceptions.RequestException as e:
             st.error(f"API Error during screening: {e}")
+            # The line below helps debug by showing the exact URL that failed
+            st.error(f"Failed URL: {response.url}")
             return pd.DataFrame()
         except Exception as e:
             st.error(f"An error occurred while processing screening results: {e}")
