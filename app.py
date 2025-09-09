@@ -5265,16 +5265,6 @@ def agent_sentinel_app():
 def agent_ideagen_app():
     """
     A completely overhauled Streamlit app for a multi-stage, AI-powered investment idea generator.
-
-    Key Changes:
-    1.  **API Migration**: Replaced the Financial Modeling Prep (FMP) API with the more powerful
-        EOD Historical Data (EODHD) API for robust company screening.
-    2.  **UI Overhaul**: Replaced ambiguous natural language parsing for quantitative filters
-        with a structured UI using sliders and multi-select boxes for precise user control.
-    3.  **Refined AI Role**: The LLM's role is now focused on qualitative theme interpretation
-        and analysis, not on parsing quantitative criteria.
-    4.  **Streamlined Workflow**: A single-step process where the user defines all criteria,
-        finds companies, and generates a report on the top results.
     """
     import json
     import pandas as pd
@@ -5283,7 +5273,7 @@ def agent_ideagen_app():
     import markdown
     import html
     from openai import AzureOpenAI
-    import streamlit as st # Assuming st is imported in the main app file
+    import streamlit as st
 
     st.markdown("### 💡 Agent IdeaGen")
     st.markdown(
@@ -5291,7 +5281,7 @@ def agent_ideagen_app():
     )
 
     # --- 1. API AND CLIENT SETUP ---
-    MAX_COMPANIES_TO_ANALYZE = 10  # Set a hard limit for deep analysis to manage cost/time
+    MAX_COMPANIES_TO_ANALYZE = 10
 
     try:
         eodhd_api_key = st.secrets["eodhd"]["api_key"]
@@ -5310,30 +5300,22 @@ def agent_ideagen_app():
         st.error(f"Could not initialize the LLM client. Please check your secrets. Error: {e}")
         return
         
-    # --- 2. DATA FETCHING & PROCESSING FUNCTIONS (REBUILT FOR EODHD) ---
+    # --- 2. DATA FETCHING & PROCESSING FUNCTIONS (CORRECTED FOR EODHD) ---
 
     def get_eodhd_screener_results(filters: dict, api_key: str) -> pd.DataFrame:
-        """
-        Constructs and executes a request to the EODHD Stock Screener API.
-        """
         st.info("**(LIVE) Stage 1: Screening for companies with EODHD...**")
         base_url = "https://eodhd.com/api/screener"
         
         eodhd_filters = []
         
+        # Add filters based on the OFFICIAL supported list
         if filters.get("market_cap_min"):
             eodhd_filters.append(["market_capitalization", ">", filters["market_cap_min"] * 1e9])
-        
-        # --- FINAL CORRECTION: Using the correct filter field name "pe_ratio" ---
-        if filters.get("pe_ratio_max"):
-            eodhd_filters.append(["PERatio", "<", filters["pe_ratio_max"]])
-        
+        # P/E Ratio is NOT a supported filter and has been removed.
         if filters.get("dividend_yield_min") and filters["dividend_yield_min"] > 0:
             eodhd_filters.append(["dividend_yield", ">", filters["dividend_yield_min"]])
-            
         if filters.get("sectors"):
             eodhd_filters.append(["sector", "in", filters["sectors"]])
-
         if filters.get("exchanges"):
             eodhd_filters.append(["exchange", "in", filters["exchanges"]])
 
@@ -5360,13 +5342,13 @@ def agent_ideagen_app():
                 return pd.DataFrame()
             
             df = pd.DataFrame(data['data'])
+            # The API returns sorted data, but we can ensure it's correct
             if 'market_capitalization' in df.columns:
                 df = df.sort_values(by='market_capitalization', ascending=False).reset_index(drop=True)
             return df
 
         except requests.exceptions.RequestException as e:
             st.error(f"API Error during screening: {e}")
-            # This will now show the specific field error from the API
             st.error(f"API Response: {e.response.text}") 
             return pd.DataFrame()
         except Exception as e:
@@ -5374,10 +5356,6 @@ def agent_ideagen_app():
             return pd.DataFrame()
 
     def enrich_company_data_eodhd(ticker_code: str, api_key: str) -> dict:
-        """
-        Fetches detailed fundamental data for a single ticker.
-        EODHD uses ticker.exchange format, e.g., 'AAPL.US'.
-        """
         st.info(f"**(LIVE) Enriching {ticker_code} with fundamental data...**")
         base_url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker_code}"
         params = {"api_token": api_key}
@@ -5385,7 +5363,6 @@ def agent_ideagen_app():
             response = requests.get(base_url, params=params, timeout=15)
             response.raise_for_status()
             data = response.json()
-            # Extract key fields needed for analysis and reporting
             description = data.get('General', {}).get('Description', 'No description available.')
             news = aggregate_qualitative_data_eodhd(ticker_code, api_key)
             
@@ -5400,12 +5377,7 @@ def agent_ideagen_app():
             }
 
     def aggregate_qualitative_data_eodhd(ticker_code: str, api_key: str) -> str:
-        """
-        Fetches recent news headlines from EODHD.
-        NOTE: EODHD does not provide earnings call transcripts like FMP.
-        """
         base_url = "https://eodhistoricaldata.com/api/news"
-        # EODHD news API uses the ticker without the exchange for some reason.
         ticker_only = ticker_code.split('.')[0]
         params = {"api_token": api_key, "t": ticker_only, "limit": 10}
         try:
@@ -5419,8 +5391,7 @@ def agent_ideagen_app():
         except Exception:
             return "Could not fetch recent news."
 
-    # --- 3. AI ANALYSIS AND REPORTING FUNCTIONS (ADAPTED) ---
-
+    # --- 3. AI ANALYSIS AND REPORTING FUNCTIONS (UNCHANGED) ---
     def run_ai_qualitative_analysis(company_name: str, text_corpus: str, theme: str) -> dict:
         st.info(f"**(LIVE) Running AI Qualitative Analysis for {company_name}...**")
         analysis_prompt = f"""You are an expert equity research analyst. Analyze '{company_name}' for the theme '{theme}' using the company description and recent news below.
@@ -5443,10 +5414,7 @@ def agent_ideagen_app():
             return {}
 
     def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str) -> dict:
-        """Synthesizes the final dossier for one company."""
         st.info(f"**(LIVE) Synthesizing Dossier for {quant_data.get('name', 'N/A')}...**")
-        
-        # Helper to safely extract nested dictionary data
         def safe_get(data, keys, default="Analysis not available."):
             temp = data
             for key in keys:
@@ -5461,25 +5429,15 @@ def agent_ideagen_app():
                 f"* **{r.get('risk', 'N/A')}**: {r.get('description', 'N/A')}" for r in risk_list
             )
 
-        # Mapping EODHD columns to a consistent format
         market_cap_val = quant_data.get('market_capitalization', 0)
-        gross_margin_val = quant_data.get('gross_profit_margin_ttm') # Assuming this column name exists
-        
-        market_cap_str = f"${market_cap_val / 1e9:,.1f}B" if pd.notnull(market_cap_val) else 'N/A'
-        gross_margin_str = f"{gross_margin_val:.1%}" if pd.notnull(gross_margin_val) else 'N/A'
-        
         quant_table_md = textwrap.dedent(f"""
         | Metric | Value |
         |---|---|
-        | Market Cap (USD) | {market_cap_str} |
-        | P/E Ratio (TTM) | {quant_data.get('trailing_pe', 'N/A'):.1f} |
+        | Market Cap (USD) | ${market_cap_val / 1e9:,.1f}B |
         | Dividend Yield | {quant_data.get('dividend_yield', 'N/A'):.2%} |
         | Currency | {quant_data.get('currency_symbol', 'USD')} |
         """)
-
         executive_summary = f"{quant_data.get('name', 'N/A')} is a company operating in the {quant_data.get('sector', 'N/A')} sector, identified as a potential candidate for the '{theme}' theme."
-        
-        # Simplified summary, can be enhanced with another LLM call if needed
         
         return {
             "dossier_title": f"{quant_data.get('name', 'N/A')} ({quant_data.get('code', 'N/A')}.{quant_data.get('exchange', '')})",
@@ -5492,7 +5450,6 @@ def agent_ideagen_app():
         }
 
     def generate_final_html_report(dossier_list: list, theme: str) -> str:
-        # This function remains largely the same as it's for formatting the final output.
         safe_theme = html.escape(theme or "User-Defined Theme"); styles = """<style> body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background-color: #f9fafb; color: #1f2937;} .container { max-width: 1200px; margin: auto; } .report-header h1 { font-size: 2.2em; color: #111827; border-bottom: 2px solid #d1d5db; padding-bottom: 10px; margin-bottom: 5px; } .report-header h2 { font-size: 1.2em; color: #6b7280; font-weight: 400; margin-top: 0; } .dossier { background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 30px; margin-bottom: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); } .dossier h1, .dossier h2 { color: #111827; } .dossier h1 { font-size: 1.8em; } .dossier h2 { font-size: 1.4em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-top: 25px; } .dossier table { width: 100%; border-collapse: collapse; margin-top: 15px; } .dossier th, .dossier td { padding: 10px 12px; border: 1px solid #d1d5db; text-align: left; } .dossier th { background-color: #f3f4f6; font-weight: 600; } .dossier p { line-height: 1.6; } .dossier .metadata { color: #4b5563; font-size: 0.9em; } .dossier ul { padding-left: 20px; } .dossier li { margin-bottom: 0.5em; } </style>"""
         html_body = f"<div class='report-header'><h1>Investment Idea Generation Report</h1><h2>Theme: {safe_theme}</h2></div>"
         for dossier_dict in dossier_list:
@@ -5505,9 +5462,7 @@ def agent_ideagen_app():
         return f"<!DOCTYPE html><html><head><title>IdeaGen Report: {safe_theme}</title>{styles}</head><body><div class='container'>{html_body}</div></body></html>"
 
 
-    # --- 4. STREAMLIT UI AND ORCHESTRATION (MODIFIED) ---
-
-    # --- Step 1: Define Theme and Filters ---
+    # --- 4. STREAMLIT UI AND ORCHESTRATION (CORRECTED) ---
     st.subheader("Step 1: Define Theme and Screening Criteria")
     
     qualitative_theme = st.text_area(
@@ -5516,10 +5471,8 @@ def agent_ideagen_app():
         height=75
     )
 
-    # REPLACED st.expander with st.subheader and un-indented the filters
     st.subheader("Quantitative Filters")
 
-    # Mappings
     COUNTRY_TO_EXCHANGE = {
         "USA": "US", "India": "NSE", "Germany": "F", "United Kingdom": "LSE",
         "Canada": "TO", "Japan": "TSE", "China": "SS", "Australia": "AU"
@@ -5530,19 +5483,16 @@ def agent_ideagen_app():
         "Industrials", "Real Estate", "Technology", "Utilities"
     ]
 
-    # UI Components are now always visible
     selected_countries = st.multiselect("Countries", options=list(COUNTRY_TO_EXCHANGE.keys()), default=["USA", "India"])
     selected_sectors = st.multiselect("Sectors", options=SECTORS, default=["Technology"])
 
-    col1, col2, col3 = st.columns(3)
+    # --- UI Correction: Removed P/E Ratio Slider ---
+    col1, col2 = st.columns(2)
     with col1:
         mkt_cap_min = st.slider("Min Market Cap (Billion USD)", 0.0, 500.0, 10.0, 1.0)
     with col2:
-        pe_ratio_max = st.slider("Max P/E Ratio (TTM)", 0, 200, 50, 1)
-    with col3:
         dividend_yield_min = st.slider("Min Dividend Yield (%)", 0.0, 10.0, 0.0, 0.1)
 
-    # --- Step 2: Run and Display Results ---
     st.subheader("Step 2: Generate Screen")
 
     if st.button("🚀 Find Companies & Generate Screen", type="primary"):
@@ -5550,33 +5500,29 @@ def agent_ideagen_app():
             st.warning("Please describe your investment theme.")
             return
 
+        # --- Filter Dictionary Correction: Removed P/E Ratio ---
         user_filters = {
             "exchanges": [COUNTRY_TO_EXCHANGE[c] for c in selected_countries],
             "sectors": selected_sectors,
             "market_cap_min": mkt_cap_min,
-            "pe_ratio_max": pe_ratio_max,
             "dividend_yield_min": dividend_yield_min
         }
 
         with st.spinner("Finding, analyzing, and building your screen... This may take a few minutes."):
-            # 1. Screen for companies
             screener_df = get_eodhd_screener_results(user_filters, eodhd_api_key)
 
             if screener_df.empty:
-                return # Error messages are handled inside the function
+                return 
 
-            # 2. Select top N companies for the expensive analysis step
             analysis_df = screener_df.head(MAX_COMPANIES_TO_ANALYZE)
             st.success(f"Found {len(screener_df)} companies. Performing deep analysis on the top {len(analysis_df)} by market cap.")
             
-            # Display the companies being analyzed
             st.dataframe(
                 analysis_df[['code', 'name', 'exchange', 'sector', 'market_capitalization']],
                 hide_index=True,
                 use_container_width=True
             )
 
-            # 3. Enrich, Analyze, and Synthesize
             all_dossiers = []
             progress_bar = st.progress(0, text=f"Analyzing 0 / {len(analysis_df)} companies...")
             for i, company_row in analysis_df.iterrows():
@@ -5599,13 +5545,11 @@ def agent_ideagen_app():
                     st.warning(f"Qualitative analysis failed for {company_row['name']}. Skipping.")
                     continue
 
-                # Merge enrichment data back into the main series for dossier synthesis
                 full_company_data = pd.concat([company_row, pd.Series(enrichment_data)])
                 all_dossiers.append(synthesize_dossier(full_company_data, qualitative_analysis, qualitative_theme))
             
             progress_bar.empty()
 
-            # 4. Generate and offer download
             if all_dossiers:
                 final_html_report = generate_final_html_report(all_dossiers, qualitative_theme)
                 st.download_button(
