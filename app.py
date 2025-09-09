@@ -3042,8 +3042,6 @@ def portfolio_agent_app(user_id: str):
                 query_vector = self.embedding_model.encode(query_text).tolist()
                 query_filter = {"company": {"$in": [self.sanitize_filename(c) for c in companies]}}
 
-                # CHANGE 1: Retrieve more context (k=15 instead of 7) to increase the chance
-                # of finding all relevant information, including updates and older data.
                 results = self.index.query(
                     vector=query_vector, 
                     top_k=k, 
@@ -3055,13 +3053,8 @@ def portfolio_agent_app(user_id: str):
                 if not results.matches:
                     return "I could not find relevant information in the indexed documents.", ""
 
-                # CHANGE 2: Sort the retrieved chunks by year (descending) and page number (ascending).
-                # This is a powerful heuristic that places the most recent information first,
-                # guiding the LLM to prioritize newer data like Q2 guidance over Q1.
                 results.matches.sort(key=lambda m: (m.metadata.get('year', 0), m.metadata.get('page_number', 0)), reverse=True)
 
-                # CHANGE 3: Enhance the context given to the LLM by including the year and page number.
-                # This provides crucial metadata for determining the timeliness of information.
                 context_excerpts = [
                     f"Excerpt from '{m.metadata['source_file']}' (Year: {m.metadata.get('year', 'N/A')}, Page: {m.metadata.get('page_number', 'N/A')}):\n\"{m.metadata['original_text']}\"\n"
                     for m in results.matches
@@ -3070,18 +3063,17 @@ def portfolio_agent_app(user_id: str):
                 source_docs = sorted(list(set(m.metadata['source_file'] for m in results.matches)))
                 safe_context = truncate_context(context_excerpts)
 
-                # CHANGE 4: A much more sophisticated and detailed prompt for the LLM.
-                # This instructs the model to act like an expert analyst and synthesize information.
-                prompt = f"""You are an expert financial analyst. Your task is to provide a comprehensive, accurate, and synthesized answer to the user's question based ONLY on the provided context excerpts.
+                # --- THIS IS THE CORRECTED PROMPT ---
+                prompt = f"""You are a top-tier financial analyst at a major investment firm. Your task is to provide a precise, accurate, and definitive answer to the user's question. You must act as an expert who has already resolved any inconsistencies in the source material.
 
 **CRITICAL INSTRUCTIONS:**
-1.  **Synthesize, Don't Just Repeat:** Do not just find the first relevant sentence. Read all provided excerpts and synthesize a complete answer.
-2.  **Prioritize Recency:** If you find conflicting information (e.g., different financial guidance from different periods), you MUST prioritize the information from the most recent source, as indicated by the 'Year' in the excerpt's metadata. Clearly state if guidance has been updated.
-3.  **Be Specific and Quantitative:** Extract specific numbers, percentages, and dates. Avoid vague statements.
-4.  **Provide Context:** Explain the reasoning behind the numbers if the context provides it (e.g., "growth is driven by strong demand in AI").
-5.  **Structure Your Answer:** Use markdown for clarity. Start with a direct summary, then provide supporting details using bullet points.
+1.  **Act as a Synthesizer, Not a Reporter:** Analyze all the provided context excerpts. Your final answer should be a single, coherent synthesis. **DO NOT** mention "conflicting information," "different excerpts," "conflicting guidance," or your reasoning process for selecting the data. It is your job to determine the most current and accurate fact and present it as the definitive answer.
+2.  **Identify Superseding Information:** Financial documents often contain updated guidance. If you see two different numbers for the same metric (e.g., revenue guidance for the same year), look for linguistic clues such as "we are raising our outlook," "we now expect," "updated forecast," or context that indicates a more recent quarterly report (e.g., Q2 results vs. Q1 results). The information that explicitly updates a prior statement is the correct one.
+3.  **Prioritize by Date/Quarter:** If the context mentions different time periods (e.g., a Q1 earnings call vs. a Q2 earnings call), the information from the later period is the correct one. Assume a standard calendar year (Q2 comes after Q1).
+4.  **Deliver a Direct and Confident Answer:** Start your response with the final, correct number. Then, provide a bulleted list with supporting details and the reasoning/drivers for that number, as found in the context.
+5.  **Use Only Provided Context:** Base your answer *strictly* on the text provided in the context excerpts. Do not use external knowledge.
 
---- CONTEXT EXCERPTS (Sorted by assumed recency) ---
+--- CONTEXT EXCERPTS ---
 {safe_context}
 --- QUESTION ---
 {query_text}
