@@ -3034,7 +3034,7 @@ def portfolio_agent_app(user_id: str):
                     else:
                         st.warning("No new content was indexed.")
 
-            def query(self, query_text: str, companies: List[str], k: int = 15) -> Tuple[str, str]:
+            def query(self, query_text: str, companies: List[str], k: int = 20) -> Tuple[str, str]:
                 """
                 Performs a query against the Pinecone index with an enhanced RAG pipeline
                 for more accurate and synthesized financial analysis.
