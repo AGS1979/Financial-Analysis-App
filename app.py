@@ -5317,15 +5317,16 @@ def agent_ideagen_app():
         Constructs and executes a request to the EODHD Stock Screener API.
         """
         st.info("**(LIVE) Stage 1: Screening for companies with EODHD...**")
-        # --- FINAL CORRECTION: Using the documented eodhd.com domain ---
         base_url = "https://eodhd.com/api/screener"
         
         eodhd_filters = []
         
         if filters.get("market_cap_min"):
             eodhd_filters.append(["market_capitalization", ">", filters["market_cap_min"] * 1e9])
+        
+        # --- FINAL CORRECTION: Using the correct filter field name "pe_ratio" ---
         if filters.get("pe_ratio_max"):
-            eodhd_filters.append(["trailing_pe", "<", filters["pe_ratio_max"]])
+            eodhd_filters.append(["pe_ratio", "<", filters["pe_ratio_max"]])
         
         if filters.get("dividend_yield_min") and filters["dividend_yield_min"] > 0:
             eodhd_filters.append(["dividend_yield", ">", filters["dividend_yield_min"]])
@@ -5365,7 +5366,8 @@ def agent_ideagen_app():
 
         except requests.exceptions.RequestException as e:
             st.error(f"API Error during screening: {e}")
-            st.error(f"Failed URL: {response.url}")
+            # This will now show the specific field error from the API
+            st.error(f"API Response: {e.response.text}") 
             return pd.DataFrame()
         except Exception as e:
             st.error(f"An error occurred while processing screening results: {e}")
