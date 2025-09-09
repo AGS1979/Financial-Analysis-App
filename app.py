@@ -3034,7 +3034,7 @@ def portfolio_agent_app(user_id: str):
                     else:
                         st.warning("No new content was indexed.")
 
-            def query(self, query_text: str, companies: List[str], k: int = 20) -> Tuple[str, str]:
+            def query(self, query_text: str, companies: List[str], k: int = 30) -> Tuple[str, str]:
                 """
                 Performs a query against the Pinecone index with an enhanced RAG pipeline
                 for more accurate and synthesized financial analysis.
@@ -3042,6 +3042,7 @@ def portfolio_agent_app(user_id: str):
                 query_vector = self.embedding_model.encode(query_text).tolist()
                 query_filter = {"company": {"$in": [self.sanitize_filename(c) for c in companies]}}
 
+                # Increased k to 30 to provide a wider context for deeper synthesis
                 results = self.index.query(
                     vector=query_vector,
                     top_k=k,
@@ -3053,9 +3054,7 @@ def portfolio_agent_app(user_id: str):
                 if not results.matches:
                     return "I could not find relevant information in the indexed documents.", ""
 
-                # This sorting logic is CORRECT based on your document structure (latest info on earliest pages).
-                # 1. Sort by page number ASCENDING.
-                # 2. Then, sort by year DESCENDING (stable sort preserves page order for the same year).
+                # This sorting logic is correct and critical, it must be maintained.
                 results.matches.sort(key=lambda m: m.metadata.get('page_number', 0))
                 results.matches.sort(key=lambda m: m.metadata.get('year', 0), reverse=True)
                 
@@ -3067,14 +3066,19 @@ def portfolio_agent_app(user_id: str):
                 source_docs = sorted(list(set(m.metadata['source_file'] for m in results.matches)))
                 safe_context = truncate_context(context_excerpts)
 
-                # --- THIS IS THE FINAL, SIMPLIFIED, AND STRICTER PROMPT ---
-                prompt = f"""You are a hyper-precise financial data extractor. Your single most important task is to answer the user's question with the most recent and accurate information available from the context.
+                # --- THIS IS THE FINAL PROMPT, ENGINEERED FOR MAXIMUM DEPTH AND CONTEXT ---
+                prompt = f"""You are a world-class senior equity research analyst from a top-tier investment bank, known for producing exceptionally detailed and insightful reports. Your task is to provide a comprehensive, multi-faceted answer to the user's question, synthesizing all available information into a robust, professional-grade analysis.
 
-**CONTEXT AND RULES:**
-1.  **The context provided below is PRE-SORTED.** The most recent and authoritative information appears FIRST.
-2.  If you find multiple answers for the same specific data point (e.g., two different revenue guidance figures for the same year), you **MUST** use the one that appears **EARLIEST** in the context. You must **IGNORE** all subsequent, older data points for that same metric.
-3.  **DO NOT** mention the existence of older or conflicting data. Do not use phrases like "supersedes a prior projection" or "conflicting guidance." Present the single, correct, most recent fact as if it's the only one that exists.
-4.  Provide a direct, clear answer. Start with the definitive number or statement, then provide a few bullet points of supporting context or drivers if they are available in the same excerpt.
+**Core Task & Rules:**
+1.  **Direct Answer First:** Begin your response with a direct, one-sentence answer to the user's specific question. This should be the single most current and authoritative fact.
+2.  **Construct a Detailed Narrative:** After the direct answer, you must build a detailed, multi-paragraph narrative that provides the deepest possible context. You are REQUIRED to search the context for and include the following types of information, if available:
+    * **Specific Quantitative Drivers:** Go beyond generalities. Instead of "AI demand," extract specific drivers like "demand for 3nm and 5nm nodes" or "growth in the HPC platform."
+    * **Forward-Looking Guidance:** If the user asks about full-year guidance, you MUST also find and include any specific guidance for the next quarter (e.g., "Q3 2025 revenue is guided to be between $X and $Y billion").
+    * **Financial Nuances & Headwinds:** Find and include any commentary on factors affecting the headline numbers, such as "foreign exchange (FX) headwinds," "margin impact from new fabs," or "cost dilution."
+    * **Management's Rationale:** Summarize management's qualitative commentary and the reasoning behind their projections.
+3.  **The "First is Final" Rule for Specific Metrics:** The context is pre-sorted chronologically (most recent first). For any specific, directly comparable metric (e.g., FY2025 revenue growth %), you **MUST** use the value from the **EARLIEST** excerpt in the context. Ignore all subsequent, older values for that specific metric.
+4.  **No Meta-Commentary:** **NEVER** mention "conflicting data" or "older guidance." Present a single, unified analysis based on the most current information.
+5.  **Professional Formatting:** Structure your response with a clear summary, followed by detailed bullet points or short paragraphs to elaborate on the different aspects of the analysis (Drivers, Quarterly Outlook, etc.).
 
 --- PRE-SORTED CONTEXT (Most Recent First) ---
 {safe_context}
