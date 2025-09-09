@@ -5319,25 +5319,22 @@ def agent_ideagen_app():
         st.info("**(LIVE) Stage 1: Screening for companies with EODHD...**")
         base_url = "https://eodhistoricaldata.com/api/screener"
         
-        # EODHD's filter format is a JSON array of arrays: [["field", "operation", "value"], ...]
         eodhd_filters = []
         
-        # Map user-friendly filter names to EODHD API field names
         if filters.get("market_cap_min"):
             eodhd_filters.append(["market_capitalization", ">", filters["market_cap_min"] * 1e9])
         if filters.get("pe_ratio_max"):
             eodhd_filters.append(["trailing_pe", "<", filters["pe_ratio_max"]])
         
-        # --- CORRECTED LOGIC FOR DIVIDEND YIELD ---
+        # --- FINAL CORRECTION FOR DIVIDEND YIELD ---
         if filters.get("dividend_yield_min") and filters["dividend_yield_min"] > 0:
-            # The API screener expects the dividend yield as a decimal (e.g., 1% -> 0.01)
-            eodhd_filters.append(["dividend_yield", ">", filters["dividend_yield_min"] / 100.0])
+            # The API screener expects the dividend yield as a percentage (e.g., 1% -> 1.0), not a decimal.
+            # Removing the division by 100.
+            eodhd_filters.append(["dividend_yield", ">", filters["dividend_yield_min"]])
             
-        # Add sector filters using the "in" operator for multiple selections
         if filters.get("sectors"):
             eodhd_filters.append(["sector", "in", filters["sectors"]])
 
-        # Add exchange filters using the "in" operator for multiple selections
         if filters.get("exchanges"):
             eodhd_filters.append(["exchange", "in", filters["exchanges"]])
 
