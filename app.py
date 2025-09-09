@@ -578,10 +578,30 @@ LOGO_OBJECT = load_logo() # Call the new function
 # (Code from InvMemo.py and pipeline.py)
 # ==============================================================================
 
+# Add these imports to the top of your Python file
+import streamlit as st
+import requests
+import re
+import fitz  # PyMuPDF
+import os
+import tempfile
+import numpy as np
+import faiss
+import markdown
+from docx import Document
+from docx.shared import Pt, Inches
+from datetime import datetime
+from collections import defaultdict
+from jinja2 import Template
+from PyPDF2 import PdfReader
+from sentence_transformers import SentenceTransformer
+from pathlib import Path
+from bs4 import BeautifulSoup # <-- ADD THIS IMPORT
+
 def investment_memo_app():
     """
     Encapsulates the entire IPO Investment Memo Generator with Infographic and Q&A.
-    This version is aligned with the advanced standalone module.
+    This version is aligned with the advanced standalone module and supports both PDF and HTML.
     """
     
     # --- CONFIGURATION ---
@@ -610,6 +630,20 @@ def investment_memo_app():
     def extract_text_by_page(pdf_path):
         doc = fitz.open(pdf_path)
         return [page.get_text() for page in doc], len(doc)
+
+    # MODIFICATION: New function to handle HTML files
+    def extract_text_from_html(html_path):
+        """Reads an HTML file and extracts all text content."""
+        with open(html_path, 'r', encoding='utf-8') as f:
+            soup = BeautifulSoup(f, 'html.parser')
+        
+        for element in soup(["script", "style", "header", "footer", "nav"]):
+            element.decompose() # Remove irrelevant tags
+            
+        text = soup.get_text(separator='\n', strip=True)
+        # Consolidate whitespace
+        cleaned_text = re.sub(r'\n{3,}', '\n\n', text)
+        return cleaned_text
 
     def get_relevant_pages_chunked(text_by_page, user_query):
         total_pages = len(text_by_page)
@@ -683,7 +717,6 @@ def investment_memo_app():
             response.raise_for_status()
             raw_content = response.json()['choices'][0]['message']['content']
             cleaned = clean_markdown(raw_content)
-            # Additional cleaning to remove redundant titles
             cleaned = re.sub(rf"^{re.escape(title[3:])}[\s:—-]*", "", cleaned, flags=re.IGNORECASE | re.MULTILINE)
             sections[title] = cleaned.strip()
         return sections
@@ -716,7 +749,6 @@ def investment_memo_app():
                     doc.add_paragraph(para.strip())
             doc.add_paragraph()
         
-        # Set margins for better layout
         section = doc.sections[0]
         section.left_margin = Inches(0.75)
         section.right_margin = Inches(0.75)
@@ -726,23 +758,8 @@ def investment_memo_app():
         doc.save(full_path)
         return full_path
 
-    def run_memo_pipeline(pdf_path, custom_focus="", output_dir="documents"):
-        text_by_page, _ = extract_text_by_page(pdf_path)
-        default_query = (
-            "Extract pages with: 'Management’s Discussion and Analysis', 'Financial Highlights', "
-            "'Risk Factors', 'Business Overview', 'Industry Overview'."
-        )
-        pages_to_keep = get_relevant_pages_chunked(text_by_page, default_query)
-        if not pages_to_keep:
-            raise ValueError("No relevant pages found. The document may be incompatible or lack key sections.")
-        
-        filtered_text = extract_selected_pages_text(pdf_path, pages_to_keep)
-        if not filtered_text.strip():
-            raise ValueError("Could not extract text from relevant pages.")
-        
-        company_name = extract_company_name(filtered_text)
-        sections_dict = generate_memo_sections(filtered_text, custom_focus)
-        return save_sections_to_word(sections_dict, company_name=company_name, output_dir=output_dir)
+    # MODIFICATION: The run_memo_pipeline is modified below in the main app flow
+    # to handle the logic split between PDF and HTML.
 
     # --- HELPER FUNCTIONS (Infographic) ---
 
@@ -770,18 +787,14 @@ def investment_memo_app():
     def parse_deepseek_response(summary_text):
         sections = defaultdict(list)
         current_section = None
-        # Pattern to capture headers like "## 1. IPO Offer Details" or "### Company Overview"
         header_pattern = re.compile(r"^#+\s*(?:\d+\.\s*)?(.*?)\s*$", re.MULTILINE)
         
-        # Split text by headers
         parts = header_pattern.split(summary_text)
         if len(parts) > 1:
-            # The first part is usually empty, so we iterate over pairs of (header, content)
             for i in range(1, len(parts), 2):
                 header = parts[i].strip()
                 content = parts[i+1]
                 bullets = re.findall(r'[-\*•]\s+(.*)', content)
-                # Bold markdown like **Key Metric:** to <strong>Key Metric:</strong>
                 formatted_bullets = [re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', b.strip()) for b in bullets]
                 if header and formatted_bullets:
                     sections[header] = formatted_bullets
@@ -802,20 +815,37 @@ def investment_memo_app():
 
     # --- HELPER FUNCTIONS (Q&A Engine) ---
 
-    class PDFQueryEngine:
+    # MODIFICATION: Renamed and updated to handle both PDF and HTML
+    class DocumentQueryEngine:
         def __init__(self, model_name="all-MiniLM-L6-v2"):
             self.api_key = DEEPSEEK_API_KEY
             self.embedder = SentenceTransformer(model_name)
 
-        def extract_text_from_pdf(self, path):
+        def _extract_chunks_from_pdf(self, path):
             reader = PdfReader(path)
             return [(i + 1, page.extract_text().strip()) for i, page in enumerate(reader.pages) if page.extract_text()]
 
-        def answer_query(self, pdf_path, query, top_k=3):
-            chunks = self.extract_text_from_pdf(pdf_path)
-            if not chunks: raise ValueError("No text could be extracted from the PDF.")
+        def _extract_chunks_from_html(self, path):
+            full_text = extract_text_from_html(path)
+            # Chunk HTML text by paragraphs (or a fixed character length if needed)
+            paragraphs = [p.strip() for p in full_text.split('\n\n') if p.strip()]
+            # Return with a chunk index instead of a page number
+            return [(i + 1, para) for i, para in enumerate(paragraphs)]
+
+        def answer_query(self, doc_path, query, top_k=3):
+            # MODIFICATION: Select the correct chunking method based on file type
+            if doc_path.endswith('.pdf'):
+                chunks = self._extract_chunks_from_pdf(doc_path)
+                source_label = "Page"
+            elif doc_path.endswith('.html'):
+                chunks = self._extract_chunks_from_html(doc_path)
+                source_label = "Section" # Use a more generic label for HTML chunks
+            else:
+                raise ValueError("Unsupported file type for Q&A.")
+
+            if not chunks: raise ValueError("No text could be extracted from the document.")
             
-            pages, texts = zip(*chunks)
+            source_ids, texts = zip(*chunks)
             text_embeddings = np.array(self.embedder.encode(texts, convert_to_numpy=True))
             
             index = faiss.IndexFlatL2(text_embeddings.shape[1])
@@ -824,39 +854,46 @@ def investment_memo_app():
             query_embedding = self.embedder.encode([query])
             _, I = index.search(query_embedding, k=top_k)
             
-            context_chunks = [(pages[i], texts[i]) for i in I[0]]
+            context_chunks = [(source_ids[i], texts[i]) for i in I[0]]
             
-            messages = [{"role": "system", "content": "Answer the user's question based on the context provided from the document pages."}]
-            for page_num, text in context_chunks:
-                messages.append({"role": "user", "content": f"[Context from Page {page_num}]:\n{text}"})
+            messages = [{"role": "system", "content": "Answer the user's question based on the context provided from the document."}]
+            for source_id, text in context_chunks:
+                messages.append({"role": "user", "content": f"[Context from {source_label} {source_id}]:\n{text}"})
             messages.append({"role": "user", "content": f"Question: {query}"})
             
             response = requests.post(DEEPSEEK_API_URL, headers={"Authorization": f"Bearer {self.api_key}"}, json={"model": "deepseek-chat", "messages": messages, "temperature": 0.2})
             response.raise_for_status()
             
             answer_md = response.json()["choices"][0]["message"]["content"]
-            cited_pages = sorted([pages[i] for i in I[0]])
-            return markdown.markdown(answer_md), cited_pages
+            cited_sources = sorted([source_ids[i] for i in I[0]])
+            return markdown.markdown(answer_md), cited_sources, source_label
 
     # Initialize session state
     if "memo_generated" not in st.session_state:
         st.session_state.memo_generated = False
     if "memo_path" not in st.session_state:
         st.session_state.memo_path = None
-    if "pdf_path" not in st.session_state:
-        st.session_state.pdf_path = None
+    if "doc_path" not in st.session_state: # MODIFICATION: Renamed for generality
+        st.session_state.doc_path = None
     
     # --- Main App Flow ---
     st.markdown("### 📝 Agent Pre-IPO")
     st.markdown("Upload a DRHP or IPO prospectus to automatically generate a detailed investment memo, an infographic, and perform Q&A.")
-    st.subheader("📤 1. Upload DRHP or IPO PDF")
-    pdf_file = st.file_uploader("Upload your PDF file", type=["pdf"], key="memo_pdf")
+    st.subheader("📤 1. Upload DRHP or IPO Prospectus")
     
-    if pdf_file:
-        # Save uploaded file to a temporary path
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-            tmp_file.write(pdf_file.getbuffer())
-            st.session_state.pdf_path = tmp_file.name
+    # MODIFICATION: Allow both PDF and HTML files
+    uploaded_file = st.file_uploader(
+        "Upload your PDF or HTML file",
+        type=["pdf", "html"],
+        key="prospectus_uploader"
+    )
+    
+    if uploaded_file:
+        # Save uploaded file to a temporary path with the correct extension
+        suffix = Path(uploaded_file.name).suffix
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+            tmp_file.write(uploaded_file.getbuffer())
+            st.session_state.doc_path = tmp_file.name
             
         custom_focus = st.text_area(
             "Optional: Add custom notes to guide memo generation",
@@ -887,12 +924,33 @@ def investment_memo_app():
             )
         # --- END NEW UI ---
 
-
-
         if st.button("📘 Generate Investment Memo", key="gen_memo"):
             with st.spinner("⏳ Analyzing document and generating memo... This may take a few minutes."):
                 try:
-                    memo_path = run_memo_pipeline(st.session_state.pdf_path, custom_focus)
+                    # MODIFICATION: Conditional logic for PDF vs HTML processing
+                    full_text = ""
+                    if st.session_state.doc_path.endswith(".pdf"):
+                        text_by_page, _ = extract_text_by_page(st.session_state.doc_path)
+                        default_query = (
+                            "Extract pages with: 'Management’s Discussion and Analysis', 'Financial Highlights', "
+                            "'Risk Factors', 'Business Overview', 'Industry Overview'."
+                        )
+                        pages_to_keep = get_relevant_pages_chunked(text_by_page, default_query)
+                        if not pages_to_keep:
+                            raise ValueError("No relevant pages found. The document may be incompatible or lack key sections.")
+                        
+                        full_text = extract_selected_pages_text(st.session_state.doc_path, pages_to_keep)
+                    
+                    elif st.session_state.doc_path.endswith(".html"):
+                        full_text = extract_text_from_html(st.session_state.doc_path)
+
+                    if not full_text.strip():
+                        raise ValueError("Could not extract text from the document.")
+                    
+                    company_name = extract_company_name(full_text)
+                    sections_dict = generate_memo_sections(full_text, custom_focus)
+                    memo_path = save_sections_to_word(sections_dict, company_name=company_name)
+
                     st.session_state.memo_generated = True
                     st.session_state.memo_path = memo_path
                     st.success("✅ Memo generated successfully!")
@@ -916,13 +974,8 @@ def investment_memo_app():
                         company_name = Path(st.session_state.memo_path).stem.split('_PreIPO_Memo_')[0].replace('_', ' ')
                         infographic_html = generate_infographic_html(st.session_state.memo_path, company_name)
                         
-                        # --- NEW FIX ---
-                        # The infographic likely has a fixed width in its CSS. We can force the 
-                        # component to render in a wider frame by setting the `width` parameter.
-                        # This should allow the content to display as intended.
                         st.components.v1.html(infographic_html, width=1100, height=1000, scrolling=True)
-                        # --- END FIX ---
-                                            
+                                        
                         st.download_button(
                             label="📥 Download Infographic (.html)",
                             data=infographic_html,
@@ -934,15 +987,16 @@ def investment_memo_app():
 
         # --- Q&A Section ---
         st.markdown("---")
-        st.subheader("🔍 3. Ask Questions from the PDF")
+        st.subheader("🔍 3. Ask Questions from the Document")
         query = st.text_input("Type your question (e.g., What are the key risk factors?)", key="memo_query")
         if query:
             with st.spinner("💬 Searching for answers in the document..."):
                 try:
-                    engine = PDFQueryEngine()
-                    answer_html, cited_pages = engine.answer_query(st.session_state.pdf_path, query)
+                    # MODIFICATION: Use the updated engine
+                    engine = DocumentQueryEngine()
+                    answer_html, cited_sources, source_label = engine.answer_query(st.session_state.doc_path, query)
                     st.markdown(answer_html, unsafe_allow_html=True)
-                    st.caption(f"📄 Answer generated from information on pages: {', '.join(map(str, cited_pages))}")
+                    st.caption(f"📄 Answer generated from information on {source_label.lower()}s: {', '.join(map(str, cited_sources))}")
                 except Exception as e:
                     st.error(f"❌ Query Error: {e}")
 
