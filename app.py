@@ -3034,19 +3034,54 @@ def portfolio_agent_app(user_id: str):
                     else:
                         st.warning("No new content was indexed.")
 
-            def query(self, query_text: str, companies: List[str], k: int = 7) -> Tuple[str, str]:
+            def query(self, query_text: str, companies: List[str], k: int = 15) -> Tuple[str, str]:
+                """
+                Performs a query against the Pinecone index with an enhanced RAG pipeline
+                for more accurate and synthesized financial analysis.
+                """
                 query_vector = self.embedding_model.encode(query_text).tolist()
                 query_filter = {"company": {"$in": [self.sanitize_filename(c) for c in companies]}}
-                results = self.index.query(vector=query_vector, top_k=k, filter=query_filter, include_metadata=True, namespace=self.namespace)
-                if not results.matches: return "I could not find relevant information in the indexed documents.", ""
-                context_excerpts = [f"Excerpt from '{m.metadata['source_file']}':\n\"{m.metadata['original_text']}\"\n" for m in results.matches]
+
+                # CHANGE 1: Retrieve more context (k=15 instead of 7) to increase the chance
+                # of finding all relevant information, including updates and older data.
+                results = self.index.query(
+                    vector=query_vector, 
+                    top_k=k, 
+                    filter=query_filter, 
+                    include_metadata=True, 
+                    namespace=self.namespace
+                )
+
+                if not results.matches:
+                    return "I could not find relevant information in the indexed documents.", ""
+
+                # CHANGE 2: Sort the retrieved chunks by year (descending) and page number (ascending).
+                # This is a powerful heuristic that places the most recent information first,
+                # guiding the LLM to prioritize newer data like Q2 guidance over Q1.
+                results.matches.sort(key=lambda m: (m.metadata.get('year', 0), m.metadata.get('page_number', 0)), reverse=True)
+
+                # CHANGE 3: Enhance the context given to the LLM by including the year and page number.
+                # This provides crucial metadata for determining the timeliness of information.
+                context_excerpts = [
+                    f"Excerpt from '{m.metadata['source_file']}' (Year: {m.metadata.get('year', 'N/A')}, Page: {m.metadata.get('page_number', 'N/A')}):\n\"{m.metadata['original_text']}\"\n"
+                    for m in results.matches
+                ]
+                
                 source_docs = sorted(list(set(m.metadata['source_file'] for m in results.matches)))
                 safe_context = truncate_context(context_excerpts)
-                prompt = f"""Answer the user's question based *only* on the provided context.
 
-CRITICAL INSTRUCTION: Ensure there is always a single space between separate words, and between numbers and words. Do not concatenate words together.
+                # CHANGE 4: A much more sophisticated and detailed prompt for the LLM.
+                # This instructs the model to act like an expert analyst and synthesize information.
+                prompt = f"""You are an expert financial analyst. Your task is to provide a comprehensive, accurate, and synthesized answer to the user's question based ONLY on the provided context excerpts.
 
---- CONTEXT ---
+**CRITICAL INSTRUCTIONS:**
+1.  **Synthesize, Don't Just Repeat:** Do not just find the first relevant sentence. Read all provided excerpts and synthesize a complete answer.
+2.  **Prioritize Recency:** If you find conflicting information (e.g., different financial guidance from different periods), you MUST prioritize the information from the most recent source, as indicated by the 'Year' in the excerpt's metadata. Clearly state if guidance has been updated.
+3.  **Be Specific and Quantitative:** Extract specific numbers, percentages, and dates. Avoid vague statements.
+4.  **Provide Context:** Explain the reasoning behind the numbers if the context provides it (e.g., "growth is driven by strong demand in AI").
+5.  **Structure Your Answer:** Use markdown for clarity. Start with a direct summary, then provide supporting details using bullet points.
+
+--- CONTEXT EXCERPTS (Sorted by assumed recency) ---
 {safe_context}
 --- QUESTION ---
 {query_text}
