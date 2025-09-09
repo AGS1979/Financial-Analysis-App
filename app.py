@@ -5326,10 +5326,10 @@ def agent_ideagen_app():
         
         # --- FINAL CORRECTION: Using the correct filter field name "pe_ratio" ---
         if filters.get("pe_ratio_max"):
-            eodhd_filters.append(["ForwardPE", "<", filters["ForwardPE_max"]])
+            eodhd_filters.append(["pe_ratio", "<", filters["pe_ratio_max"]])
         
-        if filters.get("ForwardAnnualDividendYield_min") and filters["ForwardAnnualDividendYield_min"] > 0:
-            eodhd_filters.append(["ForwardAnnualDividendYield", ">", filters["ForwardAnnualDividendYield_min"]])
+        if filters.get("dividend_yield_min") and filters["dividend_yield_min"] > 0:
+            eodhd_filters.append(["dividend_yield", ">", filters["dividend_yield_min"]])
             
         if filters.get("sectors"):
             eodhd_filters.append(["sector", "in", filters["sectors"]])
@@ -5521,7 +5521,7 @@ def agent_ideagen_app():
 
     # Mappings
     COUNTRY_TO_EXCHANGE = {
-        "USA": "US", "India": "INDX", "Germany": "F", "United Kingdom": "LSE",
+        "USA": "US", "India": "NSE", "Germany": "F", "United Kingdom": "LSE",
         "Canada": "TO", "Japan": "TSE", "China": "SS", "Australia": "AU"
     }
     SECTORS = [
