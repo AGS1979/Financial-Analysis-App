@@ -3043,17 +3043,24 @@ def portfolio_agent_app(user_id: str):
                 query_filter = {"company": {"$in": [self.sanitize_filename(c) for c in companies]}}
 
                 results = self.index.query(
-                    vector=query_vector, 
-                    top_k=k, 
-                    filter=query_filter, 
-                    include_metadata=True, 
+                    vector=query_vector,
+                    top_k=k,
+                    filter=query_filter,
+                    include_metadata=True,
                     namespace=self.namespace
                 )
 
                 if not results.matches:
                     return "I could not find relevant information in the indexed documents.", ""
 
-                results.matches.sort(key=lambda m: (m.metadata.get('year', 0), m.metadata.get('page_number', 0)), reverse=True)
+                # --- THIS IS THE CRITICAL FIX ---
+                # We now perform a stable sort:
+                # 1. First, sort by page number ASCENDING to respect the document's chronological order.
+                # 2. Then, sort by year DESCENDING to prioritize the latest documents.
+                # Python's sort is stable, so the page order will be preserved for items with the same year.
+                results.matches.sort(key=lambda m: m.metadata.get('page_number', 0))
+                results.matches.sort(key=lambda m: m.metadata.get('year', 0), reverse=True)
+                # --- END OF FIX ---
 
                 context_excerpts = [
                     f"Excerpt from '{m.metadata['source_file']}' (Year: {m.metadata.get('year', 'N/A')}, Page: {m.metadata.get('page_number', 'N/A')}):\n\"{m.metadata['original_text']}\"\n"
@@ -3063,7 +3070,7 @@ def portfolio_agent_app(user_id: str):
                 source_docs = sorted(list(set(m.metadata['source_file'] for m in results.matches)))
                 safe_context = truncate_context(context_excerpts)
 
-                # --- THIS IS THE CORRECTED PROMPT ---
+                # This advanced prompt should be kept, as it will now receive correctly ordered context.
                 prompt = f"""You are a top-tier financial analyst at a major investment firm. Your task is to provide a precise, accurate, and definitive answer to the user's question. You must act as an expert who has already resolved any inconsistencies in the source material.
 
 **CRITICAL INSTRUCTIONS:**
@@ -3073,7 +3080,7 @@ def portfolio_agent_app(user_id: str):
 4.  **Deliver a Direct and Confident Answer:** Start your response with the final, correct number. Then, provide a bulleted list with supporting details and the reasoning/drivers for that number, as found in the context.
 5.  **Use Only Provided Context:** Base your answer *strictly* on the text provided in the context excerpts. Do not use external knowledge.
 
---- CONTEXT EXCERPTS ---
+--- CONTEXT EXCERPTS (now in correct chronological order) ---
 {safe_context}
 --- QUESTION ---
 {query_text}
