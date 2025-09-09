@@ -3053,15 +3053,12 @@ def portfolio_agent_app(user_id: str):
                 if not results.matches:
                     return "I could not find relevant information in the indexed documents.", ""
 
-                # --- THIS IS THE CRITICAL FIX ---
-                # We now perform a stable sort:
-                # 1. First, sort by page number ASCENDING to respect the document's chronological order.
-                # 2. Then, sort by year DESCENDING to prioritize the latest documents.
-                # Python's sort is stable, so the page order will be preserved for items with the same year.
+                # This sorting logic is CORRECT based on your document structure (latest info on earliest pages).
+                # 1. Sort by page number ASCENDING.
+                # 2. Then, sort by year DESCENDING (stable sort preserves page order for the same year).
                 results.matches.sort(key=lambda m: m.metadata.get('page_number', 0))
                 results.matches.sort(key=lambda m: m.metadata.get('year', 0), reverse=True)
-                # --- END OF FIX ---
-
+                
                 context_excerpts = [
                     f"Excerpt from '{m.metadata['source_file']}' (Year: {m.metadata.get('year', 'N/A')}, Page: {m.metadata.get('page_number', 'N/A')}):\n\"{m.metadata['original_text']}\"\n"
                     for m in results.matches
@@ -3070,17 +3067,16 @@ def portfolio_agent_app(user_id: str):
                 source_docs = sorted(list(set(m.metadata['source_file'] for m in results.matches)))
                 safe_context = truncate_context(context_excerpts)
 
-                # This advanced prompt should be kept, as it will now receive correctly ordered context.
-                prompt = f"""You are a top-tier financial analyst at a major investment firm. Your task is to provide a precise, accurate, and definitive answer to the user's question. You must act as an expert who has already resolved any inconsistencies in the source material.
+                # --- THIS IS THE FINAL, SIMPLIFIED, AND STRICTER PROMPT ---
+                prompt = f"""You are a hyper-precise financial data extractor. Your single most important task is to answer the user's question with the most recent and accurate information available from the context.
 
-**CRITICAL INSTRUCTIONS:**
-1.  **Act as a Synthesizer, Not a Reporter:** Analyze all the provided context excerpts. Your final answer should be a single, coherent synthesis. **DO NOT** mention "conflicting information," "different excerpts," "conflicting guidance," or your reasoning process for selecting the data. It is your job to determine the most current and accurate fact and present it as the definitive answer.
-2.  **Identify Superseding Information:** Financial documents often contain updated guidance. If you see two different numbers for the same metric (e.g., revenue guidance for the same year), look for linguistic clues such as "we are raising our outlook," "we now expect," "updated forecast," or context that indicates a more recent quarterly report (e.g., Q2 results vs. Q1 results). The information that explicitly updates a prior statement is the correct one.
-3.  **Prioritize by Date/Quarter:** If the context mentions different time periods (e.g., a Q1 earnings call vs. a Q2 earnings call), the information from the later period is the correct one. Assume a standard calendar year (Q2 comes after Q1).
-4.  **Deliver a Direct and Confident Answer:** Start your response with the final, correct number. Then, provide a bulleted list with supporting details and the reasoning/drivers for that number, as found in the context.
-5.  **Use Only Provided Context:** Base your answer *strictly* on the text provided in the context excerpts. Do not use external knowledge.
+**CONTEXT AND RULES:**
+1.  **The context provided below is PRE-SORTED.** The most recent and authoritative information appears FIRST.
+2.  If you find multiple answers for the same specific data point (e.g., two different revenue guidance figures for the same year), you **MUST** use the one that appears **EARLIEST** in the context. You must **IGNORE** all subsequent, older data points for that same metric.
+3.  **DO NOT** mention the existence of older or conflicting data. Do not use phrases like "supersedes a prior projection" or "conflicting guidance." Present the single, correct, most recent fact as if it's the only one that exists.
+4.  Provide a direct, clear answer. Start with the definitive number or statement, then provide a few bullet points of supporting context or drivers if they are available in the same excerpt.
 
---- CONTEXT EXCERPTS (now in correct chronological order) ---
+--- PRE-SORTED CONTEXT (Most Recent First) ---
 {safe_context}
 --- QUESTION ---
 {query_text}
