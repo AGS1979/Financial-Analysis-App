@@ -5272,6 +5272,7 @@ def agent_ideagen_app():
     import textwrap
     import markdown
     import html
+    import re
     from openai import AzureOpenAI
     import streamlit as st
 
@@ -5282,6 +5283,8 @@ def agent_ideagen_app():
 
     # --- 1. API AND CLIENT SETUP ---
     MAX_COMPANIES_TO_ANALYZE = 10
+    # FIX 1: Add a static conversion rate for INR to USD
+    INR_TO_USD_RATE = 83.0  
 
     try:
         eodhd_api_key = st.secrets["eodhd"]["api_key"]
@@ -5300,18 +5303,13 @@ def agent_ideagen_app():
         st.error(f"Could not initialize the LLM client. Please check your secrets. Error: {e}")
         return
         
-    # --- 2. DATA FETCHING & PROCESSING FUNCTIONS (CORRECTED FOR EODHD) ---
-
+    # --- 2. DATA FETCHING & PROCESSING FUNCTIONS ---
     def get_eodhd_screener_results(filters: dict, api_key: str) -> pd.DataFrame:
         st.info("**(LIVE) Stage 1: Screening for companies with EODHD...**")
         base_url = "https://eodhd.com/api/screener"
-        
         eodhd_filters = []
-        
-        # Add filters based on the OFFICIAL supported list
         if filters.get("market_cap_min"):
             eodhd_filters.append(["market_capitalization", ">", filters["market_cap_min"] * 1e9])
-        # P/E Ratio is NOT a supported filter and has been removed.
         if filters.get("dividend_yield_min") and filters["dividend_yield_min"] > 0:
             eodhd_filters.append(["dividend_yield", ">", filters["dividend_yield_min"]])
         if filters.get("sectors"):
@@ -5322,31 +5320,19 @@ def agent_ideagen_app():
         if not eodhd_filters:
             st.warning("Please define at least one filter.")
             return pd.DataFrame()
-
-        params = {
-            "api_token": api_key,
-            "filters": json.dumps(eodhd_filters),
-            "sort": "market_capitalization.desc",
-            "limit": 100 
-        }
-        
+        params = { "api_token": api_key, "filters": json.dumps(eodhd_filters), "sort": "market_capitalization.desc", "limit": 100 }
         st.info(f"Applying filters: {filters}")
-
         try:
             response = requests.get(base_url, params=params, timeout=20)
             response.raise_for_status()
             data = response.json()
-            
             if not data or 'data' not in data or not data['data']:
                 st.error("EODHD screener did not find any companies matching your criteria.")
                 return pd.DataFrame()
-            
             df = pd.DataFrame(data['data'])
-            # The API returns sorted data, but we can ensure it's correct
             if 'market_capitalization' in df.columns:
                 df = df.sort_values(by='market_capitalization', ascending=False).reset_index(drop=True)
             return df
-
         except requests.exceptions.RequestException as e:
             st.error(f"API Error during screening: {e}")
             st.error(f"API Response: {e.response.text}") 
@@ -5365,16 +5351,9 @@ def agent_ideagen_app():
             data = response.json()
             description = data.get('General', {}).get('Description', 'No description available.')
             news = aggregate_qualitative_data_eodhd(ticker_code, api_key)
-            
-            return {
-                "description": description,
-                "qualitative_corpus": f"Company Description:\n{description}\n\n---\n\nRecent News:\n{news}"
-            }
+            return {"description": description, "qualitative_corpus": f"Company Description:\n{description}\n\n---\n\nRecent News:\n{news}"}
         except Exception:
-            return {
-                "description": "Data enrichment failed.",
-                "qualitative_corpus": "Could not fetch qualitative data."
-            }
+            return {"description": "Data enrichment failed.", "qualitative_corpus": "Could not fetch qualitative data."}
 
     def aggregate_qualitative_data_eodhd(ticker_code: str, api_key: str) -> str:
         base_url = "https://eodhistoricaldata.com/api/news"
@@ -5391,21 +5370,16 @@ def agent_ideagen_app():
         except Exception:
             return "Could not fetch recent news."
 
-    # --- 3. AI ANALYSIS AND REPORTING FUNCTIONS (UNCHANGED) ---
+    # --- 3. AI ANALYSIS AND REPORTING FUNCTIONS ---
     def run_ai_qualitative_analysis(company_name: str, text_corpus: str, theme: str) -> dict:
         st.info(f"**(LIVE) Running AI Qualitative Analysis for {company_name}...**")
         analysis_prompt = f"""You are an expert equity research analyst. Analyze '{company_name}' for the theme '{theme}' using the company description and recent news below.
-        
         Return a JSON with keys "theme_analysis", "moat_analysis", "risk_analysis". For "risk_analysis", provide a "top_risks" list of objects, each with "risk" and "description".
-        
         TEXT: --- {text_corpus[:25000]} ---"""
         try:
             response = client.chat.completions.create(
                 model=llm_deployment_name,
-                messages=[
-                    {"role": "system", "content": "You are an expert equity analyst that only outputs JSON."},
-                    {"role": "user", "content": analysis_prompt}
-                ],
+                messages=[{"role": "system", "content": "You are an expert equity analyst that only outputs JSON."}, {"role": "user", "content": analysis_prompt}],
                 response_format={"type": "json_object"}
             )
             return json.loads(response.choices[0].message.content)
@@ -5415,6 +5389,45 @@ def agent_ideagen_app():
 
     def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str) -> dict:
         st.info(f"**(LIVE) Synthesizing Dossier for {quant_data.get('name', 'N/A')}...**")
+        
+        # FIX 2: New helper function to format AI's JSON output into clean Markdown
+        def format_ai_analysis_to_markdown(analysis_data):
+            if not isinstance(analysis_data, dict):
+                return str(analysis_data)
+            
+            output_parts = []
+            # Handle simple summary structures
+            if 'summary' in analysis_data:
+                output_parts.append(analysis_data['summary'])
+            if 'description' in analysis_data:
+                output_parts.append(analysis_data['description'])
+            if 'analysis' in analysis_data:
+                output_parts.append(analysis_data['analysis'])
+            if 'overview' in analysis_data:
+                output_parts.append(analysis_data['overview'])
+
+            # Handle list-based structures for moats/strengths
+            list_keys = ['sources_of_moat', 'key_strengths', 'primary_sources_of_advantage', 'key_features']
+            for key in list_keys:
+                if key in analysis_data and isinstance(analysis_data[key], list):
+                    for item in analysis_data[key]:
+                        if isinstance(item, dict):
+                            # Assumes a structure like {'moat': 'name', 'description': '...'}
+                            title = next((item[k] for k in item if k != 'description'), 'Point')
+                            desc = item.get('description', '')
+                            output_parts.append(f"* **{title}**: {desc}")
+                        else:
+                            # Handles simple lists of strings
+                            output_parts.append(f"* {item}")
+            
+            # Fallback for other dictionary structures
+            if not output_parts and isinstance(analysis_data, dict):
+                 for key, value in analysis_data.items():
+                    if isinstance(value, str):
+                        output_parts.append(f"**{key.replace('_', ' ').title()}**: {value}")
+
+            return "\n".join(output_parts) if output_parts else "No analysis available."
+
         def safe_get(data, keys, default="Analysis not available."):
             temp = data
             for key in keys:
@@ -5422,20 +5435,28 @@ def agent_ideagen_app():
             return temp if temp is not None else default
 
         def format_risks(risk_data):
+            # This function can also be improved to handle list of strings if AI returns that
+            if isinstance(risk_data, list):
+                return "\n".join(f"* {item}" for item in risk_data)
             risk_list = safe_get(risk_data, ['top_risks'], default=[])
             if not isinstance(risk_list, list) or not risk_list:
                 return "No specific risks identified or analysis failed."
-            return "\n".join(
-                f"* **{r.get('risk', 'N/A')}**: {r.get('description', 'N/A')}" for r in risk_list
-            )
+            return "\n".join(f"* **{r.get('risk', 'N/A')}**: {r.get('description', 'N/A')}" for r in risk_list)
 
+        # FIX 1: Market Cap Conversion Logic
         market_cap_val = quant_data.get('market_capitalization', 0)
+        currency = quant_data.get('currency', 'USD')
+        if currency == 'INR':
+            market_cap_usd = market_cap_val / INR_TO_USD_RATE
+        else:
+            market_cap_usd = market_cap_val
+            
         quant_table_md = textwrap.dedent(f"""
         | Metric | Value |
         |---|---|
-        | Market Cap (USD) | ${market_cap_val / 1e9:,.1f}B |
+        | Market Cap (USD) | ${market_cap_usd / 1e9:,.1f}B |
         | Dividend Yield | {quant_data.get('dividend_yield', 'N/A'):.2%} |
-        | Currency | {quant_data.get('currency_symbol', 'USD')} |
+        | Currency | {currency} |
         """)
         executive_summary = f"{quant_data.get('name', 'N/A')} is a company operating in the {quant_data.get('sector', 'N/A')} sector, identified as a potential candidate for the '{theme}' theme."
         
@@ -5444,8 +5465,8 @@ def agent_ideagen_app():
             "metadata": f"**Theme:** {theme}",
             "Executive Summary": executive_summary,
             "Quantitative Snapshot": quant_table_md,
-            "Thematic Alignment & Justification": safe_get(qual_analysis, ['theme_analysis']),
-            "Competitive Moat & Pricing Power": safe_get(qual_analysis, ['moat_analysis']),
+            "Thematic Alignment & Justification": format_ai_analysis_to_markdown(safe_get(qual_analysis, ['theme_analysis'])),
+            "Competitive Moat & Pricing Power": format_ai_analysis_to_markdown(safe_get(qual_analysis, ['moat_analysis'])),
             "Key Risks Identified": format_risks(qual_analysis.get('risk_analysis'))
         }
 
@@ -5461,90 +5482,48 @@ def agent_ideagen_app():
             html_body += "</div>"
         return f"<!DOCTYPE html><html><head><title>IdeaGen Report: {safe_theme}</title>{styles}</head><body><div class='container'>{html_body}</div></body></html>"
 
-
-    # --- 4. STREAMLIT UI AND ORCHESTRATION (CORRECTED) ---
+    # --- 4. STREAMLIT UI AND ORCHESTRATION ---
     st.subheader("Step 1: Define Theme and Screening Criteria")
-    
-    qualitative_theme = st.text_area(
-        "**Describe the Qualitative Theme**",
-        "Companies leading the artificial intelligence revolution in enterprise software.",
-        height=75
-    )
-
+    qualitative_theme = st.text_area("**Describe the Qualitative Theme**", "Companies leading the artificial intelligence revolution in enterprise software.", height=75)
     st.subheader("Quantitative Filters")
-
-    COUNTRY_TO_EXCHANGE = {
-        "USA": "US", "India": "NSE", "Germany": "F", "United Kingdom": "LSE",
-        "Canada": "TO", "Japan": "TSE", "China": "SS", "Australia": "AU"
-    }
-    SECTORS = [
-        "Basic Materials", "Communication Services", "Consumer Cyclical",
-        "Consumer Defensive", "Energy", "Financial Services", "Healthcare",
-        "Industrials", "Real Estate", "Technology", "Utilities"
-    ]
-
+    COUNTRY_TO_EXCHANGE = {"USA": "US", "India": "NSE", "Germany": "F", "United Kingdom": "LSE", "Canada": "TO", "Japan": "TSE", "China": "SS", "Australia": "AU"}
+    SECTORS = ["Basic Materials", "Communication Services", "Consumer Cyclical", "Consumer Defensive", "Energy", "Financial Services", "Healthcare", "Industrials", "Real Estate", "Technology", "Utilities"]
     selected_countries = st.multiselect("Countries", options=list(COUNTRY_TO_EXCHANGE.keys()), default=["USA", "India"])
     selected_sectors = st.multiselect("Sectors", options=SECTORS, default=["Technology"])
-
-    # --- UI Correction: Removed P/E Ratio Slider ---
     col1, col2 = st.columns(2)
     with col1:
         mkt_cap_min = st.slider("Min Market Cap (Billion USD)", 0.0, 500.0, 10.0, 1.0)
     with col2:
         dividend_yield_min = st.slider("Min Dividend Yield (%)", 0.0, 10.0, 0.0, 0.1)
-
     st.subheader("Step 2: Generate Screen")
 
     if st.button("🚀 Find Companies & Generate Screen", type="primary"):
         if not qualitative_theme:
             st.warning("Please describe your investment theme.")
             return
-
-        # --- Filter Dictionary Correction: Removed P/E Ratio ---
-        user_filters = {
-            "exchanges": [COUNTRY_TO_EXCHANGE[c] for c in selected_countries],
-            "sectors": selected_sectors,
-            "market_cap_min": mkt_cap_min,
-            "dividend_yield_min": dividend_yield_min
-        }
+        user_filters = {"exchanges": [COUNTRY_TO_EXCHANGE[c] for c in selected_countries], "sectors": selected_sectors, "market_cap_min": mkt_cap_min, "dividend_yield_min": dividend_yield_min}
 
         with st.spinner("Finding, analyzing, and building your screen... This may take a few minutes."):
             screener_df = get_eodhd_screener_results(user_filters, eodhd_api_key)
-
             if screener_df.empty:
                 return 
-
             analysis_df = screener_df.head(MAX_COMPANIES_TO_ANALYZE)
             st.success(f"Found {len(screener_df)} companies. Performing deep analysis on the top {len(analysis_df)} by market cap.")
-            
-            st.dataframe(
-                analysis_df[['code', 'name', 'exchange', 'sector', 'market_capitalization']],
-                hide_index=True,
-                use_container_width=True
-            )
+            st.dataframe(analysis_df[['code', 'name', 'exchange', 'sector', 'market_capitalization']], hide_index=True, use_container_width=True)
 
             all_dossiers = []
             progress_bar = st.progress(0, text=f"Analyzing 0 / {len(analysis_df)} companies...")
             for i, company_row in analysis_df.iterrows():
                 ticker_code = f"{company_row['code']}.{company_row['exchange']}"
                 progress_bar.progress((i + 1) / len(analysis_df), text=f"Analyzing {company_row['name']}...")
-
                 enrichment_data = enrich_company_data_eodhd(ticker_code, eodhd_api_key)
-                
                 if "failed" in enrichment_data.get("description", ""):
                     st.warning(f"Could not enrich data for {company_row['name']}. Skipping.")
                     continue
-
-                qualitative_analysis = run_ai_qualitative_analysis(
-                    company_row['name'],
-                    enrichment_data['qualitative_corpus'],
-                    qualitative_theme
-                )
-                
+                qualitative_analysis = run_ai_qualitative_analysis(company_row['name'], enrichment_data['qualitative_corpus'], qualitative_theme)
                 if not qualitative_analysis:
                     st.warning(f"Qualitative analysis failed for {company_row['name']}. Skipping.")
                     continue
-
                 full_company_data = pd.concat([company_row, pd.Series(enrichment_data)])
                 all_dossiers.append(synthesize_dossier(full_company_data, qualitative_analysis, qualitative_theme))
             
@@ -5552,10 +5531,18 @@ def agent_ideagen_app():
 
             if all_dossiers:
                 final_html_report = generate_final_html_report(all_dossiers, qualitative_theme)
+                
+                # FIX 3: Sanitize and lengthen filename
+                def sanitize_filename(name):
+                    name = name.strip().replace(' ', '_')
+                    return re.sub(r'(?u)[^-\w.]', '', name)
+
+                safe_filename = sanitize_filename(qualitative_theme[:40])
+
                 st.download_button(
                     label="📥 Download Full HTML Report",
                     data=final_html_report,
-                    file_name=f"IdeaGen_Report_{qualitative_theme[:20].replace(' ', '_')}.html",
+                    file_name=f"IdeaGen_Report_{safe_filename}.html",
                     mime="text/html",
                     use_container_width=True
                 )
