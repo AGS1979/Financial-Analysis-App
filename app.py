@@ -5317,7 +5317,8 @@ def agent_ideagen_app():
         Constructs and executes a request to the EODHD Stock Screener API.
         """
         st.info("**(LIVE) Stage 1: Screening for companies with EODHD...**")
-        base_url = "https://eodhistoricaldata.com/api/screener"
+        # --- FINAL CORRECTION: Using the documented eodhd.com domain ---
+        base_url = "https://eodhd.com/api/screener"
         
         eodhd_filters = []
         
@@ -5326,10 +5327,7 @@ def agent_ideagen_app():
         if filters.get("pe_ratio_max"):
             eodhd_filters.append(["trailing_pe", "<", filters["pe_ratio_max"]])
         
-        # --- FINAL CORRECTION FOR DIVIDEND YIELD ---
         if filters.get("dividend_yield_min") and filters["dividend_yield_min"] > 0:
-            # The API screener expects the dividend yield as a percentage (e.g., 1% -> 1.0), not a decimal.
-            # Removing the division by 100.
             eodhd_filters.append(["dividend_yield", ">", filters["dividend_yield_min"]])
             
         if filters.get("sectors"):
