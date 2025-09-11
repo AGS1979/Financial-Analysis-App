@@ -5486,7 +5486,7 @@ def agent_ideagen_app():
     st.subheader("Step 1: Define Theme and Screening Criteria")
     qualitative_theme = st.text_area("**Describe the Qualitative Theme**", "Companies leading the artificial intelligence revolution in enterprise software.", height=75)
     st.subheader("Quantitative Filters")
-    COUNTRY_TO_EXCHANGE = {"USA": "US", "India": "NSE", "Germany": "F", "United Kingdom": "LSE", "Canada": "TO", "Japan": "TSE", "China": "SS", "Australia": "AU"}
+    COUNTRY_TO_EXCHANGE = {"USA": "US", "India": "NSE", "Germany": "F", "United Kingdom": "LSE", "Canada": "TO", "Japan": "TSE", "China": "SS", "Australia": "AU", "Mexico": "MX"}
     SECTORS = ["Basic Materials", "Communication Services", "Consumer Cyclical", "Consumer Defensive", "Energy", "Financial Services", "Healthcare", "Industrials", "Real Estate", "Technology", "Utilities"]
     selected_countries = st.multiselect("Countries", options=list(COUNTRY_TO_EXCHANGE.keys()), default=["USA", "India"])
     selected_sectors = st.multiselect("Sectors", options=SECTORS, default=["Technology"])
