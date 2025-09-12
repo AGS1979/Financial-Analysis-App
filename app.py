@@ -563,7 +563,7 @@ except (KeyError, FileNotFoundError):
     st.stop()
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
+#openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 def load_logo():
     # 1) Find the folder where this file (app.py) lives
