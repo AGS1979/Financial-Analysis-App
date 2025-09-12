@@ -5567,7 +5567,11 @@ def multi_agent_alpha_app(user_id: str, client: AzureOpenAI):
     import markdown
     import html
     import re
-    
+    from azure.core.credentials import AzureKeyCredential
+    from azure.ai.documentintelligence import DocumentIntelligenceClient
+    from azure.ai.documentintelligence.models import ContentFormat
+    from openai import AzureOpenAI  
+
     st.markdown("### 📈 Multi-Agent Alpha Generation")
     st.markdown("This workflow simulates a multi-agent system to generate and validate investment ideas based on a defined thesis.")
 
@@ -5783,6 +5787,10 @@ def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
     import html
     import re
     from datetime import datetime, timedelta
+    from azure.core.credentials import AzureKeyCredential
+    from azure.ai.documentintelligence import DocumentIntelligenceClient
+    from azure.ai.documentintelligence.models import ContentFormat
+    from openai import AzureOpenAI
 
     st.markdown("### 🚨 Real-Time Risk & Compliance Sentinel")
     st.markdown("This workflow simulates an automated sentinel that monitors for compliance issues and tail risks in your portfolio.")
