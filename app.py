@@ -5552,11 +5552,368 @@ def agent_ideagen_app():
 
 
 
+# ==============================================================================
+# 13. Multi-Agent Alpha Generation (Workflow)
+# ==============================================================================
 
+def multi_agent_alpha_app(user_id: str, client: AzureOpenAI):
+    """
+    A sequential workflow that simulates an investment idea generation pipeline.
+    It takes a human-defined thesis and generates a full investment dossier.
+    """
+    import json
+    import pandas as pd
+    import requests
+    import markdown
+    import html
+    import re
+    
+    st.markdown("### 📈 Multi-Agent Alpha Generation")
+    st.markdown("This workflow simulates a multi-agent system to generate and validate investment ideas based on a defined thesis.")
+
+    if not st.secrets.get("pinecone") or not st.secrets.get("eodhd"):
+        st.error("Pinecone or EODHD API keys are not configured. This agent requires them to function.")
+        return
+
+    # --- AGENT MOCK-UP: Signal Discovery Agent ---
+    def signal_discovery_mock(theme: str) -> list:
+        """
+        Simulates the discovery of potential alpha signals.
+        For this mock, it uses EODHD screener to find companies related to the theme.
+        """
+        st.info("Agent 1/3: Signal Discovery Agent is identifying potential candidates...")
+        eodhd_api_key = st.secrets["eodhd"]["api_key"]
+        
+        # This is a proxy for complex signal discovery
+        # It asks the LLM to identify relevant sectors/industries for the theme
+        prompt_sectors = f"Given the investment theme: '{theme}', what are 3 to 5 key sectors or industries to screen? Return a comma-separated list of names. For example: 'Technology, Healthcare, Consumer Cyclical'."
+        try:
+            response = client.chat.completions.create(
+                model=st.secrets["azure"]["openai_deployment_name"],
+                messages=[{"role": "user", "content": prompt_sectors}],
+                temperature=0.0
+            )
+            sectors_list = [s.strip() for s in response.choices[0].message.content.split(',')]
+        except Exception as e:
+            st.error(f"Error identifying sectors: {e}")
+            sectors_list = ["Technology", "Healthcare", "Industrials"]
+
+        # Now, use the identified sectors to screen for high-market-cap companies
+        eodhd_filters = [
+            ["market_capitalization", ">", 5000000000],  # >$5B market cap
+            ["exchange", "in", ["US", "LSE"]],
+            ["sector", "in", sectors_list]
+        ]
+        params = { "api_token": eodhd_api_key, "filters": json.dumps(eodhd_filters), "sort": "market_capitalization.desc", "limit": 10 }
+        
+        try:
+            response = requests.get("https://eodhd.com/api/screener", params=params, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            companies = [
+                {"name": item.get('name', 'N/A'), "code": f"{item.get('code', 'N/A')}.{item.get('exchange', 'N/A')}"}
+                for item in data.get('data', [])
+            ]
+            return companies
+        except Exception as e:
+            st.error(f"Error fetching screener data: {e}")
+            return []
+
+    # --- AGENT MOCK-UP: Thesis Validation Agent ---
+    def thesis_validation_mock(company: dict, thesis: str) -> dict:
+        """
+        Simulates the creation of a comprehensive investment memo (dossier)
+        based on the company's indexed documents and the investment thesis.
+        This uses the core logic from Agent Portfolio and Agent IdeaGen.
+        """
+        st.info(f"Agent 2/3: Thesis Validation Agent is generating dossier for {company['name']}...")
+        
+        agent_portfolio = st_supabase_connection.load_agent(user_id=user_id)
+        if not agent_portfolio:
+            return {"error": "Portfolio Agent not initialized."}
+        
+        # First, check if the company is indexed. This is a critical step.
+        indexed_companies = agent_portfolio.get_indexed_companies()
+        if company['name'].lower() not in [c.lower() for c in indexed_companies]:
+            # If not indexed, we can't do a deep dive. Provide a simple overview.
+            st.warning(f"Company {company['name']} is not indexed. Providing a high-level analysis from external data.")
+            # Fallback to EODHD data
+            eod_data = st_supabase_connection.enrich_company_data_eodhd(company['code'], st.secrets["eodhd"]["api_key"])
+            qual_analysis = st_supabase_connection.run_ai_qualitative_analysis(company['name'], eod_data.get('qualitative_corpus', 'No data.'), thesis)
+            dossier = st_supabase_connection.synthesize_dossier(pd.Series({"name": company["name"], "code": company["code"]}), qual_analysis, thesis)
+            dossier['note'] = "This dossier is based on external data only, as the company was not found in your Agent Portfolio index."
+            return dossier
+        
+        # If indexed, perform a deep query
+        full_analysis_query = f"Provide a comprehensive investment analysis on {company['name']} based on the investment thesis: '{thesis}'. Include market opportunity, financial performance, key risks, and competitive advantages."
+        
+        analysis_markdown, sources = agent_portfolio.query(full_analysis_query, [company['name']], k=50)
+
+        # Now, ask the LLM to structure this into a dossier
+        dossier_prompt = f"""You are a senior investment analyst. Synthesize the following raw analysis and source citations into a structured, professional investment dossier in MARKDOWN format. The dossier must be for {company['name']} and validate the thesis: '{thesis}'.
+
+        Structure the output with these sections:
+        ## Investment Thesis Alignment
+        ## Key Financial Highlights
+        ## Competitive Moat
+        ## Identified Risks & Mitigants
+
+        **Raw Analysis:**
+        {analysis_markdown}
+
+        **Sources:**
+        {sources}
+        """
+        try:
+            response = client.chat.completions.create(
+                model=st.secrets["azure"]["openai_deployment_name"],
+                messages=[{"role": "user", "content": dossier_prompt}],
+                temperature=0.3
+            )
+            return {"markdown": response.choices[0].message.content, "sources": sources}
+        except Exception as e:
+            return {"error": f"Error generating final dossier: {e}"}
+
+    # --- AGENT MOCK-UP: Risk & Position Sizing Agent ---
+    def risk_and_sizing_mock(dossier: dict) -> dict:
+        """
+        Simulates a risk analysis and position sizing recommendation.
+        It primarily uses the 'Identified Risks & Mitigants' section of the dossier.
+        """
+        st.info("Agent 3/3: Risk & Position Sizing Agent is evaluating risk profile...")
+        
+        risk_prompt = f"""You are a quantitative risk and portfolio manager. Analyze the following investment dossier and identify the top 3 concentration and macroeconomic risks. Then, recommend a position size as a percentage of a standard portfolio (1-10%), with a clear rationale.
+
+        **Dossier:**
+        {dossier['markdown'][:10000]}
+        
+        Return a JSON object with the following keys:
+        - "top_risks": ["Risk 1", "Risk 2", "Risk 3"]
+        - "position_size_recommendation": "<percentage>"
+        - "rationale": "<A short paragraph justifying the position size based on the risks and potential alpha>"
+        """
+        try:
+            response = client.chat.completions.create(
+                model=st.secrets["azure"]["openai_deployment_name"],
+                messages=[{"role": "user", "content": risk_prompt}],
+                response_format={"type": "json_object"}
+            )
+            return json.loads(response.choices[0].message.content)
+        except Exception as e:
+            return {"error": f"Error in risk analysis: {e}"}
+    
+    # --- Main Workflow UI ---
+    st.subheader("Step 1: Define Your Investment Thesis")
+    investment_thesis = st.text_area(
+        "Describe your qualitative investment thesis (e.g., 'Companies positioned to benefit from onshoring of manufacturing to North America')",
+        key="alpha_thesis"
+    )
+
+    if st.button("🚀 Run Multi-Agent Workflow", type="primary"):
+        if not investment_thesis:
+            st.warning("Please define a thesis to begin the workflow.")
+            return
+
+        with st.spinner("Running agents... This will take a few moments."):
+            # 1. Signal Discovery
+            companies_found = signal_discovery_mock(investment_thesis)
+            if not companies_found:
+                st.error("The Signal Discovery Agent could not find any relevant companies.")
+                return
+            st.success(f"Signal Discovery Agent found {len(companies_found)} potential companies.")
+            
+            # 2. Thesis Validation (for the first company)
+            company_to_analyze = companies_found[0]
+            dossier_result = thesis_validation_mock(company_to_analyze, investment_thesis)
+            if "error" in dossier_result:
+                st.error(dossier_result["error"])
+                return
+            
+            st.success(f"Thesis Validation Agent successfully generated a dossier for {company_to_analyze['name']}.")
+            
+            # 3. Risk & Position Sizing
+            risk_result = risk_and_sizing_mock(dossier_result)
+            if "error" in risk_result:
+                st.error(risk_result["error"])
+                return
+            
+            st.success("Risk & Position Sizing Agent provided a final recommendation.")
+
+            # --- Final Report Display ---
+            st.markdown("---")
+            st.subheader("Final Investment Dossier & Recommendation")
+            st.markdown(dossier_result["markdown"])
+            
+            st.markdown("---")
+            st.subheader("Risk & Position Sizing Summary")
+            st.markdown(f"**Recommended Position Size:** {risk_result.get('position_size_recommendation', 'N/A')}")
+            st.markdown(f"**Rationale:** {risk_result.get('rationale', 'N/A')}")
+            st.markdown(f"**Top Risks:** {', '.join(risk_result.get('top_risks', []))}")
+            
+            # Allow download
+            full_html = st_supabase_connection.format_report_as_html(
+                {
+                    "dossier": dossier_result["markdown"],
+                    "risk_summary": f"**Position Size:** {risk_result.get('position_size_recommendation', 'N/A')}<br>**Rationale:** {risk_result.get('rationale', 'N/A')}",
+                    "sources": dossier_result["sources"]
+                }
+            )
+            
+            st.download_button(
+                label="📥 Download Full HTML Report",
+                data=full_html,
+                file_name=f"investment_dossier_{company_to_analyze['name']}.html",
+                mime="text/html",
+                use_container_width=True
+            )
 
 
 # ==============================================================================
-# 13. MAIN APP ROUTER (CORRECTED AND COMPLETE)
+# 14. Real-Time Risk & Compliance Sentinel (Workflow)
+# ==============================================================================
+
+def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
+    """
+    A workflow that simulates a real-time risk and compliance monitoring system.
+    """
+    import json
+    import pandas as pd
+    import requests
+    import markdown
+    import html
+    import re
+    from datetime import datetime, timedelta
+
+    st.markdown("### 🚨 Real-Time Risk & Compliance Sentinel")
+    st.markdown("This workflow simulates an automated sentinel that monitors for compliance issues and tail risks in your portfolio.")
+
+    # --- AGENT MOCK-UP: Compliance & Audit Agent ---
+    def compliance_audit_mock(tickers: list) -> dict:
+        """
+        Simulates checking for new MNPI or regulatory filings.
+        This mock uses FMP for 8-K filings and news.
+        """
+        st.info("Agent 1/2: Compliance & Audit Agent is checking for new MNPI and regulatory risks...")
+        fmp_api_key = st.secrets["fmp"]["api_key"]
+        
+        compliance_findings = {}
+        for ticker in tickers:
+            compliance_findings[ticker] = {"news_mnpi": [], "filings": []}
+            
+            # Check for recent news
+            news_url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={ticker}&limit=5&apikey={fmp_api_key}"
+            try:
+                news_data = requests.get(news_url).json()
+                if news_data and isinstance(news_data, list):
+                    for item in news_data:
+                        # Use LLM to check for MNPI proxy
+                        prompt = f"Does the following news headline for {ticker} contain any information that could be considered material non-public information (MNPI) for a public company? Answer 'Yes' or 'No' and provide a brief reason.\n\nHeadline: {item['title']}"
+                        response = client.chat.completions.create(
+                            model=st.secrets["azure"]["openai_deployment_name"],
+                            messages=[{"role": "user", "content": prompt}]
+                        )
+                        if "yes" in response.choices[0].message.content.lower():
+                            compliance_findings[ticker]["news_mnpi"].append(f"**{item['title']}** - Potential MNPI: {response.choices[0].message.content}")
+
+            except Exception as e:
+                st.warning(f"Could not fetch news for {ticker}: {e}")
+            
+            # Check for recent 8-K filings (often contain MNPI)
+            filings_url = f"https://financialmodelingprep.com/api/v3/sec_filings/{ticker}?type=8-K&limit=5&apikey={fmp_api_key}"
+            try:
+                filings_data = requests.get(filings_url).json()
+                if filings_data and isinstance(filings_data, list):
+                    for item in filings_data:
+                        compliance_findings[ticker]["filings"].append(f"- **8-K Filing** from {item['fillingDate']}: {item['finalLink']}")
+            except Exception as e:
+                st.warning(f"Could not fetch filings for {ticker}: {e}")
+        
+        return compliance_findings
+
+    # --- AGENT MOCK-UP: Tail Risk Agent ---
+    def tail_risk_mock(tickers: list) -> dict:
+        """
+        Simulates a tail risk analysis by looking for subtle risks in public data.
+        This mock will perform a deep, targeted query against a mock database.
+        """
+        st.info("Agent 2/2: Tail Risk Agent is searching for subtle, unpriced risks...")
+        
+        # This is a proxy for searching large databases. We will use the LLM to find
+        # subtle risks based on a deep, pre-defined search of a mock dataset.
+        mock_data = {
+            "TSLA": "A new regulatory filing reveals a potential class-action lawsuit related to autonomous vehicle software, which could result in a significant fine and recall, potentially un-pricing current valuation.",
+            "JPM": "A new congressional bill proposes a cap on credit card interchange fees, which could significantly impact the bank's non-interest income stream, a key tailwind for the past several quarters.",
+            "GOOGL": "An analyst report notes that Google's core search advertising business is facing a new and unexpected threat from a start-up leveraging a new generative AI model, potentially eroding market share over the next 12-18 months."
+        }
+        
+        tail_risks = {}
+        for ticker in tickers:
+            if ticker in mock_data:
+                tail_risks[ticker] = mock_data[ticker]
+            else:
+                tail_risks[ticker] = "No specific tail risks identified from recent data."
+
+        return tail_risks
+
+    # --- Main Workflow UI ---
+    st.subheader("Step 1: Define Portfolio for Monitoring")
+    portfolio_tickers = st.text_input("Enter Tickers (comma-separated)", "GOOGL, TSLA, JPM", key="sentinel_tickers")
+
+    if st.button("🚨 Run Sentinel Check", type="primary"):
+        tickers_list = [t.strip().upper() for t in portfolio_tickers.split(',') if t.strip()]
+        if not tickers_list:
+            st.warning("Please enter at least one ticker.")
+            return
+        
+        with st.spinner("Running agents... This will take a few moments."):
+            # 1. Compliance Check
+            compliance_findings = compliance_audit_mock(tickers_list)
+            
+            # 2. Tail Risk Check
+            tail_risk_findings = tail_risk_mock(tickers_list)
+            
+            st.success("Sentinel check complete.")
+            
+            # --- Final Report Display ---
+            st.markdown("---")
+            st.subheader("Sentinel Briefing")
+            
+            report_markdown = "## Portfolio Monitoring Report\n\n"
+            report_markdown += "### 1. Compliance & Regulatory Watch\n"
+            for ticker, findings in compliance_findings.items():
+                report_markdown += f"#### {ticker}\n"
+                report_markdown += "**Potential MNPI:**\n"
+                if findings['news_mnpi']:
+                    report_markdown += "\n".join(findings['news_mnpi']) + "\n"
+                else:
+                    report_markdown += "No significant news with potential MNPI found.\n"
+                
+                report_markdown += "**Recent Filings:**\n"
+                if findings['filings']:
+                    report_markdown += "\n".join(findings['filings']) + "\n"
+                else:
+                    report_markdown += "No recent 8-K filings found.\n"
+            
+            report_markdown += "\n### 2. Tail Risk & Market Sentinel\n"
+            for ticker, risk in tail_risk_findings.items():
+                report_markdown += f"#### {ticker}\n"
+                report_markdown += f"**Tail Risk identified:** {risk}\n"
+            
+            st.markdown(report_markdown)
+
+            # Allow download
+            full_html = markdown.markdown(report_markdown, extensions=['tables'])
+            st.download_button(
+                label="📥 Download Full HTML Briefing",
+                data=full_html,
+                file_name=f"sentinel_briefing_{datetime.now().strftime('%Y%m%d')}.html",
+                mime="text/html",
+                use_container_width=True
+            )
+
+
+# ==============================================================================
+# 15. MAIN APP ROUTER (CORRECTED AND COMPLETE)
 # ==============================================================================
 
 def main():
@@ -5601,7 +5958,9 @@ def main():
                 "ESG Analyzer",
                 "Agent Portfolio",
                 "Agent Sentinel",
-                "Tariff Impact Tracker"
+                "Tariff Impact Tracker",
+                "Multi-Agent Alpha Generation",
+                "Real-Time Sentinel"
             ],
             key="app_tool_choice"
         )
@@ -5621,7 +5980,11 @@ def main():
     st.markdown("---")
 
     # --- Router Logic ---
-    if app_mode == "Agent IdeaGen": 
+    if app_mode == "Multi-Agent Alpha Generation":
+        multi_agent_alpha_app(user_id=st.session_state.username, client=openai_client) # Pass client and user ID
+    elif app_mode == "Real-Time Sentinel":
+        real_time_sentinel_app(user_id=st.session_state.username, client=openai_client) # Pass client and user ID
+    elif app_mode == "Agent IdeaGen": 
         agent_ideagen_app()
     elif app_mode == "Agent Credit":
         agent_credit_app_azure()
@@ -5740,6 +6103,14 @@ def main():
             <div class="agent-card" title="Audit Excel financial models for errors, hard-codes, and inconsistencies.">
                 <div class="agent-title">🛡️ Model Integrity Agent</div>
                 <div class="agent-description">Audit Excel financial models for errors, hard-codes, and inconsistencies.</div>
+            </div>
+             <div class="agent-card" title="Simulates a multi-step investment idea generation and validation process.">
+                <div class="agent-title">📈 Multi-Agent Alpha Generation</div>
+                <div class="agent-description">Simulates an investment pipeline to generate, validate, and size investment ideas.</div>
+            </div>
+            <div class="agent-card" title="A continuous system for real-time compliance checks and risk monitoring.">
+                <div class="agent-title">🚨 Real-Time Sentinel</div>
+                <div class="agent-description">Provides a real-time warning system for compliance issues and tail risks.</div>
             </div>
         </div>
         """, unsafe_allow_html=True)
