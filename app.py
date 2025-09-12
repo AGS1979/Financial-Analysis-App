@@ -48,6 +48,21 @@ from PIL import Image, ImageDraw, ImageFont # Make sure PIL imports are at the t
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from jinja2 import Template
 
+
+# --- GLOBAL CLIENT INITIALIZATION ---
+# This code runs only once when the app starts
+try:
+    openai_client = AzureOpenAI(
+        api_key=st.secrets["azure"]["openai_key"],
+        api_version="2024-02-01",  # Match your API version
+        azure_endpoint=st.secrets["azure"]["openai_endpoint"],
+        # The deployed model name is CRITICAL here
+        azure_deployment=st.secrets["azure"]["openai_deployment_name"]
+    )
+except KeyError as e:
+    st.error(f"Configuration error: Missing Azure secret: {e}. Please check your secrets.toml file.")
+    st.stop()
+
 # --- Must be the first st.* command ---
 st.set_page_config(
     page_title="ARANC'AI'",
