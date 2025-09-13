@@ -5801,6 +5801,7 @@ def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
     import markdown
     import html
     import re
+    import streamlit as st
     from datetime import datetime, timedelta
     from azure.core.credentials import AzureKeyCredential
     from azure.ai.documentintelligence import DocumentIntelligenceClient
@@ -5810,21 +5811,42 @@ def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
     st.markdown("### 🚨 Real-Time Risk & Compliance Sentinel")
     st.markdown("This workflow simulates an automated sentinel that monitors for compliance issues and tail risks in your portfolio.")
 
-    # --- AGENT MOCK-UP: Compliance & Audit Agent ---
-    def compliance_audit_mock(tickers: list) -> dict:
+    # --- HELPER FUNCTION: Get primary ticker from company name ---
+    def get_primary_ticker_by_name(company_name: str) -> str:
         """
-        Simulates checking for new MNPI or regulatory filings.
-        This mock uses FMP for 8-K filings and news.
+        Translates a company name to its primary listing ticker using EODHD.
+        """
+        eodhd_api_key = st.secrets["eodhd"]["api_key"]
+        search_url = f"https://eodhd.com/api/search/{company_name}?api_token={eodhd_api_key}"
+
+        try:
+            response = requests.get(search_url).json()
+            if response and isinstance(response, list) and response[0]:
+                # EODHD results have 'Code' and 'Exchange' fields
+                # We prioritize the most relevant listing, often the first result
+                ticker_code = response[0].get('Code')
+                exchange_code = response[0].get('Exchange')
+                if ticker_code and exchange_code:
+                    return f"{ticker_code}.{exchange_code}"
+            return None
+        except Exception as e:
+            st.error(f"Failed to find ticker for {company_name}: {e}")
+            return None
+            
+    # --- AGENT MOCK-UP: Compliance & Audit Agent ---
+    def compliance_audit_mock(tickers: list, client: AzureOpenAI) -> dict:
+        """
+        Simulates checking for new MNPI or regulatory filings using EODHD.
         """
         st.info("Agent 1/2: Compliance & Audit Agent is checking for new MNPI and regulatory risks...")
-        fmp_api_key = st.secrets["fmp"]["api_key"]
+        eodhd_api_key = st.secrets["eodhd"]["api_key"]
         
         compliance_findings = {}
         for ticker in tickers:
             compliance_findings[ticker] = {"news_mnpi": [], "filings": []}
             
-            # Check for recent news
-            news_url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={ticker}&limit=5&apikey={fmp_api_key}"
+            # Check for recent news using EODHD's global news API
+            news_url = f"https://eodhd.com/api/news?s={ticker}&limit=5&api_token={eodhd_api_key}"
             try:
                 news_data = requests.get(news_url).json()
                 if news_data and isinstance(news_data, list):
@@ -5841,16 +5863,14 @@ def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
             except Exception as e:
                 st.warning(f"Could not fetch news for {ticker}: {e}")
             
-            # Check for recent 8-K filings (often contain MNPI)
-            filings_url = f"https://financialmodelingprep.com/api/v3/sec_filings/{ticker}?type=8-K&limit=5&apikey={fmp_api_key}"
-            try:
-                filings_data = requests.get(filings_url).json()
-                if filings_data and isinstance(filings_data, list):
-                    for item in filings_data:
-                        compliance_findings[ticker]["filings"].append(f"- **8-K Filing** from {item['fillingDate']}: {item['finalLink']}")
-            except Exception as e:
-                st.warning(f"Could not fetch filings for {ticker}: {e}")
-        
+            # Note: EODHD does not have a global "8-K" equivalent. 
+            # This is a placeholder for a more sophisticated global filings search.
+            if ticker.endswith(".US"):
+                # You could add specific logic for US filings here using a dedicated SEC API
+                compliance_findings[ticker]["filings"].append("No recent 8-K filings found (using mock data).")
+            else:
+                compliance_findings[ticker]["filings"].append("Regulatory filings for non-US companies are not available in this mock-up.")
+
         return compliance_findings
 
     # --- AGENT MOCK-UP: Tail Risk Agent ---
@@ -5864,9 +5884,11 @@ def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
         # This is a proxy for searching large databases. We will use the LLM to find
         # subtle risks based on a deep, pre-defined search of a mock dataset.
         mock_data = {
-            "TSLA": "A new regulatory filing reveals a potential class-action lawsuit related to autonomous vehicle software, which could result in a significant fine and recall, potentially un-pricing current valuation.",
-            "JPM": "A new congressional bill proposes a cap on credit card interchange fees, which could significantly impact the bank's non-interest income stream, a key tailwind for the past several quarters.",
-            "GOOGL": "An analyst report notes that Google's core search advertising business is facing a new and unexpected threat from a start-up leveraging a new generative AI model, potentially eroding market share over the next 12-18 months."
+            "TSLA.US": "A new regulatory filing reveals a potential class-action lawsuit related to autonomous vehicle software, which could result in a significant fine and recall, potentially un-pricing current valuation.",
+            "JPM.US": "A new congressional bill proposes a cap on credit card interchange fees, which could significantly impact the bank's non-interest income stream, a key tailwind for the past several quarters.",
+            "GOOGL.US": "An analyst report notes that Google's core search advertising business is facing a new and unexpected threat from a start-up leveraging a new generative AI model, potentially eroding market share over the next 12-18 months.",
+            "SHEL.L": "The company faces new carbon tax litigation in the EU that could lead to significant financial penalties, which are not currently priced into the stock.",
+            "NESN.SW": "A new investigation reveals potential supply chain issues for a key raw material, which could impact production and revenue forecasts in the coming quarter."
         }
         
         tail_risks = {}
@@ -5880,17 +5902,37 @@ def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
 
     # --- Main Workflow UI ---
     st.subheader("Step 1: Define Portfolio for Monitoring")
-    portfolio_tickers = st.text_input("Enter Tickers (comma-separated)", "GOOGL, TSLA, JPM", key="sentinel_tickers")
+    portfolio_input = st.text_input("Enter Company Names or Tickers (comma-separated)", "Alphabet, TSLA, Nestlé", key="sentinel_input")
 
     if st.button("🚨 Run Sentinel Check", type="primary"):
-        tickers_list = [t.strip().upper() for t in portfolio_tickers.split(',') if t.strip()]
-        if not tickers_list:
-            st.warning("Please enter at least one ticker.")
+        input_list = [item.strip() for item in portfolio_input.split(',') if item.strip()]
+        if not input_list:
+            st.warning("Please enter at least one company or ticker.")
             return
-        
+            
+        tickers_list = []
+        with st.spinner("Translating company names to primary tickers..."):
+            for item in input_list:
+                # Check if the input looks like a ticker (e.g., all uppercase with a period)
+                if '.' in item.upper() and ' ' not in item:
+                    tickers_list.append(item.upper())
+                else:
+                    # If it's not a clear ticker, try to look it up
+                    primary_ticker = get_primary_ticker_by_name(item)
+                    if primary_ticker:
+                        tickers_list.append(primary_ticker)
+                    else:
+                        st.warning(f"Could not find a primary ticker for '{item}'. Skipping.")
+
+        if not tickers_list:
+            st.error("No valid tickers found to monitor. Please check your inputs.")
+            return
+
+        st.success(f"Monitoring the following tickers: {', '.join(tickers_list)}")
+
         with st.spinner("Running agents... This will take a few moments."):
             # 1. Compliance Check
-            compliance_findings = compliance_audit_mock(tickers_list)
+            compliance_findings = compliance_audit_mock(tickers_list, client)
             
             # 2. Tail Risk Check
             tail_risk_findings = tail_risk_mock(tickers_list)
