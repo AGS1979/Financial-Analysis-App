@@ -5825,8 +5825,9 @@ def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
             supabase_client = st.connection("supabase", type=SupabaseConnection)
 
             # Corrected query using the standard Supabase client syntax
+            # Change 'tickers' to 'symbol' in the select statement
             response = supabase_client.table("tickers") \
-                .select("tickers, exchange") \
+                .select("symbol, exchange") \
                 .ilike("name", f"%{company_name}%") \
                 .limit(1) \
                 .execute()
@@ -5836,7 +5837,8 @@ def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
             
             if data and len(data) > 0:
                 ticker_data = data[0]
-                ticker_code = ticker_data.get('tickers')
+                # Change 'tickers' to 'symbol' when getting the value
+                ticker_code = ticker_data.get('symbol')
                 exchange_code = ticker_data.get('exchange')
                 
                 if ticker_code and exchange_code:
