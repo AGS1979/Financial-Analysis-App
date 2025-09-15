@@ -5646,11 +5646,23 @@ def multi_agent_alpha_app(user_id: str, client: AzureOpenAI, st_supabase_connect
         """
         Simulates the creation of a comprehensive investment memo (dossier)
         based on the company's indexed documents and the investment thesis.
-        This uses the core logic from Agent Portfolio and Agent IdeaGen.
         """
         st.info(f"Agent 2/3: Thesis Validation Agent is generating dossier for {company['name']}...")
         
-        agent_portfolio = st_supabase_connection.load_agent(user_id=user_id)
+        # Corrected way to load agent data using the Supabase client
+        # Replace 'agents' with the actual table name and 'user_id_column' with the correct column name
+        query_result = st_supabase_connection.table('agents').select('*').eq('user_id_column', user_id).execute()
+        
+        # Assuming the query returns a list of dictionaries, get the first result
+        agent_data = query_result.data[0] if query_result.data else None
+        
+        # You will need to recreate the agent_portfolio object from this data.
+        # The `load_agent` method was a custom function. Now you must
+        # manually instantiate or create an agent object using the retrieved data.
+        
+        # For example, if AgentPortfolio is a class you've defined elsewhere:
+        agent_portfolio = AgentPortfolio(agent_data)
+        
         if not agent_portfolio:
             return {"error": "Portfolio Agent not initialized."}
         
