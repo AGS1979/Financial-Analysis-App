@@ -5817,18 +5817,21 @@ def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
         """
         Translates a company name to its primary listing ticker using a Supabase table.
         """
-        
+        import streamlit as st
+        from st_supabase_connection import SupabaseConnection
+
         try:
             # Use st.connection to manage the Supabase connection
             supabase_client = st.connection("supabase", type=SupabaseConnection)
 
-            # Query the 'tickers' table
-            response = supabase_client.query("tickers", "tickers, exchange") \
+            # Corrected query using the standard Supabase client syntax
+            response = supabase_client.table("tickers") \
+                .select("tickers, exchange") \
                 .ilike("name", f"%{company_name}%") \
                 .limit(1) \
                 .execute()
             
-            # The result is in response.data
+            # The result is in the 'data' attribute of the response
             data = response.data
             
             if data and len(data) > 0:
