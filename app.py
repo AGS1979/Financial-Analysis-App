@@ -6043,6 +6043,21 @@ def main():
         st.stop() # Halt execution for this invalid session
     # --- END: NEW SESSION VALIDATION STEP ---
 
+
+    # --- START: Initialize Supabase connection in session state ---
+    # Check if the connection is already in session state to avoid re-creation
+    if 'st_supabase_connection' not in st.session_state:
+        try:
+            # Assuming SupabaseConnection is available in the global scope or imported
+            supabase_url = st.secrets["supabase"]["url"]
+            supabase_key = st.secrets["supabase"]["key"]
+            st.session_state.st_supabase_connection = SupabaseConnection(supabase_url, supabase_key)
+        except Exception as e:
+            st.error(f"Error initializing Supabase connection: {e}")
+            st.stop()
+    # --- END: Initialize Supabase connection in session state ---
+
+
     # --- Sidebar Definition ---
     with st.sidebar:
         st.title("ARANC'AI'")
