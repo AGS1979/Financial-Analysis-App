@@ -5571,7 +5571,7 @@ def agent_ideagen_app():
 # 13. Multi-Agent Alpha Generation (Workflow)
 # ==============================================================================
 
-def multi_agent_alpha_app(user_id: str, client: AzureOpenAI):
+def multi_agent_alpha_app(user_id: str, client: AzureOpenAI, st_supabase_connection):
     """
     A sequential workflow that simulates an investment idea generation pipeline.
     It takes a human-defined thesis and generates a full investment dossier.
@@ -5585,7 +5585,10 @@ def multi_agent_alpha_app(user_id: str, client: AzureOpenAI):
     from azure.core.credentials import AzureKeyCredential
     from azure.ai.documentintelligence import DocumentIntelligenceClient
     from azure.ai.documentintelligence.models import ContentFormat
-    from openai import AzureOpenAI  
+    from openai import AzureOpenAI
+    from st_supabase_connection import SupabaseConnection
+
+
 
     st.markdown("### 📈 Multi-Agent Alpha Generation")
     st.markdown("This workflow simulates a multi-agent system to generate and validate investment ideas based on a defined thesis.")
@@ -5732,6 +5735,26 @@ def multi_agent_alpha_app(user_id: str, client: AzureOpenAI):
         if not investment_thesis:
             st.warning("Please define a thesis to begin the workflow.")
             return
+
+
+        # New clarification step
+        clarification_prompt = f"Is the following investment thesis specific enough to find a narrow group of companies? Answer 'Yes' or provide a brief suggestion for clarification. Thesis: '{investment_thesis}'"
+        try:
+            clarification_response = client.chat.completions.create(
+                model=st.secrets["azure"]["openai_deployment_name"],
+                messages=[{"role": "user", "content": clarification_prompt}],
+                temperature=0.0
+            )
+            clarification_text = clarification_response.choices[0].message.content.strip()
+
+            if clarification_text != "Yes":
+                st.warning(f"Your thesis might be too broad. For better results, consider a more specific query. Suggestion: '{clarification_text}'")
+                st.text_area("Refine your investment thesis:", value=investment_thesis, key="refined_thesis")
+                st.stop() # Stop the workflow until the user refines the query
+
+        except Exception as e:
+            st.error(f"Error checking thesis clarity: {e}")
+            # Continue with the original thesis if the clarification check fails
 
         with st.spinner("Running agents... This will take a few moments."):
             # 1. Signal Discovery
@@ -6064,7 +6087,7 @@ def main():
 
     # --- Router Logic ---
     if app_mode == "Multi-Agent Alpha Generation":
-        multi_agent_alpha_app(user_id=st.session_state.username, client=openai_client) # Pass client and user ID
+        multi_agent_alpha_app(user_id=st.session_state.username, client=openai_client, st_supabase_connection=st.session_state.st_supabase_connection)
     elif app_mode == "Real-Time Sentinel":
         real_time_sentinel_app(user_id=st.session_state.username, client=openai_client) # Pass client and user ID
     elif app_mode == "Agent IdeaGen": 
