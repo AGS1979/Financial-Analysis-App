@@ -5747,7 +5747,7 @@ def multi_agent_alpha_app(user_id: str, client: AzureOpenAI, st_supabase_connect
             )
             clarification_text = clarification_response.choices[0].message.content.strip()
 
-            if clarification_text != "Yes":
+            if not clarification_text.strip().startswith("Yes"):
                 st.warning(f"Your thesis might be too broad. For better results, consider a more specific query. Suggestion: '{clarification_text}'")
                 st.text_area("Refine your investment thesis:", value=investment_thesis, key="refined_thesis")
                 st.stop() # Stop the workflow until the user refines the query
