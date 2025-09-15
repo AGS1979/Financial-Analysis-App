@@ -5807,31 +5807,44 @@ def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
     from azure.ai.documentintelligence import DocumentIntelligenceClient
     from azure.ai.documentintelligence.models import ContentFormat
     from openai import AzureOpenAI
+    from st_supabase_connection import SupabaseConnection
 
     st.markdown("### 🚨 Real-Time Risk & Compliance Sentinel")
     st.markdown("This workflow simulates an automated sentinel that monitors for compliance issues and tail risks in your portfolio.")
 
     # --- HELPER FUNCTION: Get primary ticker from company name ---
     def get_primary_ticker_by_name(company_name: str) -> str:
-        """
-        Translates a company name to its primary listing ticker using EODHD.
-        """
-        eodhd_api_key = st.secrets["eodhd"]["api_key"]
-        search_url = f"https://eodhd.com/api/search/{company_name}?api_token={eodhd_api_key}"
+    """
+    Translates a company name to its primary listing ticker using a Supabase table.
+    """
+    
+    try:
+        # Use st.connection to manage the Supabase connection
+        supabase_client = st.connection("supabase", type=SupabaseConnection)
 
-        try:
-            response = requests.get(search_url).json()
-            if response and isinstance(response, list) and response[0]:
-                # EODHD results have 'Code' and 'Exchange' fields
-                # We prioritize the most relevant listing, often the first result
-                ticker_code = response[0].get('Code')
-                exchange_code = response[0].get('Exchange')
-                if ticker_code and exchange_code:
-                    return f"{ticker_code}.{exchange_code}"
-            return None
-        except Exception as e:
-            st.error(f"Failed to find ticker for {company_name}: {e}")
-            return None
+        # Query the 'tickers' table
+        response = supabase_client.query("tickers", "tickers, exchange") \
+            .ilike("name", f"%{company_name}%") \
+            .limit(1) \
+            .execute()
+        
+        # The result is in response.data
+        data = response.data
+        
+        if data and len(data) > 0:
+            ticker_data = data[0]
+            ticker_code = ticker_data.get('tickers')
+            exchange_code = ticker_data.get('exchange')
+            
+            if ticker_code and exchange_code:
+                return f"{ticker_code}.{exchange_code}"
+            
+        st.warning(f"No ticker found for '{company_name}' in the Supabase database.")
+        return None
+
+    except Exception as e:
+        st.error(f"Failed to query Supabase for '{company_name}': {e}")
+        return None
             
     # --- AGENT MOCK-UP: Compliance & Audit Agent ---
     def compliance_audit_mock(tickers: list, client: AzureOpenAI) -> dict:
