@@ -6049,8 +6049,8 @@ def main():
     if 'st_supabase_connection' not in st.session_state:
         try:
             # Assuming SupabaseConnection is available in the global scope or imported
-            supabase_url = st.secrets["supabase"]["url"]
-            supabase_key = st.secrets["supabase"]["key"]
+            supabase_url = st.secrets["connections"]["supabase"]["SUPABASE_URL"]
+            supabase_key = st.secrets["connections"]["supabase"]["SUPABASE_KEY"]
             st.session_state.st_supabase_connection = SupabaseConnection(supabase_url, supabase_key)
         except Exception as e:
             st.error(f"Error initializing Supabase connection: {e}")
