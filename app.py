@@ -6048,8 +6048,12 @@ def main():
     # Check if the connection is already in session state to avoid re-creation
     if 'st_supabase_connection' not in st.session_state:
         try:
-            # Use st.connection() to initialize and manage the connection
-            st.session_state.st_supabase_connection = st.connection("supabase", type="base")
+            # Use the correct nested keys from your secrets.toml
+            supabase_url = st.secrets["connections"]["supabase"]["SUPABASE_URL"]
+            supabase_key = st.secrets["connections"]["supabase"]["SUPABASE_KEY"]
+
+            # Instantiate the class directly.
+            st.session_state.st_supabase_connection = SupabaseConnection(supabase_url=supabase_url, supabase_key=supabase_key)
         except Exception as e:
             st.error(f"Error initializing Supabase connection: {e}")
             st.stop()
