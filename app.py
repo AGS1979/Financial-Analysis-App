@@ -6052,12 +6052,12 @@ def main():
             supabase_url = st.secrets["connections"]["supabase"]["SUPABASE_URL"]
             supabase_key = st.secrets["connections"]["supabase"]["SUPABASE_KEY"]
 
-            # Instantiate the class directly.
-            st.session_state.st_supabase_connection = SupabaseConnection(supabase_url=supabase_url, supabase_key=supabase_key)
+            # Instantiate the class directly with the required 'connection_name'
+            st.session_state.st_supabase_connection = SupabaseConnection('supabase', supabase_url=supabase_url, supabase_key=supabase_key)
         except Exception as e:
             st.error(f"Error initializing Supabase connection: {e}")
             st.stop()
-    # --- END: Initialize Supabase connection in session state ---
+
 
 
     # --- Sidebar Definition ---
