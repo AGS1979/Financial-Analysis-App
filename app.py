@@ -5533,8 +5533,31 @@ def investment_pipeline_agent():
     st.subheader("Quantitative Filters")
     COUNTRY_TO_EXCHANGE = {"USA": "US", "India": "NSE", "Germany": "F", "United Kingdom": "LSE", "Canada": "TO", "Japan": "TSE", "China": "SS", "Australia": "AU", "Mexico": "MX"}
     SECTORS = ["Basic Materials", "Communication Services", "Consumer Cyclical", "Consumer Defensive", "Energy", "Financial Services", "Healthcare", "Industrials", "Real Estate", "Technology", "Utilities"]
+
+    # --- THE FIX: Let the user select sectors manually, with an AI suggestion as a default ---
+    
+    # AI suggestion block
+    ai_sectors = []
+    if st.button("Suggest Sectors based on Theme"):
+        with st.spinner("Asking AI for sector suggestions..."):
+            prompt_sectors = f"Given the investment theme: '{qualitative_theme}', what are 3 key sectors or industries to screen? Return a comma-separated list of names. For example: 'Basic Materials, Industrials, Technology'."
+            try:
+                response = client.chat.completions.create(
+                    model=llm_deployment_name,
+                    messages=[{"role": "user", "content": prompt_sectors}],
+                    temperature=0.0
+                )
+                ai_sectors = [s.strip() for s in response.choices[0].message.content.split(',')]
+            except Exception as e:
+                st.error(f"Error identifying sectors: {e}")
+                ai_sectors = ["Technology"] # Fallback
+
+    # Manual override for sectors
+    selected_sectors = st.multiselect("Sectors", options=SECTORS, default=ai_sectors if ai_sectors else ["Technology"])
+    
+    # --- End of fix ---
+
     selected_countries = st.multiselect("Countries", options=list(COUNTRY_TO_EXCHANGE.keys()), default=["USA", "India"])
-    selected_sectors = st.multiselect("Sectors", options=SECTORS, default=["Technology"])
     col1, col2 = st.columns(2)
     with col1:
         mkt_cap_min = st.slider("Min Market Cap (Billion USD)", 0.0, 500.0, 10.0, 1.0)
@@ -5562,14 +5585,10 @@ def investment_pipeline_agent():
                 ticker_code = f"{company_row['code']}.{company_row['exchange']}"
                 progress_bar.progress((i + 1) / len(analysis_df), text=f"Analyzing {company_row['name']}...")
                 
-                # --- Step 1: Thesis Validation Agent ---
                 dossier = thesis_validation_agent(company_row.to_dict(), qualitative_theme, client, eodhd_api_key, llm_deployment_name)
 
                 if "error" not in dossier:
-                    # --- Step 2: Risk and Position Sizing Agent ---
                     risk_analysis = risk_and_sizing_agent(dossier, client, llm_deployment_name)
-                    
-                    # Add risk analysis to the dossier for the final report
                     dossier['risk_analysis'] = risk_analysis
                     all_dossiers.append(dossier)
                 else:
