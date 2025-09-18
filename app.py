@@ -5531,7 +5531,7 @@ def investment_pipeline_agent():
     st.subheader("Step 1: Define Theme and Screening Criteria")
     qualitative_theme = st.text_area("**Describe the Qualitative Theme**", "Companies leading the artificial intelligence revolution in enterprise software.", height=75)
     st.subheader("Quantitative Filters")
-    COUNTRY_TO_EXCHANGE = {"USA": "US", "India": "NSE", "Germany": "F", "United Kingdom": "LSE", "Canada": "TO", "Japan": "TSE", "China": "SS", "Australia": "AU", "Mexico": "MX"}
+    COUNTRY_TO_EXCHANGE = {"USA": "US", "India": "NSE", "Germany": "F", "United Kingdom": "LSE", "Canada": "TO", "Japan": "TSE", "China": "SS", "Australia": "AU", "Mexico": "MX", "South Africa": "JSE", "France": "PA"}
     SECTORS = ["Basic Materials", "Communication Services", "Consumer Cyclical", "Consumer Defensive", "Energy", "Financial Services", "Healthcare", "Industrials", "Real Estate", "Technology", "Utilities"]
 
     # --- THE FIX: Let the user select sectors manually, with an AI suggestion as a default ---
@@ -5614,7 +5614,7 @@ def investment_pipeline_agent():
                 )
             else:
                 st.error("Could not generate a report for any of the found companies. This might be due to data availability issues.")
-                
+
 
 # ==============================================================================
 # 14. Real-Time Risk & Compliance Sentinel (Workflow)
