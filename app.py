@@ -5277,9 +5277,10 @@ def agent_sentinel_app():
 # 12. Agent Sentinel (Proactive Monitoring) - NEW
 # ==============================================================================
 
-def agent_ideagen_app():
+def investment_pipeline_agent():
     """
-    A completely overhauled Streamlit app for a multi-stage, AI-powered investment idea generator.
+    A unified, multi-stage, AI-powered investment research pipeline.
+    It combines quantitative screening with qualitative analysis and synthesis.
     """
     import json
     import pandas as pd
@@ -5290,15 +5291,12 @@ def agent_ideagen_app():
     import re
     from openai import AzureOpenAI
     import streamlit as st
-
+    
     st.markdown("### 💡 Agent IdeaGen")
-    st.markdown(
-        "Generate new investment ideas. Define a **qualitative theme** and then use the **quantitative filters** below to screen for companies. The agent will analyze the top results and produce a downloadable HTML report."
-    )
-
+    st.markdown("Generate new investment ideas. Define a **qualitative theme** and then use the **quantitative filters** below to screen for companies. The agent will analyze the top results and produce a downloadable HTML report.")
+    
     # --- 1. API AND CLIENT SETUP ---
     MAX_COMPANIES_TO_ANALYZE = 10
-    # FIX 1: Add a static conversion rate for INR to USD
     INR_TO_USD_RATE = 83.0  
 
     try:
@@ -5384,9 +5382,9 @@ def agent_ideagen_app():
             return "No recent news found."
         except Exception:
             return "Could not fetch recent news."
-
+            
     # --- 3. AI ANALYSIS AND REPORTING FUNCTIONS ---
-    def run_ai_qualitative_analysis(company_name: str, text_corpus: str, theme: str) -> dict:
+    def run_ai_qualitative_analysis(company_name: str, text_corpus: str, theme: str, client: AzureOpenAI, llm_deployment_name: str) -> dict:
         st.info(f"**(LIVE) Running AI Qualitative Analysis for {company_name}...**")
         analysis_prompt = f"""You are an expert equity research analyst. Analyze '{company_name}' for the theme '{theme}' using the company description and recent news below.
         Return a JSON with keys "theme_analysis", "moat_analysis", "risk_analysis". For "risk_analysis", provide a "top_risks" list of objects, each with "risk" and "description".
@@ -5405,42 +5403,28 @@ def agent_ideagen_app():
     def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str) -> dict:
         st.info(f"**(LIVE) Synthesizing Dossier for {quant_data.get('name', 'N/A')}...**")
         
-        # FIX 2: New helper function to format AI's JSON output into clean Markdown
         def format_ai_analysis_to_markdown(analysis_data):
             if not isinstance(analysis_data, dict):
                 return str(analysis_data)
-            
             output_parts = []
-            # Handle simple summary structures
-            if 'summary' in analysis_data:
-                output_parts.append(analysis_data['summary'])
-            if 'description' in analysis_data:
-                output_parts.append(analysis_data['description'])
-            if 'analysis' in analysis_data:
-                output_parts.append(analysis_data['analysis'])
-            if 'overview' in analysis_data:
-                output_parts.append(analysis_data['overview'])
-
-            # Handle list-based structures for moats/strengths
+            if 'summary' in analysis_data: output_parts.append(analysis_data['summary'])
+            if 'description' in analysis_data: output_parts.append(analysis_data['description'])
+            if 'analysis' in analysis_data: output_parts.append(analysis_data['analysis'])
+            if 'overview' in analysis_data: output_parts.append(analysis_data['overview'])
             list_keys = ['sources_of_moat', 'key_strengths', 'primary_sources_of_advantage', 'key_features']
             for key in list_keys:
                 if key in analysis_data and isinstance(analysis_data[key], list):
                     for item in analysis_data[key]:
                         if isinstance(item, dict):
-                            # Assumes a structure like {'moat': 'name', 'description': '...'}
                             title = next((item[k] for k in item if k != 'description'), 'Point')
                             desc = item.get('description', '')
                             output_parts.append(f"* **{title}**: {desc}")
                         else:
-                            # Handles simple lists of strings
                             output_parts.append(f"* {item}")
-            
-            # Fallback for other dictionary structures
             if not output_parts and isinstance(analysis_data, dict):
                  for key, value in analysis_data.items():
                     if isinstance(value, str):
                         output_parts.append(f"**{key.replace('_', ' ').title()}**: {value}")
-
             return "\n".join(output_parts) if output_parts else "No analysis available."
 
         def safe_get(data, keys, default="Analysis not available."):
@@ -5450,7 +5434,6 @@ def agent_ideagen_app():
             return temp if temp is not None else default
 
         def format_risks(risk_data):
-            # This function can also be improved to handle list of strings if AI returns that
             if isinstance(risk_data, list):
                 return "\n".join(f"* {item}" for item in risk_data)
             risk_list = safe_get(risk_data, ['top_risks'], default=[])
@@ -5458,7 +5441,6 @@ def agent_ideagen_app():
                 return "No specific risks identified or analysis failed."
             return "\n".join(f"* **{r.get('risk', 'N/A')}**: {r.get('description', 'N/A')}" for r in risk_list)
 
-        # FIX 1: Market Cap Conversion Logic
         market_cap_val = quant_data.get('market_capitalization', 0)
         currency = quant_data.get('currency', 'USD')
         if currency == 'INR':
@@ -5494,8 +5476,56 @@ def agent_ideagen_app():
             main_sections = ["Executive Summary", "Quantitative Snapshot", "Thematic Alignment & Justification", "Competitive Moat & Pricing Power", "Key Risks Identified"]
             for section_title in main_sections:
                 if section_title in dossier_dict: html_body += f"<h2>{html.escape(section_title)}</h2>" + markdown.markdown(str(dossier_dict[section_title]), extensions=['tables'])
+            
+            # --- ADD RISK/SIZING SECTION TO THE REPORT ---
+            if 'risk_analysis' in dossier_dict:
+                risk_rec = dossier_dict['risk_analysis'].get('position_size_recommendation', 'N/A')
+                risk_rat = dossier_dict['risk_analysis'].get('rationale', 'N/A')
+                top_risks = ", ".join(dossier_dict['risk_analysis'].get('top_risks', []))
+
+                html_body += f"<h2>Risk & Position Sizing Summary</h2>"
+                html_body += f"<p><strong>Recommended Position Size:</strong> {html.escape(str(risk_rec))}</p>"
+                html_body += f"<p><strong>Rationale:</strong> {html.escape(str(risk_rat))}</p>"
+                html_body += f"<p><strong>Top Risks Identified:</strong> {html.escape(str(top_risks))}</p>"
+            # ----------------------------------------------
             html_body += "</div>"
         return f"<!DOCTYPE html><html><head><title>IdeaGen Report: {safe_theme}</title>{styles}</head><body><div class='container'>{html_body}</div></body></html>"
+
+
+    def thesis_validation_agent(company_data: dict, theme: str, client: AzureOpenAI, eodhd_api_key: str, llm_deployment_name: str) -> dict:
+        st.info(f"Agent 2/3: Thesis Validation Agent is gathering data and generating dossier for {company_data['name']}...")
+        enrichment_data = enrich_company_data_eodhd(company_data['code'], eodhd_api_key)
+        if "failed" in enrichment_data.get("description", ""):
+            return {"error": f"Could not enrich data for {company_data['name']}."}
+        qualitative_analysis = run_ai_qualitative_analysis(company_data['name'], enrichment_data['qualitative_corpus'], theme, client, llm_deployment_name)
+        if not qualitative_analysis:
+            return {"error": f"Qualitative analysis failed for {company_data['name']}."}
+        full_company_data = pd.Series(company_data)
+        full_company_data = pd.concat([full_company_data, pd.Series(enrichment_data)])
+        dossier = synthesize_dossier(full_company_data, qualitative_analysis, theme)
+        return dossier
+
+    def risk_and_sizing_agent(dossier: dict, client: AzureOpenAI, llm_deployment_name: str) -> dict:
+        st.info("Agent 3/3: Risk & Position Sizing Agent is evaluating risk profile...")
+        prompt = f"""You are a quantitative risk and portfolio manager. Analyze the investment dossier below.
+        - Identify the top 3 concentration and macroeconomic risks.
+        - Recommend a position size (1-10% of a standard portfolio) with a clear, quantitative rationale based on the identified risks and potential.
+        **Dossier:**
+        {json.dumps(dossier)[:10000]}
+        Return a JSON object with the following keys:
+        - "top_risks": ["Risk 1", "Risk 2", "Risk 3"]
+        - "position_size_recommendation": "<percentage>"
+        - "rationale": "<A short paragraph justifying the position size based on the risks and potential alpha>"
+        """
+        try:
+            response = client.chat.completions.create(
+                model=llm_deployment_name,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"}
+            )
+            return json.loads(response.choices[0].message.content)
+        except Exception as e:
+            return {"error": f"Error in risk analysis: {e}"}  
 
     # --- 4. STREAMLIT UI AND ORCHESTRATION ---
     st.subheader("Step 1: Define Theme and Screening Criteria")
@@ -5531,23 +5561,25 @@ def agent_ideagen_app():
             for i, company_row in analysis_df.iterrows():
                 ticker_code = f"{company_row['code']}.{company_row['exchange']}"
                 progress_bar.progress((i + 1) / len(analysis_df), text=f"Analyzing {company_row['name']}...")
-                enrichment_data = enrich_company_data_eodhd(ticker_code, eodhd_api_key)
-                if "failed" in enrichment_data.get("description", ""):
-                    st.warning(f"Could not enrich data for {company_row['name']}. Skipping.")
-                    continue
-                qualitative_analysis = run_ai_qualitative_analysis(company_row['name'], enrichment_data['qualitative_corpus'], qualitative_theme)
-                if not qualitative_analysis:
-                    st.warning(f"Qualitative analysis failed for {company_row['name']}. Skipping.")
-                    continue
-                full_company_data = pd.concat([company_row, pd.Series(enrichment_data)])
-                all_dossiers.append(synthesize_dossier(full_company_data, qualitative_analysis, qualitative_theme))
+                
+                # --- Step 1: Thesis Validation Agent ---
+                dossier = thesis_validation_agent(company_row.to_dict(), qualitative_theme, client, eodhd_api_key, llm_deployment_name)
+
+                if "error" not in dossier:
+                    # --- Step 2: Risk and Position Sizing Agent ---
+                    risk_analysis = risk_and_sizing_agent(dossier, client, llm_deployment_name)
+                    
+                    # Add risk analysis to the dossier for the final report
+                    dossier['risk_analysis'] = risk_analysis
+                    all_dossiers.append(dossier)
+                else:
+                    st.warning(f"Skipping {company_row['name']} due to an error: {dossier['error']}")
             
             progress_bar.empty()
 
             if all_dossiers:
                 final_html_report = generate_final_html_report(all_dossiers, qualitative_theme)
                 
-                # FIX 3: Sanitize and lengthen filename
                 def sanitize_filename(name):
                     name = name.strip().replace(' ', '_')
                     return re.sub(r'(?u)[^-\w.]', '', name)
@@ -5563,264 +5595,7 @@ def agent_ideagen_app():
                 )
             else:
                 st.error("Could not generate a report for any of the found companies. This might be due to data availability issues.")
-
-
-
-
-# ==============================================================================
-# 13. Multi-Agent Alpha Generation (Workflow)
-# ==============================================================================
-
-def multi_agent_alpha_app(user_id: str, client: AzureOpenAI, st_supabase_connection):
-    """
-    A sequential workflow that simulates an investment idea generation pipeline.
-    It takes a human-defined thesis and generates a full investment dossier.
-    """
-    import json
-    import pandas as pd
-    import requests
-    import markdown
-    import html
-    import re
-    from azure.core.credentials import AzureKeyCredential
-    from azure.ai.documentintelligence import DocumentIntelligenceClient
-    from azure.ai.documentintelligence.models import ContentFormat
-    from openai import AzureOpenAI
-    from st_supabase_connection import SupabaseConnection
-
-
-
-    st.markdown("### 📈 Multi-Agent Alpha Generation")
-    st.markdown("This workflow simulates a multi-agent system to generate and validate investment ideas based on a defined thesis.")
-
-    if not st.secrets.get("pinecone") or not st.secrets.get("eodhd"):
-        st.error("Pinecone or EODHD API keys are not configured. This agent requires them to function.")
-        return
-
-    # --- AGENT MOCK-UP: Signal Discovery Agent ---
-    def signal_discovery_mock(theme: str) -> list:
-        """
-        Simulates the discovery of potential alpha signals.
-        For this mock, it uses EODHD screener to find companies related to the theme.
-        """
-        st.info("Agent 1/3: Signal Discovery Agent is identifying potential candidates...")
-        eodhd_api_key = st.secrets["eodhd"]["api_key"]
-        
-        # This is a proxy for complex signal discovery
-        # It asks the LLM to identify relevant sectors/industries for the theme
-        prompt_sectors = f"Given the investment theme: '{theme}', what are 3 to 5 key sectors or industries to screen? Return a comma-separated list of names. For example: 'Technology, Healthcare, Consumer Cyclical'."
-        try:
-            response = client.chat.completions.create(
-                model=st.secrets["azure"]["openai_deployment_name"],
-                messages=[{"role": "user", "content": prompt_sectors}],
-                temperature=0.0
-            )
-            sectors_list = [s.strip() for s in response.choices[0].message.content.split(',')]
-        except Exception as e:
-            st.error(f"Error identifying sectors: {e}")
-            sectors_list = ["Technology", "Healthcare", "Industrials"]
-
-        # Now, use the identified sectors to screen for high-market-cap companies
-        eodhd_filters = [
-            ["market_capitalization", ">", 5000000000],  # >$5B market cap
-            ["exchange", "in", ["US", "LSE"]],
-            ["sector", "in", sectors_list]
-        ]
-        params = { "api_token": eodhd_api_key, "filters": json.dumps(eodhd_filters), "sort": "market_capitalization.desc", "limit": 10 }
-        
-        try:
-            response = requests.get("https://eodhd.com/api/screener", params=params, timeout=15)
-            response.raise_for_status()
-            data = response.json()
-            companies = [
-                {"name": item.get('name', 'N/A'), "code": f"{item.get('code', 'N/A')}.{item.get('exchange', 'N/A')}"}
-                for item in data.get('data', [])
-            ]
-            return companies
-        except Exception as e:
-            st.error(f"Error fetching screener data: {e}")
-            return []
-
-    # --- AGENT MOCK-UP: Thesis Validation Agent ---
-    def thesis_validation_mock(company: dict, thesis: str) -> dict:
-        """
-        Simulates the creation of a comprehensive investment memo (dossier)
-        based on the company's indexed documents and the investment thesis.
-        """
-        st.info(f"Agent 2/3: Thesis Validation Agent is generating dossier for {company['name']}...")
-        
-        # Corrected way to load agent data using the Supabase client
-        # Replace 'agents' with the actual table name and 'user_id_column' with the correct column name
-        query_result = st_supabase_connection.table('agents').select('*').eq('user_id_column', user_id).execute()
-        
-        # Assuming the query returns a list of dictionaries, get the first result
-        agent_data = query_result.data[0] if query_result.data else None
-        
-        # You will need to recreate the agent_portfolio object from this data.
-        # The `load_agent` method was a custom function. Now you must
-        # manually instantiate or create an agent object using the retrieved data.
-        
-        # For example, if AgentPortfolio is a class you've defined elsewhere:
-        agent_portfolio = AgentPortfolio(agent_data)
-        
-        if not agent_portfolio:
-            return {"error": "Portfolio Agent not initialized."}
-        
-        # First, check if the company is indexed. This is a critical step.
-        indexed_companies = agent_portfolio.get_indexed_companies()
-        if company['name'].lower() not in [c.lower() for c in indexed_companies]:
-            # If not indexed, we can't do a deep dive. Provide a simple overview.
-            st.warning(f"Company {company['name']} is not indexed. Providing a high-level analysis from external data.")
-            # Fallback to EODHD data
-            eod_data = st_supabase_connection.enrich_company_data_eodhd(company['code'], st.secrets["eodhd"]["api_key"])
-            qual_analysis = st_supabase_connection.run_ai_qualitative_analysis(company['name'], eod_data.get('qualitative_corpus', 'No data.'), thesis)
-            dossier = st_supabase_connection.synthesize_dossier(pd.Series({"name": company["name"], "code": company["code"]}), qual_analysis, thesis)
-            dossier['note'] = "This dossier is based on external data only, as the company was not found in your Agent Portfolio index."
-            return dossier
-        
-        # If indexed, perform a deep query
-        full_analysis_query = f"Provide a comprehensive investment analysis on {company['name']} based on the investment thesis: '{thesis}'. Include market opportunity, financial performance, key risks, and competitive advantages."
-        
-        analysis_markdown, sources = agent_portfolio.query(full_analysis_query, [company['name']], k=50)
-
-        # Now, ask the LLM to structure this into a dossier
-        dossier_prompt = f"""You are a senior investment analyst. Synthesize the following raw analysis and source citations into a structured, professional investment dossier in MARKDOWN format. The dossier must be for {company['name']} and validate the thesis: '{thesis}'.
-
-        Structure the output with these sections:
-        ## Investment Thesis Alignment
-        ## Key Financial Highlights
-        ## Competitive Moat
-        ## Identified Risks & Mitigants
-
-        **Raw Analysis:**
-        {analysis_markdown}
-
-        **Sources:**
-        {sources}
-        """
-        try:
-            response = client.chat.completions.create(
-                model=st.secrets["azure"]["openai_deployment_name"],
-                messages=[{"role": "user", "content": dossier_prompt}],
-                temperature=0.3
-            )
-            return {"markdown": response.choices[0].message.content, "sources": sources}
-        except Exception as e:
-            return {"error": f"Error generating final dossier: {e}"}
-
-    # --- AGENT MOCK-UP: Risk & Position Sizing Agent ---
-    def risk_and_sizing_mock(dossier: dict) -> dict:
-        """
-        Simulates a risk analysis and position sizing recommendation.
-        It primarily uses the 'Identified Risks & Mitigants' section of the dossier.
-        """
-        st.info("Agent 3/3: Risk & Position Sizing Agent is evaluating risk profile...")
-        
-        risk_prompt = f"""You are a quantitative risk and portfolio manager. Analyze the following investment dossier and identify the top 3 concentration and macroeconomic risks. Then, recommend a position size as a percentage of a standard portfolio (1-10%), with a clear rationale.
-
-        **Dossier:**
-        {dossier['markdown'][:10000]}
-        
-        Return a JSON object with the following keys:
-        - "top_risks": ["Risk 1", "Risk 2", "Risk 3"]
-        - "position_size_recommendation": "<percentage>"
-        - "rationale": "<A short paragraph justifying the position size based on the risks and potential alpha>"
-        """
-        try:
-            response = client.chat.completions.create(
-                model=st.secrets["azure"]["openai_deployment_name"],
-                messages=[{"role": "user", "content": risk_prompt}],
-                response_format={"type": "json_object"}
-            )
-            return json.loads(response.choices[0].message.content)
-        except Exception as e:
-            return {"error": f"Error in risk analysis: {e}"}
-    
-    # --- Main Workflow UI ---
-    st.subheader("Step 1: Define Your Investment Thesis")
-    investment_thesis = st.text_area(
-        "Describe your qualitative investment thesis (e.g., 'Companies positioned to benefit from onshoring of manufacturing to North America')",
-        key="alpha_thesis"
-    )
-
-    if st.button("🚀 Run Multi-Agent Workflow", type="primary"):
-        if not investment_thesis:
-            st.warning("Please define a thesis to begin the workflow.")
-            return
-
-
-        # New clarification step
-        clarification_prompt = f"Is the following investment thesis specific enough to find a narrow group of companies? Answer 'Yes' or provide a brief suggestion for clarification. Thesis: '{investment_thesis}'"
-        try:
-            clarification_response = client.chat.completions.create(
-                model=st.secrets["azure"]["openai_deployment_name"],
-                messages=[{"role": "user", "content": clarification_prompt}],
-                temperature=0.0
-            )
-            clarification_text = clarification_response.choices[0].message.content.strip()
-
-            if not clarification_text.strip().startswith("Yes"):
-                st.warning(f"Your thesis might be too broad. For better results, consider a more specific query. Suggestion: '{clarification_text}'")
-                st.text_area("Refine your investment thesis:", value=investment_thesis, key="refined_thesis")
-                st.stop() # Stop the workflow until the user refines the query
-
-        except Exception as e:
-            st.error(f"Error checking thesis clarity: {e}")
-            # Continue with the original thesis if the clarification check fails
-
-        with st.spinner("Running agents... This will take a few moments."):
-            # 1. Signal Discovery
-            companies_found = signal_discovery_mock(investment_thesis)
-            if not companies_found:
-                st.error("The Signal Discovery Agent could not find any relevant companies.")
-                return
-            st.success(f"Signal Discovery Agent found {len(companies_found)} potential companies.")
-            
-            # 2. Thesis Validation (for the first company)
-            company_to_analyze = companies_found[0]
-            dossier_result = thesis_validation_mock(company_to_analyze, investment_thesis)
-            if "error" in dossier_result:
-                st.error(dossier_result["error"])
-                return
-            
-            st.success(f"Thesis Validation Agent successfully generated a dossier for {company_to_analyze['name']}.")
-            
-            # 3. Risk & Position Sizing
-            risk_result = risk_and_sizing_mock(dossier_result)
-            if "error" in risk_result:
-                st.error(risk_result["error"])
-                return
-            
-            st.success("Risk & Position Sizing Agent provided a final recommendation.")
-
-            # --- Final Report Display ---
-            st.markdown("---")
-            st.subheader("Final Investment Dossier & Recommendation")
-            st.markdown(dossier_result["markdown"])
-            
-            st.markdown("---")
-            st.subheader("Risk & Position Sizing Summary")
-            st.markdown(f"**Recommended Position Size:** {risk_result.get('position_size_recommendation', 'N/A')}")
-            st.markdown(f"**Rationale:** {risk_result.get('rationale', 'N/A')}")
-            st.markdown(f"**Top Risks:** {', '.join(risk_result.get('top_risks', []))}")
-            
-            # Allow download
-            full_html = st_supabase_connection.format_report_as_html(
-                {
-                    "dossier": dossier_result["markdown"],
-                    "risk_summary": f"**Position Size:** {risk_result.get('position_size_recommendation', 'N/A')}<br>**Rationale:** {risk_result.get('rationale', 'N/A')}",
-                    "sources": dossier_result["sources"]
-                }
-            )
-            
-            st.download_button(
-                label="📥 Download Full HTML Report",
-                data=full_html,
-                file_name=f"investment_dossier_{company_to_analyze['name']}.html",
-                mime="text/html",
-                use_container_width=True
-            )
-
+                
 
 # ==============================================================================
 # 14. Real-Time Risk & Compliance Sentinel (Workflow)
@@ -6071,7 +5846,6 @@ def main():
             st.stop()
 
 
-
     # --- Sidebar Definition ---
     with st.sidebar:
         st.title("ARANC'AI'")
@@ -6094,7 +5868,6 @@ def main():
                 "Agent Portfolio",
                 "Agent Sentinel",
                 "Tariff Impact Tracker",
-                "Multi-Agent Alpha Generation",
                 "Real-Time Sentinel"
             ],
             key="app_tool_choice"
@@ -6115,12 +5888,13 @@ def main():
     st.markdown("---")
 
     # --- Router Logic ---
-    if app_mode == "Multi-Agent Alpha Generation":
-        multi_agent_alpha_app(user_id=st.session_state.username, client=openai_client, st_supabase_connection=st.session_state.st_supabase_connection)
-    elif app_mode == "Real-Time Sentinel":
+    if app_mode == "Real-Time Sentinel":
         real_time_sentinel_app(user_id=st.session_state.username, client=openai_client) # Pass client and user ID
     elif app_mode == "Agent IdeaGen": 
-        agent_ideagen_app()
+        # This is the correct way to call your newly combined function.
+        # Ensure you remove 'Multi-Agent Alpha Generation' from the sidebar list
+        # to avoid redundancy.
+        investment_pipeline_agent()
     elif app_mode == "Agent Credit":
         agent_credit_app_azure()
     elif app_mode == "Model Integrity Agent":
@@ -6238,10 +6012,6 @@ def main():
             <div class="agent-card" title="Audit Excel financial models for errors, hard-codes, and inconsistencies.">
                 <div class="agent-title">🛡️ Model Integrity Agent</div>
                 <div class="agent-description">Audit Excel financial models for errors, hard-codes, and inconsistencies.</div>
-            </div>
-             <div class="agent-card" title="Simulates a multi-step investment idea generation and validation process.">
-                <div class="agent-title">📈 Multi-Agent Alpha Generation</div>
-                <div class="agent-description">Simulates an investment pipeline to generate, validate, and size investment ideas.</div>
             </div>
             <div class="agent-card" title="A continuous system for real-time compliance checks and risk monitoring.">
                 <div class="agent-title">🚨 Real-Time Sentinel</div>
