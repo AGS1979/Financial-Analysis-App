@@ -5296,7 +5296,7 @@ def investment_pipeline_agent():
     st.markdown("Generate new investment ideas. Define a **qualitative theme** and then use the **quantitative filters** below to screen for companies. The agent will analyze the top results and produce a downloadable HTML report.")
     
     # --- 1. API AND CLIENT SETUP ---
-    MAX_COMPANIES_TO_ANALYZE = 10
+    MAX_COMPANIES_TO_ANALYZE = 50
     INR_TO_USD_RATE = 83.0  
 
     try:
