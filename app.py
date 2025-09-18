@@ -5371,7 +5371,7 @@ def investment_pipeline_agent():
     def aggregate_qualitative_data_eodhd(ticker_code: str, api_key: str) -> str:
         base_url = "https://eodhistoricaldata.com/api/news"
         ticker_only = ticker_code.split('.')[0]
-        params = {"api_token": api_key, "t": ticker_only, "limit": 10}
+        params = {"api_token": api_key, "t": ticker_only, "limit": 50}
         try:
             response = requests.get(base_url, params=params, timeout=15)
             response.raise_for_status()
