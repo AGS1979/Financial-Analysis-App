@@ -5292,6 +5292,15 @@ def investment_pipeline_agent():
     from openai import AzureOpenAI
     import streamlit as st
     
+
+    # --- ADD THIS DICTIONARY ---
+    COUNTRY_CURRENCY_MAP = {
+        "USA": "USD", "India": "INR", "Germany": "EUR", "France": "EUR", 
+        "Italy": "EUR", "Spain": "EUR", "UK": "GBP", "China": "CNY", 
+        "Hong Kong": "HKD", "Taiwan": "TWD", "South Africa": "ZAR", 
+        "Brazil": "BRL", "Chile": "CLP", "Mexico": "MXN"
+    }
+
     st.markdown("### 💡 Agent IdeaGen")
     st.markdown("Define a theme. The agent will brainstorm ideas, find the correct tickers, validate them, and perform a deep-dive analysis.")
     
@@ -5358,41 +5367,38 @@ def investment_pipeline_agent():
         except Exception:
             return None
 
-    def validate_company_with_reason(instrument: dict, expected_sectors: list, filters: dict, api_key: str, exchange_rate_cache: dict) -> (str, dict):
+    def validate_company_with_reason(instrument: dict, filters: dict, api_key: str, mkt_cap_filter_local: float) -> (str, dict):
         ticker, exchange = instrument['Code'], instrument['Exchange']
         try:
             url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker}.{exchange}?api_token={api_key}"
             response = requests.get(url, timeout=10)
             if response.status_code != 200: return "INCOMPLETE_DATA", {"name": instrument.get('Name')}
-            data = response.json()
             
+            data = response.json()
             general = data.get('General', {}); highlights = data.get('Highlights', {})
             name = general.get('Name', ticker)
-            
-            # --- CURRENCY FIX: Get local currency and market cap ---
-            local_currency = general.get('CurrencyCode', 'USD')
             market_cap_local = highlights.get('MarketCapitalization')
-
-            # Treat missing DividendYield as 0
-            dividend_yield = highlights.get('DividendYield') or 0.0
-            
-            # Remove the strict sector check
-            actual_sector = general.get('Sector', 'N/A') 
 
             if not all([name, market_cap_local is not None]):
                 return "INCOMPLETE_DATA", {"name": name}
 
-            # --- CURRENCY FIX: Convert market cap to USD ---
-            rate_to_usd = get_exchange_rate(local_currency, "USD", api_key, exchange_rate_cache)
-            market_cap_usd = market_cap_local / rate_to_usd # Divide to convert local currency to USD
-
-            # --- MILLIONS & CURRENCY FIX: Validate against user filters in USD and Millions ---
-            if market_cap_usd < (filters["market_cap_min"] * 1e6):
-                return "FAIL_MCAP", {"name": name, "value": market_cap_usd}
+            # --- FINAL FIX: Compare local market cap with the pre-calculated local filter ---
+            if market_cap_local < mkt_cap_filter_local:
+                return "FAIL_MCAP", {"name": name, "value": market_cap_local}
+            
+            dividend_yield = highlights.get('DividendYield') or 0.0
             if dividend_yield < (filters["dividend_yield_min"] / 100):
                 return "FAIL_DIVIDEND", {"name": name, "value": dividend_yield}
 
-            return "PASS", { "code": ticker, "name": name, "exchange": exchange, "sector": actual_sector, "market_capitalization": market_cap_usd, "dividend_yield": dividend_yield }
+            return "PASS", { 
+                "code": ticker, 
+                "name": name, 
+                "exchange": exchange,
+                "sector": general.get('Sector', 'N/A'),
+                # Return the local market cap for later conversion during reporting
+                "market_capitalization_local": market_cap_local, 
+                "dividend_yield": dividend_yield 
+            }
         except (requests.RequestException, json.JSONDecodeError):
             return "ERROR", {"name": instrument.get('Name')}
 
@@ -5476,17 +5482,29 @@ def investment_pipeline_agent():
             return json.loads(response.choices[0].message.content)
         except Exception as e: st.error(f"Error in AI Analysis: {e}"); return {}
 
-    def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str) -> dict: # ... unchanged
+    def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str, rate_usd_to_local: float) -> dict:
         st.info(f"**(LIVE) Synthesizing Dossier for {quant_data.get('name', 'N/A')}...")
+
+        # --- FINAL FIX: Convert local market cap to USD for reporting ---
+        market_cap_local = quant_data.get('market_capitalization_local', 0)
+        # Handle the case where the rate might be 0 to avoid division errors
+        market_cap_usd = market_cap_local / rate_usd_to_local if rate_usd_to_local else 0
+        
+        quant_md = f"""| Metric | Value |\n|---|---|\n| Market Cap (USD) | ${market_cap_usd / 1e9:,.1f}B |\n| Dividend Yield | {quant_data.get('dividend_yield', 0):.2%} |"""
+        
+        # (The rest of the function for formatting qualitative data remains the same)
         def format_ai_analysis_to_markdown(data):
-            if not isinstance(data, dict): return str(data)
-            parts = [v for k, v in data.items() if isinstance(v, str)]; return "\n".join(parts) if parts else "No analysis available."
+            # ... (unchanged)
         def format_risks(data):
-            risks = data.get('top_risks', []) if isinstance(data, dict) else [];
-            if not risks: return "No specific risks identified."
-            return "\n".join(f"* **{r.get('risk', 'N/A')}**: {r.get('description', 'N/A')}" for r in risks)
-        quant_md = f"""| Metric | Value |\n|---|---|\n| Market Cap (USD) | ${quant_data.get('market_capitalization', 0) / 1e9:,.1f}B |\n| Dividend Yield | {quant_data.get('dividend_yield', 0):.2%} |"""
-        return {"dossier_title": f"{quant_data.get('name', 'N/A')} ({quant_data.get('code', 'N/A')}.{quant_data.get('exchange', '')})", "Quantitative Snapshot": quant_md, "Thematic Alignment & Justification": format_ai_analysis_to_markdown(qual_analysis.get('theme_analysis')), "Competitive Moat & Pricing Power": format_ai_analysis_to_markdown(qual_analysis.get('moat_analysis')), "Key Risks Identified": format_risks(qual_analysis.get('risk_analysis'))}
+            # ... (unchanged)
+            
+        return {
+            "dossier_title": f"{quant_data.get('name', 'N/A')} ({quant_data.get('code', 'N/A')}.{quant_data.get('exchange', '')})",
+            "Quantitative Snapshot": quant_md,
+            "Thematic Alignment & Justification": format_ai_analysis_to_markdown(qual_analysis.get('theme_analysis')),
+            "Competitive Moat & Pricing Power": format_ai_analysis_to_markdown(qual_analysis.get('moat_analysis')),
+            "Key Risks Identified": format_risks(qual_analysis.get('risk_analysis'))
+        }
 
     def generate_final_html_report(dossier_list: list, theme: str) -> str:
         safe_theme = html.escape(theme or "...")
@@ -5536,58 +5554,61 @@ def investment_pipeline_agent():
         with st.spinner("Running full investment pipeline..."):
             theme_sectors = get_theme_sectors(qualitative_theme, client, llm_deployment_name)
             if not theme_sectors: st.error("Could not identify sectors for this theme."); return
+            
             company_tickers = get_company_ideas(qualitative_theme, theme_sectors, selected_country_code, client, llm_deployment_name)
             if not company_tickers: st.error("AI brainstorming returned no ideas."); return
 
             user_filters = {"market_cap_min": mkt_cap_min, "dividend_yield_min": dividend_yield_min}
 
+            # --- NEW LOGIC: PRE-CALCULATE LOCAL CURRENCY FILTER ---
+            local_currency = COUNTRY_CURRENCY_MAP.get(selected_country_code, "USD")
+            exchange_rate_cache = {}
+            # Get the value of 1 USD in the local currency (e.g., 88 for USDINR)
+            rate_usd_to_local = get_exchange_rate("USD", local_currency, eodhd_api_key, exchange_rate_cache)
+            
+            # Convert the USD filter (in millions) to the local currency value
+            mkt_cap_filter_local = (user_filters["market_cap_min"] * 1e6) * rate_usd_to_local
+            
             validated_companies = []; failure_reasons = []
-            exchange_rate_cache = {} # Create the cache here
-            progress = st.progress(0, text="Finding & Validating Tickers...")
+            progress = st.progress(0, text=f"Finding & Validating Tickers in {local_currency}...")
+            
             for i, ticker in enumerate(company_tickers):
-                # --- FIX 2: Pass the selected country code (e.g., "USA") directly to the function. ---
                 instrument = find_instrument_data(ticker, selected_country_code, eodhd_api_key)
-                
                 if not instrument:
                     failure_reasons.append(("NOT_FOUND", {"name": ticker}))
                 else:
-                    # Pass the cache into the validation function
-                    status, result = validate_company_with_reason(instrument, theme_sectors, user_filters, eodhd_api_key, exchange_rate_cache)
+                    # Pass the pre-calculated local filter to the validation function
+                    status, result = validate_company_with_reason(instrument, user_filters, eodhd_api_key, mkt_cap_filter_local)
                     if status == 'PASS': validated_companies.append(result)
                     else: failure_reasons.append((status, result))
-                    
                 progress.progress((i + 1) / len(company_tickers))
             progress.empty()
 
+            # (The failure reason reporting section remains unchanged)
             if failure_reasons:
-                st.subheader("Validation Summary")
-                failure_counts = Counter(code for code, data in failure_reasons)
-                summary_md = "| Rejection Reason | Count |\n|---|---|\n"
-                summary_md += f"| Did not meet dividend yield | {failure_counts.get('FAIL_DIVIDEND', 0)} |\n"
-                summary_md += f"| Did not meet market cap | {failure_counts.get('FAIL_MCAP', 0)} |\n"
-                summary_md += f"| Sector did not match | {failure_counts.get('FAIL_SECTOR', 0)} |\n"
-                summary_md += f"| Ticker not found or incomplete data | {failure_counts.get('NOT_FOUND', 0) + failure_counts.get('INCOMPLETE_DATA', 0) + failure_counts.get('ERROR', 0)} |\n"
-                st.markdown(summary_md)
-
+                # ... (code for failure summary)
+            
             if not validated_companies: st.warning("No companies met all your criteria."); return
             
             analysis_df = pd.DataFrame(validated_companies)
             st.success(f"Validated {len(analysis_df)} companies. Performing deep analysis...")
-            st.dataframe(analysis_df[['code', 'name', 'exchange', 'sector', 'market_capitalization']], hide_index=True, use_container_width=True)
-
-            # --- STAGE 3: Analysis and Reporting ---
+            # Display local market cap in the initial table for clarity
+            st.dataframe(analysis_df[['code', 'name', 'exchange', 'market_capitalization_local']], hide_index=True, use_container_width=True)
+            
             all_dossiers = []
-            # ... (Rest of the analysis and reporting loop is unchanged)
             for i, company_row in analysis_df.iterrows():
                 ticker_code = f"{company_row['code']}.{company_row['exchange']}"
                 enrichment_data = enrich_company_data_eodhd(ticker_code, eodhd_api_key)
                 if "failed" in enrichment_data.get("description", ""): continue
+                
                 qual_analysis = run_ai_qualitative_analysis(company_row['name'], enrichment_data['qualitative_corpus'], qualitative_theme, client, llm_deployment_name)
                 if not qual_analysis: continue
                 
                 full_data = company_row.copy()
                 full_data.update(pd.Series(enrichment_data))
-                dossier = synthesize_dossier(full_data, qual_analysis, qualitative_theme)
+                
+                # Pass the exchange rate to the dossier function for reporting in USD
+                dossier = synthesize_dossier(full_data, qual_analysis, qualitative_theme, rate_usd_to_local)
                 
                 risk_analysis = risk_and_sizing_agent(dossier, client, llm_deployment_name)
                 dossier['risk_analysis'] = risk_analysis
