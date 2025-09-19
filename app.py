@@ -5503,34 +5503,18 @@ def investment_pipeline_agent():
         return f"<!DOCTYPE html><html><head><title>IdeaGen Report: {safe_theme}</title>{styles}</head><body><div class='container'>{html_body}</div></body></html>"
 
 
-    def thesis_validation_agent(company_data: dict, theme: str, client: AzureOpenAI, eodhd_api_key: str, llm_deployment_name: str, user_filters: dict) -> dict:
-    
-        # --- STEP 1: ENRICH AND VALIDATE THE COMPANY ---
+    def thesis_validation_agent(company_data: dict, theme: str, client: AzureOpenAI, eodhd_api_key: str, llm_deployment_name: str) -> dict:
+        st.info(f"Agent 2/3: Thesis Validation Agent is gathering data and generating dossier for {company_data['name']}...")
+        
+        # --- The complex validation logic is now removed ---
         ticker_code = f"{company_data['code']}.{company_data['exchange']}"
         enrichment_data = enrich_company_data_eodhd(ticker_code, eodhd_api_key)
         
         if "failed" in enrichment_data.get("description", ""):
             return {"error": f"Could not enrich data for {company_data['name']}."}
-
-        # --- THIS IS THE FILTERING LOGIC ---
-        if not user_filters.get("include_adrs"):
-            general_info = enrichment_data.get("general", {})
-            company_type = general_info.get('Type', 'N/A')
-            company_country = general_info.get('CountryName', 'N/A')
+        
             
-            # Condition 1: Must be Common Stock
-            if company_type != 'Common Stock':
-                st.warning(f"Skipping {company_data['name']} (Type: {company_type}) because it is not Common Stock.")
-                return {"error": "Skipped: Not Common Stock."}
-                
-            # Condition 2: Must be domiciled in one of the selected countries
-            if company_country not in user_filters.get("countries", []):
-                st.warning(f"Skipping {company_data['name']} (Domiciled in {company_country}) as it is outside selected regions.")
-                return {"error": "Skipped: Domicile country mismatch."}
-        # --- END OF FILTERING LOGIC ---
-
-        # --- STEP 2: PROCEED WITH AI ANALYSIS IF VALIDATED ---
-        st.info(f"Validation passed for {company_data['name']}. Running AI analysis...")
+        
         qualitative_analysis = run_ai_qualitative_analysis(company_data['name'], enrichment_data['qualitative_corpus'], theme, client, llm_deployment_name)
         if not qualitative_analysis:
             return {"error": f"Qualitative analysis failed for {company_data['name']}."}
@@ -5566,7 +5550,21 @@ def investment_pipeline_agent():
     st.subheader("Step 1: Define Theme and Screening Criteria")
     qualitative_theme = st.text_area("**Describe the Qualitative Theme**", "Companies leading the artificial intelligence revolution in enterprise software.", height=75)
     st.subheader("Quantitative Filters")
-    COUNTRY_TO_EXCHANGE = {"USA": "US", "India": "NSE", "Germany": "F", "United Kingdom": "LSE", "Canada": "TO", "Japan": "TSE", "China": "SS", "Australia": "AU", "Mexico": "MX", "South Africa": "JSE", "France": "PA"}
+
+    # --- FIX: Use specific exchanges for USA to exclude OTC markets ---
+    COUNTRY_TO_EXCHANGE = {
+        "USA": ["NASDAQ", "NYSE"], 
+        "India": ["NSE"], 
+        "Germany": ["F"], 
+        "United Kingdom": ["LSE"], 
+        "Canada": ["TO"], 
+        "Japan": ["TSE"], 
+        "China": ["SS"], 
+        "Australia": ["AU"], 
+        "Mexico": ["MX"], 
+        "South Africa": ["JSE"], 
+        "France": ["PA"]
+    }
     SECTORS = ["Basic Materials", "Communication Services", "Consumer Cyclical", "Consumer Defensive", "Energy", "Financial Services", "Healthcare", "Industrials", "Real Estate", "Technology", "Utilities"]
 
     # AI suggestion block for sectors
@@ -5586,11 +5584,10 @@ def investment_pipeline_agent():
                 ai_sectors = ["Technology"] # Fallback
                 
     selected_sectors = st.multiselect("Sectors", options=SECTORS, default=ai_sectors if ai_sectors else ["Technology"])
-
-    # --- START OF UI FIX FOR ADRs ---
     selected_countries = st.multiselect("Countries (for listing exchange)", options=list(COUNTRY_TO_EXCHANGE.keys()), default=["USA"])
-    include_adrs = st.checkbox("Include foreign companies listed in these countries (e.g., ADRs)?", value=False, help="Check this to include companies domiciled elsewhere but listed on the selected countries' exchanges.")
-    # --- END OF UI FIX ---
+
+    # The checkbox is no longer needed with this improved logic
+    # include_adrs = st.checkbox(...) 
 
     col1, col2 = st.columns(2)
     with col1:
@@ -5604,10 +5601,17 @@ def investment_pipeline_agent():
             st.warning("Please describe your investment theme.")
             return
             
+        # --- FIX: Correctly build the list of exchanges ---
+        exchanges_list = []
+        for country in selected_countries:
+            exchange_val = COUNTRY_TO_EXCHANGE[country]
+            if isinstance(exchange_val, list):
+                exchanges_list.extend(exchange_val)
+            else:
+                exchanges_list.append(exchange_val)
+
         user_filters = {
-            "exchanges": [COUNTRY_TO_EXCHANGE[c] for c in selected_countries],
-            "countries": selected_countries,
-            "include_adrs": include_adrs,
+            "exchanges": exchanges_list,
             "sectors": selected_sectors,
             "market_cap_min": mkt_cap_min,
             "dividend_yield_min": dividend_yield_min
@@ -5619,8 +5623,6 @@ def investment_pipeline_agent():
                 return 
             analysis_df = screener_df.head(MAX_COMPANIES_TO_ANALYZE)
             st.success(f"Found {len(screener_df)} companies. Performing deep analysis on the top {len(analysis_df)} by market cap.")
-            
-            # --- FIX: Removed 'country' from this dataframe display ---
             st.dataframe(analysis_df[['code', 'name', 'exchange', 'sector', 'market_capitalization']], hide_index=True, use_container_width=True)
 
             all_dossiers = []
@@ -5629,16 +5631,15 @@ def investment_pipeline_agent():
                 ticker_code = f"{company_row['code']}.{company_row['exchange']}"
                 progress_bar.progress((i + 1) / len(analysis_df), text=f"Analyzing {company_row['name']}...")
                 
-                # Pass the user_filters to the agent for validation
-                dossier = thesis_validation_agent(company_row.to_dict(), qualitative_theme, client, eodhd_api_key, llm_deployment_name, user_filters)
+                # Call the now-simplified agent
+                dossier = thesis_validation_agent(company_row.to_dict(), qualitative_theme, client, eodhd_api_key, llm_deployment_name)
 
                 if "error" not in dossier:
                     risk_analysis = risk_and_sizing_agent(dossier, client, llm_deployment_name)
                     dossier['risk_analysis'] = risk_analysis
                     all_dossiers.append(dossier)
                 else:
-                    # The warning for skipped companies is now handled inside the agent
-                    pass
+                    st.warning(f"Skipping {company_row['name']} due to an error: {dossier['error']}")
             
             progress_bar.empty()
 
@@ -5659,7 +5660,7 @@ def investment_pipeline_agent():
                     use_container_width=True
                 )
             else:
-                st.error("Could not generate a report for any of the found companies. This might be due to data availability issues or all candidates being filtered out.")
+                st.error("Could not generate a report for any of the found companies. This might be due to data availability issues.")
 
 
 # ==============================================================================
