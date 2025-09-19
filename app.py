@@ -5308,8 +5308,16 @@ def investment_pipeline_agent():
     # --- 2. CORE FUNCTIONS (WITH CORRECTED SEARCH LOGIC) ---
 
     def get_theme_sectors(theme: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
-        st.info(f"**(LIVE) Step 1A: AI is identifying relevant sectors for '{theme}'...**")
-        prompt = f"""You are a market analyst. For the theme "{theme}", what are the 1-3 most relevant GICS sectors? Return a JSON list of strings. Example: {{"sectors": ["Technology", "Communication Services"]}}"""
+        st.info(f"**(LIVE) Step 1A: AI is identifying relevant sectors for '{theme}'...")
+        
+        # --- FIX: Make the prompt more specific to constrain the AI's choices ---
+        prompt = f"""
+        You are a market analyst specializing in GICS sectors. For the investment theme "{theme}", identify the 1-3 GICS sectors that companies who PRIMARILY DEVELOP AND SELL these solutions belong to. 
+        
+        Do NOT include sectors that only USE the technology. For example, for 'AI in healthcare', the correct sector is 'Information Technology', not 'Health Care'.
+        
+        Return a JSON list of strings. Example: {{"sectors": ["Information Technology", "Communication Services"]}}
+        """
         try:
             response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}, temperature=0.0)
             sectors = json.loads(response.choices[0].message.content).get('sectors', [])
@@ -5416,13 +5424,22 @@ def investment_pipeline_agent():
         quant_md = f"""| Metric | Value |\n|---|---|\n| Market Cap (USD) | ${quant_data.get('market_capitalization', 0) / 1e9:,.1f}B |\n| Dividend Yield | {quant_data.get('dividend_yield', 0):.2%} |"""
         return {"dossier_title": f"{quant_data.get('name', 'N/A')} ({quant_data.get('code', 'N/A')}.{quant_data.get('exchange', '')})", "Quantitative Snapshot": quant_md, "Thematic Alignment & Justification": format_ai_analysis_to_markdown(qual_analysis.get('theme_analysis')), "Competitive Moat & Pricing Power": format_ai_analysis_to_markdown(qual_analysis.get('moat_analysis')), "Key Risks Identified": format_risks(qual_analysis.get('risk_analysis'))}
 
-    def generate_final_html_report(dossier_list: list, theme: str) -> str: # ... unchanged
-        safe_theme = html.escape(theme or "..."); styles = """<style>body{font-family:sans-serif;margin:20px;background-color:#f9fafb;color:#1f2937}.container{max-width:1200px;margin:auto}.report-header h1{font-size:2.2em;color:#111827;border-bottom:2px solid #d1d5db;padding-bottom:10px}.dossier{background-color:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:30px;margin-bottom:30px;box-shadow:0 4px 6px rgba(0,0,0,0.05)}.dossier h2{font-size:1.4em;border-bottom:1px solid #e5e7eb;padding-bottom:8px;margin-top:25px}.dossier table{width:100%;border-collapse:collapse;margin-top:15px}.dossier th,td{padding:10px 12px;border:1px solid #d1d5db;text-align:left}</style>"""
+    def generate_final_html_report(dossier_list: list, theme: str) -> str:
+        safe_theme = html.escape(theme or "...")
+        styles = """<style>body{font-family:sans-serif;margin:20px;background-color:#f9fafb;color:#1f2937}.container{max-width:1200px;margin:auto}.report-header h1{font-size:2.2em;color:#111827;border-bottom:2px solid #d1d5db;padding-bottom:10px}.dossier{background-color:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:30px;margin-bottom:30px;box-shadow:0 4px 6px rgba(0,0,0,0.05)}.dossier h2{font-size:1.4em;border-bottom:1px solid #e5e7eb;padding-bottom:8px;margin-top:25px}.dossier table{width:100%;border-collapse:collapse;margin-top:15px}.dossier th,td{padding:10px 12px;border:1px solid #d1d5db;text-align:left}</style>"""
+        
         html_body = f"<div class='report-header'><h1>Investment Idea Report</h1><h2>Theme: {safe_theme}</h2></div>"
+        
         for d in dossier_list:
             html_body += f"<div class='dossier'><h1>{html.escape(d.get('dossier_title', ''))}</h1>"
+            
             for s in ["Quantitative Snapshot", "Thematic Alignment & Justification", "Competitive Moat & Pricing Power", "Key Risks Identified"]:
-                if s in d: html_body += f"<h2>{html.escape(s)}</h2>" + markdown.markdown(str(d[s]), extensions=['tables'])
+                if s in d:
+                    html_body += f"<h2>{html.escape(s)}</h2>" + markdown.markdown(str(d[s]), extensions=['tables'])
+            
+            # --- FIX: Close the 'dossier' div before the loop moves to the next company ---
+            html_body += "</div>"
+            
         return f"<!DOCTYPE html><html><head><title>IdeaGen Report</title>{styles}</head><body><div class='container'>{html_body}</div></body></html>"
 
     def risk_and_sizing_agent(dossier: dict, client: AzureOpenAI, llm_deployment_name: str) -> dict: # ... unchanged
