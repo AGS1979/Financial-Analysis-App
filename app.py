@@ -5398,27 +5398,53 @@ def investment_pipeline_agent():
 
 
     def get_exchange_rate(from_currency: str, to_currency: str, api_key: str, cache: dict) -> float:
-        """Fetches the exchange rate for a currency pair, using a cache to avoid redundant API calls."""
-        pair = f"{from_currency.upper()}{to_currency.upper()}"
-        if pair in cache:
-            return cache[pair]
+        """
+        Fetches the exchange rate to convert from_currency to to_currency,
+        using a cache to avoid redundant API calls.
+        """
+        # If currencies are the same, the rate is 1.
         if from_currency == to_currency:
             return 1.0
+
+        # To convert from a currency (e.g., INR) to USD, we need the value of 1 USD in INR.
+        # The standard FOREX pair for this is USDINR.
+        pair = f"{to_currency.upper()}{from_currency.upper()}"
+        
+        if pair in cache:
+            return cache[pair]
         
         try:
-            # NOTE: EODHD real-time API uses a different format for the pair in the URL
-            url = f"https://eodhistoricaldata.com/api/real-time/{from_currency.upper()}.{to_currency.upper()}?api_token={api_key}&fmt=json"
+            # This is the correct EODHD endpoint for the latest daily FOREX rate.
+            url = f"https://eodhistoricaldata.com/api/eod/{pair}.FOREX?api_token={api_key}&fmt=json&period=d&limit=1"
             response = requests.get(url, timeout=5)
+            
             if response.status_code == 200:
-                # The rate is how many 'from_currency' units you get for 1 'to_currency' unit.
-                # E.g., for INR.USD, it returns ~83, meaning 83 INR for 1 USD.
-                rate = response.json().get('close') 
-                if rate and rate > 0:
-                    cache[pair] = rate
-                    return rate
-            return 1.0 # Fallback to 1.0 if API fails, preventing a crash
+                data = response.json()
+                if data and isinstance(data, list):
+                    # The 'close' price is the exchange rate. For USDINR, this is ~88.
+                    rate = data[0].get('close')
+                    if rate and rate > 0:
+                        cache[pair] = rate
+                        return rate
+            
+            # If the direct pair fails (e.g., a less common currency), try the inverse.
+            inverse_pair = f"{from_currency.upper()}{to_currency.upper()}"
+            url = f"https://eodhistoricaldata.com/api/eod/{inverse_pair}.FOREX?api_token={api_key}&fmt=json&period=d&limit=1"
+            response = requests.get(url, timeout=5)
+
+            if response.status_code == 200:
+                data = response.json()
+                if data and isinstance(data, list):
+                    # For an inverse pair like INRUSD, the rate is ~0.011. We return 1/rate.
+                    inverse_rate = data[0].get('close')
+                    if inverse_rate and inverse_rate > 0:
+                        rate = 1 / inverse_rate
+                        cache[pair] = rate # Cache the correct, calculated rate
+                        return rate
+
+            return 1.0 # Fallback if both attempts fail
         except Exception:
-            return 1.0 # Fallback
+            return 1.0 # Fallback on any error
 
 
 
