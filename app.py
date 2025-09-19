@@ -5279,9 +5279,7 @@ def agent_sentinel_app():
 
 def investment_pipeline_agent():
     """
-    A unified, multi-stage, AI-powered investment research pipeline.
-    It uses a top-down, theme-first approach with rigorous, multi-factor validation.
-    The AI first identifies a sector, then brainstorms companies within it.
+    A unified, multi-stage, AI-powered investment research pipeline with detailed validation logging.
     """
     import json
     import pandas as pd
@@ -5294,7 +5292,7 @@ def investment_pipeline_agent():
     import streamlit as st
     
     st.markdown("### 💡 Agent IdeaGen")
-    st.markdown("Define a qualitative theme. The agent will first identify the correct sector, brainstorm relevant companies, and then validate them against your quantitative filters.")
+    st.markdown("Define a qualitative theme. The agent will brainstorm, validate with detailed logging, and analyze relevant companies.")
     
     # --- 1. API AND CLIENT SETUP ---
     MAX_COMPANIES_TO_ANALYZE = 50
@@ -5310,90 +5308,63 @@ def investment_pipeline_agent():
         st.error(f"Could not initialize secrets or clients. Error: {e}")
         return
         
-    # --- 2. CORE FUNCTIONS (REFACTORED FOR NEW LOGIC) ---
+    # --- 2. CORE FUNCTIONS (WITH MODIFIED VALIDATION) ---
 
     def get_theme_sector(theme: str, client: AzureOpenAI, llm_deployment_name: str) -> str:
         st.info(f"**(LIVE) Step 1A: AI is identifying the primary sector for '{theme}'...**")
-        prompt = f"""
-        You are an expert market analyst. For the investment theme "{theme}", what is the single most relevant GICS sector?
-        Choose from this list: ["Basic Materials", "Communication Services", "Consumer Cyclical", "Consumer Defensive", "Energy", "Financial Services", "Healthcare", "Industrials", "Real Estate", "Technology", "Utilities"].
-        Return only the single sector name as a string, for example: "Technology".
-        """
+        prompt = f"""You are an expert market analyst. For the investment theme "{theme}", what is the single most relevant GICS sector? Choose from this list: ["Basic Materials", "Communication Services", "Consumer Cyclical", "Consumer Defensive", "Energy", "Financial Services", "Healthcare", "Industrials", "Real Estate", "Technology", "Utilities"]. Return only the single sector name as a string."""
         try:
-            response = client.chat.completions.create(
-                model=llm_deployment_name,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0
-            )
+            response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], temperature=0.0)
             sector = response.choices[0].message.content.strip().replace('"', '')
             st.success(f"Identified primary sector: **{sector}**")
             return sector
         except Exception as e:
-            st.error(f"Error during AI sector identification: {e}")
-            return None
+            st.error(f"Error during AI sector identification: {e}"); return None
 
     def get_company_ideas(theme: str, sector: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
         st.info(f"**(LIVE) Step 1B: AI is brainstorming companies for '{theme}' within the {sector} sector...**")
-        prompt = f"""
-        You are an expert market analyst. For the investment theme "{theme}" within the "{sector}" sector, brainstorm up to 30 relevant publicly traded companies.
-        Return ONLY a comma-separated list of their ticker symbols (e.g., AAPL, MSFT, GOOG).
-        """
+        prompt = f"""You are an expert market analyst. For "{theme}" within the "{sector}" sector, brainstorm up to 30 relevant public companies. Return ONLY a comma-separated list of ticker symbols."""
         try:
-            response = client.chat.completions.create(
-                model=llm_deployment_name,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1
-            )
+            response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], temperature=0.1)
             content = response.choices[0].message.content
             tickers = [ticker.strip() for ticker in content.split(',') if ticker.strip()]
             st.success(f"Brainstorm complete. Found {len(tickers)} initial ideas.")
+            # --- DEBUG: Print the LLM's raw output ---
+            st.info(f"LLM suggested tickers: {tickers}")
             return tickers
         except Exception as e:
-            st.error(f"Error during AI brainstorming: {e}")
-            return []
+            st.error(f"Error during AI brainstorming: {e}"); return []
 
-    def validate_company(ticker: str, exchange_code: str, expected_sector: str, filters: dict, api_key: str) -> dict:
+    def validate_company_with_reason(ticker: str, exchange_code: str, expected_sector: str, filters: dict, api_key: str) -> (str, dict):
         full_ticker = f"{ticker}.{exchange_code}"
         try:
             base_url = f"https://eodhistoricaldata.com/api/fundamentals/{full_ticker}"
-            params = {"api_token": api_key}
-            response = requests.get(base_url, params=params, timeout=10)
-            
-            # Skip if the ticker is not found (common with LLM suggestions)
-            if response.status_code != 200:
-                return None
+            params = {"api_token": api_key}; response = requests.get(base_url, params=params, timeout=10)
+            if response.status_code != 200: return "NOT_FOUND", {"ticker": ticker}
 
             data = response.json()
-
-            # --- START OF FIX ---
-            # The correct path to these values is inside the "Highlights" object
-            highlights = data.get('Highlights', {})
+            general = data.get('General', {}); highlights = data.get('Highlights', {})
+            
+            actual_sector = general.get('Sector', 'Unknown')
             market_cap = highlights.get('MarketCapitalization', 0)
             dividend_yield = highlights.get('DividendYield', 0)
             
-            general_info = data.get('General', {})
-            actual_sector = general_info.get('Sector', 'Unknown')
-            # --- END OF FIX ---
-
-            # Now, perform the validation using the correctly retrieved values
-            if (actual_sector == expected_sector and 
-                market_cap >= (filters["market_cap_min"] * 1e9) and 
-                dividend_yield >= (filters["dividend_yield_min"] / 100)):
-                
-                # If all checks pass, return the company's data
-                return {
-                    "code": ticker,
-                    "name": general_info.get('Name', 'N/A'),
-                    "exchange": general_info.get('Exchange', 'N/A'),
-                    "sector": actual_sector,
-                    "market_capitalization": market_cap,
-                    "dividend_yield": dividend_yield
-                }
+            # Perform checks and return a specific reason for failure
+            if actual_sector != expected_sector:
+                return "FAIL_SECTOR", {"ticker": ticker, "name": general.get('Name'), "value": actual_sector}
             
-            return None # Return None if any validation check fails
-        except Exception:
-            return None # Any other error also results in a failed validation
+            min_market_cap = filters["market_cap_min"] * 1e9
+            if market_cap < min_market_cap:
+                return "FAIL_MCAP", {"ticker": ticker, "name": general.get('Name'), "value": market_cap}
+            
+            min_dividend_yield = filters["dividend_yield_min"] / 100
+            if dividend_yield < min_dividend_yield:
+                return "FAIL_DIVIDEND", {"ticker": ticker, "name": general.get('Name'), "value": dividend_yield}
 
+            return "PASS", { "code": ticker, "name": general.get('Name', 'N/A'), "exchange": general.get('Exchange', 'N/A'), "sector": actual_sector, "market_capitalization": market_cap, "dividend_yield": dividend_yield }
+        except Exception:
+            return "ERROR", {"ticker": ticker}
+    
     # --- (No changes needed for enrichment, analysis, or reporting functions below this line) ---
     def enrich_company_data_eodhd(ticker_code: str, api_key: str) -> dict:
         st.info(f"**(LIVE) Enriching {ticker_code} with fundamental data...**")
@@ -5458,33 +5429,47 @@ def investment_pipeline_agent():
     COUNTRY_TO_EXCHANGE = {"USA": "US", "India": "NSE", "Germany": "F"}
     selected_countries = st.multiselect("Target Countries", options=list(COUNTRY_TO_EXCHANGE.keys()), default=["USA"])
     
-    col1, col2 = st.columns(2)
+    col1, col2 = st.columns(2);
     with col1: mkt_cap_min = st.slider("Min Market Cap (Billion USD)", 0.0, 500.0, 10.0, 1.0)
-    with col2: dividend_yield_min = st.slider("Min Dividend Yield (%)", 0.0, 10.0, 0.0, 0.1)
+    with col2: dividend_yield_min = st.slider("Min Dividend Yield (%)", 0.0, 10.0, 1.2, 0.1)
     
     st.subheader("Step 3: Generate and Analyze Ideas")
     if st.button("🚀 Generate, Validate, and Analyze", type="primary"):
         if not qualitative_theme: st.warning("Please describe your investment theme."); return
 
         with st.spinner("Running full investment pipeline..."):
-            # STAGE 1A: AI Sector Identification
             theme_sector = get_theme_sector(qualitative_theme, client, llm_deployment_name)
-            if not theme_sector: st.error("Could not identify a sector for this theme. Please try a different theme."); return
+            if not theme_sector: st.error("Could not identify a sector. Please try a different theme."); return
 
-            # STAGE 1B: AI Company Brainstorming
             company_tickers = get_company_ideas(qualitative_theme, theme_sector, client, llm_deployment_name)
-            if not company_tickers: st.error("AI brainstorming did not return any company ideas."); return
+            if not company_tickers: st.error("AI brainstorming returned no ideas."); return
 
-            # STAGE 2: Rigorous Validation
             st.info(f"**(LIVE) Stage 2: Validating {len(company_tickers)} ideas against your criteria...**")
             user_filters = {"market_cap_min": mkt_cap_min, "dividend_yield_min": dividend_yield_min}
-            exchange_code = COUNTRY_TO_EXCHANGE[selected_countries[0]] # Simplified for single country selection for now
+            exchange_code = COUNTRY_TO_EXCHANGE[selected_countries[0]]
             
             validated_companies = []
-            validation_progress = st.progress(0)
+            validation_progress = st.progress(0, text="Validating ideas...")
+            # --- DEBUG: Detailed validation loop ---
             for i, ticker in enumerate(company_tickers):
-                result = validate_company(ticker, exchange_code, theme_sector, user_filters, eodhd_api_key)
-                if result: validated_companies.append(result)
+                status, result_data = validate_company_with_reason(ticker, exchange_code, theme_sector, user_filters, eodhd_api_key)
+                
+                if status == 'PASS':
+                    validated_companies.append(result_data)
+                else: # Log the reason for failure
+                    name = result_data.get('name', ticker)
+                    if status == 'FAIL_SECTOR':
+                        reason = f"Sector was '{result_data['value']}', expected '{theme_sector}'."
+                    elif status == 'FAIL_MCAP':
+                        reason = f"Market Cap was ${result_data['value']/1e9:,.1f}B, required >${user_filters['market_cap_min']}B."
+                    elif status == 'FAIL_DIVIDEND':
+                        reason = f"Dividend Yield was {result_data['value']:.2%}, required >{user_filters['dividend_yield_min']}%."
+                    elif status == 'NOT_FOUND':
+                        reason = "Ticker not found on EODHD."
+                    else:
+                        reason = "An unknown validation error occurred."
+                    st.warning(f"❌ Skipping {name}: {reason}")
+
                 validation_progress.progress((i + 1) / len(company_tickers))
             validation_progress.empty()
 
@@ -5496,18 +5481,16 @@ def investment_pipeline_agent():
 
             # STAGE 3: Analysis and Reporting
             all_dossiers = []
-            analysis_progress = st.progress(0)
+            analysis_progress = st.progress(0, text="Analyzing companies...")
             for i, company_row in analysis_df.iterrows():
                 ticker_code = f"{company_row['code']}.{company_row['exchange']}"
-                dossier = {"error": "Initial placeholder"} # Placeholder for the dossier
-                
+                dossier = {}
                 enrichment_data = enrich_company_data_eodhd(ticker_code, eodhd_api_key)
                 if "failed" in enrichment_data.get("description", ""): st.warning(f"Skipping {company_row['name']} due to enrichment error."); continue
-                
                 qual_analysis = run_ai_qualitative_analysis(company_row['name'], enrichment_data['qualitative_corpus'], qualitative_theme, client, llm_deployment_name)
                 if not qual_analysis: st.warning(f"Skipping {company_row['name']} due to analysis error."); continue
                 
-                full_data = pd.concat([company_row, pd.Series(enrichment_data)])
+                full_data = pd.concat([company_row.to_frame().T.reset_index(drop=True), pd.Series(enrichment_data).to_frame().T.reset_index(drop=True)], axis=1).iloc[0]
                 dossier = synthesize_dossier(full_data, qual_analysis, qualitative_theme)
                 
                 risk_analysis = risk_and_sizing_agent(dossier, client, llm_deployment_name)
