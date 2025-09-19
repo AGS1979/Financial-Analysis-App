@@ -5463,7 +5463,10 @@ def investment_pipeline_agent():
     st.subheader("Step 2: Define Validation Criteria")
 
     # --- FIX 1: Remove the COUNTRY_MAP. Use a simple list of codes that match the EODHD API output. ---
-    country_options = ["USA", "India", "Germany"]
+    country_options = [
+    "Brazil", "Chile", "China", "France", "Germany", "Hong Kong", "India",
+    "Italy", "Mexico", "South Africa", "Spain", "Taiwan", "UK", "USA"
+    ]
     selected_country_code = st.selectbox("Target Country", options=country_options, index=country_options.index("USA"))
 
     col1, col2 = st.columns(2)
