@@ -5280,7 +5280,7 @@ def agent_sentinel_app():
 def investment_pipeline_agent():
     """
     A robust, multi-stage, AI-powered investment research pipeline.
-    It uses a top-down, theme-first approach with multi-sector awareness and detailed validation logging.
+    It uses a "Search-Then-Validate" workflow for maximum accuracy.
     """
     import json
     import pandas as pd
@@ -5293,7 +5293,7 @@ def investment_pipeline_agent():
     import streamlit as st
     
     st.markdown("### 💡 Agent IdeaGen")
-    st.markdown("Define a theme. The agent will identify relevant sectors, brainstorm companies, and validate them against your criteria with a detailed summary.")
+    st.markdown("Define a theme. The agent will brainstorm ideas, find the correct tickers, validate them, and perform a deep-dive analysis.")
     
     # --- 1. API AND CLIENT SETUP ---
     MAX_COMPANIES_TO_ANALYZE = 50
@@ -5305,11 +5305,11 @@ def investment_pipeline_agent():
         st.error(f"Could not initialize secrets or clients. Error: {e}")
         return
         
-    # --- 2. CORE FUNCTIONS (REFACTORED FOR ROBUSTNESS) ---
+    # --- 2. CORE FUNCTIONS (REFACTORED FOR NEW WORKFLOW) ---
 
     def get_theme_sectors(theme: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
         st.info(f"**(LIVE) Step 1A: AI is identifying relevant sectors for '{theme}'...**")
-        prompt = f"""You are an expert market analyst. For the investment theme "{theme}", what are the 1-3 most relevant GICS sectors? Return a JSON list of strings. Example: ["Technology", "Communication Services"]"""
+        prompt = f"""You are a market analyst. For the theme "{theme}", what are the 1-3 most relevant GICS sectors? Return a JSON list of strings. Example: {{"sectors": ["Technology", "Communication Services"]}}"""
         try:
             response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}, temperature=0.0)
             sectors = json.loads(response.choices[0].message.content).get('sectors', [])
@@ -5319,7 +5319,7 @@ def investment_pipeline_agent():
 
     def get_company_ideas(theme: str, sectors: list, client: AzureOpenAI, llm_deployment_name: str) -> list:
         st.info(f"**(LIVE) Step 1B: AI is brainstorming companies for '{theme}'...**")
-        prompt = f"""For the theme "{theme}" within the sectors '{', '.join(sectors)}', brainstorm up to 30 public companies. Return ONLY a comma-separated list of ticker symbols."""
+        prompt = f"""For the theme "{theme}" within sectors '{', '.join(sectors)}', brainstorm up to 20 public companies. Return ONLY a comma-separated list of ticker symbols."""
         try:
             response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], temperature=0.1)
             tickers = [t.strip() for t in response.choices[0].message.content.split(',') if t.strip()]
@@ -5327,20 +5327,35 @@ def investment_pipeline_agent():
             return tickers
         except Exception: return []
 
-    def validate_company_with_reason(ticker: str, ex_code: str, expected_sectors: list, filters: dict, api_key: str) -> (str, dict):
+    def find_instrument_data(ticker: str, country: str, api_key: str) -> dict:
+        """Uses the EODHD Search API to find the correct exchange for a ticker."""
         try:
-            url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker}.{ex_code}?api_token={api_key}"
+            url = f"https://eodhistoricaldata.com/api/search/{ticker}?api_token={api_key}&fmt=json"
             response = requests.get(url, timeout=10)
-            if response.status_code != 200: return "NOT_FOUND", {"ticker": ticker}
+            if response.status_code != 200: return None
+            search_results = response.json()
+            # Find the first result that matches the target country
+            for result in search_results:
+                if result.get('Country') == country:
+                    return result
+            return None # No match found for the country
+        except Exception:
+            return None
+
+    def validate_company_with_reason(instrument: dict, expected_sectors: list, filters: dict, api_key: str) -> (str, dict):
+        ticker, exchange = instrument['Code'], instrument['Exchange']
+        try:
+            url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker}.{exchange}?api_token={api_key}"
+            response = requests.get(url, timeout=10)
+            if response.status_code != 200: return "INCOMPLETE_DATA", {"name": instrument.get('Name')}
             data = response.json()
             
             general = data.get('General', {}); highlights = data.get('Highlights', {})
             name = general.get('Name', ticker); actual_sector = general.get('Sector')
-            market_cap = highlights.get('MarketCapitalization')
-            dividend_yield = highlights.get('DividendYield')
+            market_cap = highlights.get('MarketCapitalization'); dividend_yield = highlights.get('DividendYield')
 
             if not all([name, actual_sector, market_cap, dividend_yield is not None]):
-                return "INCOMPLETE_DATA", {"ticker": ticker, "name": name}
+                return "INCOMPLETE_DATA", {"name": name}
             if actual_sector not in expected_sectors:
                 return "FAIL_SECTOR", {"name": name, "value": actual_sector}
             if market_cap < (filters["market_cap_min"] * 1e9):
@@ -5348,11 +5363,11 @@ def investment_pipeline_agent():
             if dividend_yield < (filters["dividend_yield_min"] / 100):
                 return "FAIL_DIVIDEND", {"name": name, "value": dividend_yield}
 
-            return "PASS", { "code": ticker, "name": name, "exchange": general.get('Exchange'), "sector": actual_sector, "market_capitalization": market_cap, "dividend_yield": dividend_yield }
+            return "PASS", { "code": ticker, "name": name, "exchange": exchange, "sector": actual_sector, "market_capitalization": market_cap, "dividend_yield": dividend_yield }
         except (requests.RequestException, json.JSONDecodeError):
-            return "ERROR", {"ticker": ticker}
+            return "ERROR", {"name": instrument.get('Name')}
 
-    # --- (Minor changes to other functions for consistency) ---
+    # --- (All other analysis, enrichment, and reporting functions are unchanged) ---
     def enrich_company_data_eodhd(ticker_code: str, api_key: str) -> dict: # ... unchanged
         st.info(f"**(LIVE) Enriching {ticker_code}...**")
         base_url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker_code}"; params = {"api_token": api_key}
@@ -5371,8 +5386,7 @@ def investment_pipeline_agent():
             return "No recent news found."
         except Exception: return "Could not fetch recent news."
 
-    # --- (Other analysis and reporting functions are unchanged) ---
-    def run_ai_qualitative_analysis(company_name: str, text_corpus: str, theme: str, client: AzureOpenAI, llm_deployment_name: str) -> dict:
+    def run_ai_qualitative_analysis(company_name: str, text_corpus: str, theme: str, client: AzureOpenAI, llm_deployment_name: str) -> dict: # ... unchanged
         st.info(f"**(LIVE) Running AI Qualitative Analysis for {company_name}...**")
         prompt = f"""Analyze '{company_name}' for the theme '{theme}' using the text below. Return a JSON with keys "theme_analysis", "moat_analysis", "risk_analysis". For "risk_analysis", provide a "top_risks" list of objects, each with "risk" and "description". TEXT: --- {text_corpus[:25000]} ---"""
         try:
@@ -5380,19 +5394,19 @@ def investment_pipeline_agent():
             return json.loads(response.choices[0].message.content)
         except Exception as e: st.error(f"Error in AI Analysis: {e}"); return {}
 
-    def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str) -> dict:
+    def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str) -> dict: # ... unchanged
         st.info(f"**(LIVE) Synthesizing Dossier for {quant_data.get('name', 'N/A')}...")
         def format_ai_analysis_to_markdown(data):
             if not isinstance(data, dict): return str(data)
             parts = [v for k, v in data.items() if isinstance(v, str)]; return "\n".join(parts) if parts else "No analysis available."
         def format_risks(data):
-            risks = data.get('top_risks', []) if isinstance(data, dict) else []
+            risks = data.get('top_risks', []) if isinstance(data, dict) else [];
             if not risks: return "No specific risks identified."
             return "\n".join(f"* **{r.get('risk', 'N/A')}**: {r.get('description', 'N/A')}" for r in risks)
         quant_md = f"""| Metric | Value |\n|---|---|\n| Market Cap (USD) | ${quant_data.get('market_capitalization', 0) / 1e9:,.1f}B |\n| Dividend Yield | {quant_data.get('dividend_yield', 0):.2%} |"""
         return {"dossier_title": f"{quant_data.get('name', 'N/A')} ({quant_data.get('code', 'N/A')}.{quant_data.get('exchange', '')})", "Quantitative Snapshot": quant_md, "Thematic Alignment & Justification": format_ai_analysis_to_markdown(qual_analysis.get('theme_analysis')), "Competitive Moat & Pricing Power": format_ai_analysis_to_markdown(qual_analysis.get('moat_analysis')), "Key Risks Identified": format_risks(qual_analysis.get('risk_analysis'))}
 
-    def generate_final_html_report(dossier_list: list, theme: str) -> str:
+    def generate_final_html_report(dossier_list: list, theme: str) -> str: # ... unchanged
         safe_theme = html.escape(theme or "..."); styles = """<style>body{font-family:sans-serif;margin:20px;background-color:#f9fafb;color:#1f2937}.container{max-width:1200px;margin:auto}.report-header h1{font-size:2.2em;color:#111827;border-bottom:2px solid #d1d5db;padding-bottom:10px}.dossier{background-color:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:30px;margin-bottom:30px;box-shadow:0 4px 6px rgba(0,0,0,0.05)}.dossier h2{font-size:1.4em;border-bottom:1px solid #e5e7eb;padding-bottom:8px;margin-top:25px}.dossier table{width:100%;border-collapse:collapse;margin-top:15px}.dossier th,td{padding:10px 12px;border:1px solid #d1d5db;text-align:left}</style>"""
         html_body = f"<div class='report-header'><h1>Investment Idea Report</h1><h2>Theme: {safe_theme}</h2></div>"
         for d in dossier_list:
@@ -5401,7 +5415,7 @@ def investment_pipeline_agent():
                 if s in d: html_body += f"<h2>{html.escape(s)}</h2>" + markdown.markdown(str(d[s]), extensions=['tables'])
         return f"<!DOCTYPE html><html><head><title>IdeaGen Report</title>{styles}</head><body><div class='container'>{html_body}</div></body></html>"
 
-    def risk_and_sizing_agent(dossier: dict, client: AzureOpenAI, llm_deployment_name: str) -> dict:
+    def risk_and_sizing_agent(dossier: dict, client: AzureOpenAI, llm_deployment_name: str) -> dict: # ... unchanged
         st.info("**(LIVE) Agent 3/3: Risk & Position Sizing Agent is evaluating risk profile...**")
         prompt = f"""Analyze the dossier. Recommend a position size (1-10%). Return JSON with "position_size_recommendation" and "rationale". DOSSIER: {json.dumps(dossier)[:10000]}"""
         try:
@@ -5413,8 +5427,7 @@ def investment_pipeline_agent():
     st.subheader("Step 1: Define Your Investment Theme")
     qualitative_theme = st.text_area("**Describe the Qualitative Theme**", "Companies leading the artificial intelligence revolution in enterprise software.", height=75)
     st.subheader("Step 2: Define Validation Criteria")
-    COUNTRY_TO_EXCHANGE = {"USA": "US", "India": "NSE", "Germany": "F"}
-    selected_countries = st.multiselect("Target Countries", options=list(COUNTRY_TO_EXCHANGE.keys()), default=["USA"])
+    selected_country = st.selectbox("Target Country", options=["USA", "India", "Germany"], default="USA")
     col1, col2 = st.columns(2)
     with col1: mkt_cap_min = st.slider("Min Market Cap (Billion USD)", 0.0, 500.0, 10.0, 1.0)
     with col2: dividend_yield_min = st.slider("Min Dividend Yield (%)", 0.0, 10.0, 1.2, 0.1)
@@ -5429,18 +5442,21 @@ def investment_pipeline_agent():
             if not company_tickers: st.error("AI brainstorming returned no ideas."); return
 
             user_filters = {"market_cap_min": mkt_cap_min, "dividend_yield_min": dividend_yield_min}
-            exchange_code = COUNTRY_TO_EXCHANGE[selected_countries[0]]
             
             validated_companies = []; failure_reasons = []
-            progress = st.progress(0, text="Validating ideas...")
+            progress = st.progress(0, text="Finding & Validating Tickers...")
             for i, ticker in enumerate(company_tickers):
-                status, result = validate_company_with_reason(ticker, exchange_code, theme_sectors, user_filters, eodhd_api_key)
-                if status == 'PASS': validated_companies.append(result)
-                else: failure_reasons.append((status, result))
+                # NEW: Find the correct instrument first
+                instrument = find_instrument_data(ticker, selected_country, eodhd_api_key)
+                if not instrument:
+                    failure_reasons.append(("NOT_FOUND", {"name": ticker}))
+                else:
+                    status, result = validate_company_with_reason(instrument, theme_sectors, user_filters, eodhd_api_key)
+                    if status == 'PASS': validated_companies.append(result)
+                    else: failure_reasons.append((status, result))
                 progress.progress((i + 1) / len(company_tickers))
             progress.empty()
 
-            # --- NEW: Failure Summary Report ---
             if failure_reasons:
                 st.subheader("Validation Summary")
                 failure_counts = Counter(code for code, data in failure_reasons)
@@ -5448,7 +5464,7 @@ def investment_pipeline_agent():
                 summary_md += f"| Did not meet dividend yield | {failure_counts.get('FAIL_DIVIDEND', 0)} |\n"
                 summary_md += f"| Did not meet market cap | {failure_counts.get('FAIL_MCAP', 0)} |\n"
                 summary_md += f"| Sector did not match | {failure_counts.get('FAIL_SECTOR', 0)} |\n"
-                summary_md += f"| Ticker not found or incomplete data | {failure_counts.get('NOT_FOUND', 0) + failure_counts.get('INCOMPLETE_DATA', 0)} |\n"
+                summary_md += f"| Ticker not found or incomplete data | {failure_counts.get('NOT_FOUND', 0) + failure_counts.get('INCOMPLETE_DATA', 0) + failure_counts.get('ERROR', 0)} |\n"
                 st.markdown(summary_md)
 
             if not validated_companies: st.warning("No companies met all your criteria."); return
@@ -5457,9 +5473,8 @@ def investment_pipeline_agent():
             st.success(f"Validated {len(analysis_df)} companies. Performing deep analysis...")
             st.dataframe(analysis_df[['code', 'name', 'exchange', 'sector', 'market_capitalization']], hide_index=True, use_container_width=True)
 
-            # --- STAGE 3: Analysis and Reporting ---
+            # STAGE 3: Analysis and Reporting
             all_dossiers = []
-            # ... (Rest of the analysis and reporting loop is unchanged)
             for i, company_row in analysis_df.iterrows():
                 ticker_code = f"{company_row['code']}.{company_row['exchange']}"
                 enrichment_data = enrich_company_data_eodhd(ticker_code, eodhd_api_key)
