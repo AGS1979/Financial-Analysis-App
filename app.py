@@ -5321,34 +5321,47 @@ def investment_pipeline_agent():
         st.info("**(LIVE) Stage 1: Screening for companies with EODHD...**")
         base_url = "https://eodhd.com/api/screener"
         eodhd_filters = []
+        
         if filters.get("market_cap_min"):
             eodhd_filters.append(["market_capitalization", ">", filters["market_cap_min"] * 1e9])
+            
+        # --- FIX STARTS HERE ---
         if filters.get("dividend_yield_min") and filters["dividend_yield_min"] > 0:
-            eodhd_filters.append(["dividend_yield", ">", filters["dividend_yield_min"]])
+            # Convert the percentage from the slider (e.g., 2.0) to a decimal (0.02)
+            decimal_yield = filters["dividend_yield_min"] / 100
+            eodhd_filters.append(["dividend_yield", ">", decimal_yield])
+        # --- FIX ENDS HERE ---
+            
         if filters.get("sectors"):
             eodhd_filters.append(["sector", "in", filters["sectors"]])
+            
         if filters.get("exchanges"):
             eodhd_filters.append(["exchange", "in", filters["exchanges"]])
 
         if not eodhd_filters:
             st.warning("Please define at least one filter.")
             return pd.DataFrame()
+            
         params = { "api_token": api_key, "filters": json.dumps(eodhd_filters), "sort": "market_capitalization.desc", "limit": 100 }
         st.info(f"Applying filters: {filters}")
+        
         try:
             response = requests.get(base_url, params=params, timeout=20)
             response.raise_for_status()
             data = response.json()
+            
             if not data or 'data' not in data or not data['data']:
                 st.error("EODHD screener did not find any companies matching your criteria.")
                 return pd.DataFrame()
+                
             df = pd.DataFrame(data['data'])
             if 'market_capitalization' in df.columns:
                 df = df.sort_values(by='market_capitalization', ascending=False).reset_index(drop=True)
+                
             return df
         except requests.exceptions.RequestException as e:
             st.error(f"API Error during screening: {e}")
-            st.error(f"API Response: {e.response.text}") 
+            st.error(f"API Response: {e.response.text}")  
             return pd.DataFrame()
         except Exception as e:
             st.error(f"An error occurred while processing screening results: {e}")
