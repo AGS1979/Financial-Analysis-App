@@ -5580,11 +5580,10 @@ def investment_pipeline_agent():
             st.warning("Please describe your investment theme.")
             return
             
-        # --- Pass the new parameters to the filter dictionary ---
         user_filters = {
             "exchanges": [COUNTRY_TO_EXCHANGE[c] for c in selected_countries],
-            "countries": selected_countries,  # Pass country names for domicile filtering
-            "include_adrs": include_adrs,    # Pass the checkbox state
+            "countries": selected_countries,
+            "include_adrs": include_adrs,
             "sectors": selected_sectors,
             "market_cap_min": mkt_cap_min,
             "dividend_yield_min": dividend_yield_min
@@ -5596,7 +5595,9 @@ def investment_pipeline_agent():
                 return 
             analysis_df = screener_df.head(MAX_COMPANIES_TO_ANALYZE)
             st.success(f"Found {len(screener_df)} companies. Performing deep analysis on the top {len(analysis_df)} by market cap.")
-            st.dataframe(analysis_df[['code', 'name', 'exchange', 'country', 'sector', 'market_capitalization']], hide_index=True, use_container_width=True) # Added 'country' to view
+            
+            # --- FIX: Removed 'country' from this dataframe display ---
+            st.dataframe(analysis_df[['code', 'name', 'exchange', 'sector', 'market_capitalization']], hide_index=True, use_container_width=True)
 
             all_dossiers = []
             progress_bar = st.progress(0, text=f"Analyzing 0 / {len(analysis_df)} companies...")
@@ -5604,14 +5605,16 @@ def investment_pipeline_agent():
                 ticker_code = f"{company_row['code']}.{company_row['exchange']}"
                 progress_bar.progress((i + 1) / len(analysis_df), text=f"Analyzing {company_row['name']}...")
                 
-                dossier = thesis_validation_agent(company_row.to_dict(), qualitative_theme, client, eodhd_api_key, llm_deployment_name)
+                # Pass the user_filters to the agent for validation
+                dossier = thesis_validation_agent(company_row.to_dict(), qualitative_theme, client, eodhd_api_key, llm_deployment_name, user_filters)
 
                 if "error" not in dossier:
                     risk_analysis = risk_and_sizing_agent(dossier, client, llm_deployment_name)
                     dossier['risk_analysis'] = risk_analysis
                     all_dossiers.append(dossier)
                 else:
-                    st.warning(f"Skipping {company_row['name']} due to an error: {dossier['error']}")
+                    # The warning for skipped companies is now handled inside the agent
+                    pass
             
             progress_bar.empty()
 
@@ -5632,7 +5635,7 @@ def investment_pipeline_agent():
                     use_container_width=True
                 )
             else:
-                st.error("Could not generate a report for any of the found companies. This might be due to data availability issues.")
+                st.error("Could not generate a report for any of the found companies. This might be due to data availability issues or all candidates being filtered out.")
 
 
 # ==============================================================================
