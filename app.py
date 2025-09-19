@@ -5280,7 +5280,7 @@ def agent_sentinel_app():
 def investment_pipeline_agent():
     """
     A robust, multi-stage, AI-powered investment research pipeline.
-    It uses a "Search-Then-Validate" workflow for maximum accuracy.
+    It uses a "Search-Then-Validate" workflow with robust country matching.
     """
     import json
     import pandas as pd
@@ -5305,7 +5305,7 @@ def investment_pipeline_agent():
         st.error(f"Could not initialize secrets or clients. Error: {e}")
         return
         
-    # --- 2. CORE FUNCTIONS (REFACTORED FOR NEW WORKFLOW) ---
+    # --- 2. CORE FUNCTIONS (WITH CORRECTED SEARCH LOGIC) ---
 
     def get_theme_sectors(theme: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
         st.info(f"**(LIVE) Step 1A: AI is identifying relevant sectors for '{theme}'...**")
@@ -5327,18 +5327,19 @@ def investment_pipeline_agent():
             return tickers
         except Exception: return []
 
-    def find_instrument_data(ticker: str, country: str, api_key: str) -> dict:
+    def find_instrument_data(ticker: str, country_full_name: str, api_key: str) -> dict:
         """Uses the EODHD Search API to find the correct exchange for a ticker."""
         try:
             url = f"https://eodhistoricaldata.com/api/search/{ticker}?api_token={api_key}&fmt=json"
             response = requests.get(url, timeout=10)
             if response.status_code != 200: return None
+            
             search_results = response.json()
-            # Find the first result that matches the target country
             for result in search_results:
-                if result.get('Country') == country:
+                # --- FIX: Match against the full country name ---
+                if result.get('Country') == country_full_name:
                     return result
-            return None # No match found for the country
+            return None
         except Exception:
             return None
 
@@ -5426,21 +5427,16 @@ def investment_pipeline_agent():
     # --- 4. STREAMLIT UI AND ORCHESTRATION ---
     st.subheader("Step 1: Define Your Investment Theme")
     qualitative_theme = st.text_area("**Describe the Qualitative Theme**", "Companies leading the artificial intelligence revolution in enterprise software.", height=75)
-
     st.subheader("Step 2: Define Validation Criteria")
-
-    # --- START OF FIX ---
-    # Define the options for the selectbox
-    country_options = ["USA", "India", "Germany"]
-    # Use the 'index' parameter to set the default value
-    selected_country = st.selectbox("Target Country", options=country_options, index=country_options.index("USA"))
-    # --- END OF FIX ---
-
+    
+    # --- FIX: New dictionary to map short name to full name for the API ---
+    COUNTRY_MAP = {"USA": "United States", "India": "India", "Germany": "Germany"}
+    country_options = list(COUNTRY_MAP.keys())
+    selected_country_short_name = st.selectbox("Target Country", options=country_options, index=country_options.index("USA"))
+    
     col1, col2 = st.columns(2)
-    with col1: 
-        mkt_cap_min = st.slider("Min Market Cap (Billion USD)", 0.0, 500.0, 10.0, 1.0)
-    with col2: 
-        dividend_yield_min = st.slider("Min Dividend Yield (%)", 0.0, 10.0, 1.2, 0.1)
+    with col1: mkt_cap_min = st.slider("Min Market Cap (Billion USD)", 0.0, 500.0, 10.0, 1.0)
+    with col2: dividend_yield_min = st.slider("Min Dividend Yield (%)", 0.0, 10.0, 1.2, 0.1)
     
     st.subheader("Step 3: Generate and Analyze Ideas")
     if st.button("🚀 Generate, Validate, and Analyze", type="primary"):
@@ -5456,8 +5452,10 @@ def investment_pipeline_agent():
             validated_companies = []; failure_reasons = []
             progress = st.progress(0, text="Finding & Validating Tickers...")
             for i, ticker in enumerate(company_tickers):
-                # NEW: Find the correct instrument first
-                instrument = find_instrument_data(ticker, selected_country, eodhd_api_key)
+                # --- FIX: Use the full country name for the search ---
+                country_full_name = COUNTRY_MAP[selected_country_short_name]
+                instrument = find_instrument_data(ticker, country_full_name, eodhd_api_key)
+                
                 if not instrument:
                     failure_reasons.append(("NOT_FOUND", {"name": ticker}))
                 else:
@@ -5483,8 +5481,9 @@ def investment_pipeline_agent():
             st.success(f"Validated {len(analysis_df)} companies. Performing deep analysis...")
             st.dataframe(analysis_df[['code', 'name', 'exchange', 'sector', 'market_capitalization']], hide_index=True, use_container_width=True)
 
-            # STAGE 3: Analysis and Reporting
+            # --- STAGE 3: Analysis and Reporting ---
             all_dossiers = []
+            # ... (Rest of the analysis and reporting loop is unchanged)
             for i, company_row in analysis_df.iterrows():
                 ticker_code = f"{company_row['code']}.{company_row['exchange']}"
                 enrichment_data = enrich_company_data_eodhd(ticker_code, eodhd_api_key)
