@@ -5500,8 +5500,13 @@ def investment_pipeline_agent():
             if not risks: return "No specific risks identified."
             return "\n".join(f"* **{r.get('risk', 'N/A')}**: {r.get('description', 'N/A')}" for r in risks)
         quant_md = f"""| Metric | Value |\n|---|---|\n| Market Cap (USD) | ${quant_data.get('market_capitalization', 0) / 1e9:,.1f}B |\n| Dividend Yield | {quant_data.get('dividend_yield', 0):.2%} |"""
-        return {"dossier_title": f"{quant_data.get('name', 'N/A')} ({quant_data.get('code', 'N/A')}.{quant_data.get('exchange', '')})", "Quantitative Snapshot": quant_md, "Thematic Alignment & Justification": format_ai_analysis_to_markdown(qual_analysis.get('theme_analysis')), "Competitive Moat & Pricing Power": format_ai_analysis_to_markdown(qual_analysis.get('moat_analysis')), "Key Risks Identified": format_risks(qual_analysis.get('risk_analysis'))}
-
+        return {
+                "dossier_title": f"{quant_data.get('name', 'N/A')} ({quant_data.get('code', 'N/A')}.{quant_data.get('exchange', '')})",
+                "Quantitative Snapshot": quant_md,
+                "Thematic Alignment & Justification": format_ai_analysis_to_markdown(qual_analysis.get('theme_analysis')),
+                "Competitive Moat & Pricing Power": format_ai_analysis_to_markdown(qual_analysis.get('moat_analysis')),
+                "Key Risks Identified": format_risks(qual_analysis.get('risk_analysis'))
+        }
     def generate_final_html_report(dossier_list: list, theme: str) -> str:
         safe_theme = html.escape(theme or "...")
         styles = """<style>body{font-family:sans-serif;margin:20px;background-color:#f9fafb;color:#1f2937}.container{max-width:1200px;margin:auto}.report-header h1{font-size:2.2em;color:#111827;border-bottom:2px solid #d1d5db;padding-bottom:10px}.dossier{background-color:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:30px;margin-bottom:30px;box-shadow:0 4px 6px rgba(0,0,0,0.05)}.dossier h2{font-size:1.4em;border-bottom:1px solid #e5e7eb;padding-bottom:8px;margin-top:25px}.dossier table{width:100%;border-collapse:collapse;margin-top:15px}.dossier th,td{padding:10px 12px;border:1px solid #d1d5db;text-align:left}</style>"""
@@ -5580,10 +5585,16 @@ def investment_pipeline_agent():
                 progress.progress((i + 1) / len(company_tickers))
             progress.empty()
 
-            # (The failure reason reporting section remains unchanged)
             if failure_reasons:
-                # ... (code for failure summary)
-            
+                st.subheader("Validation Summary")
+                failure_counts = Counter(code for code, data in failure_reasons)
+                summary_md = "| Rejection Reason | Count |\n|---|---|\n"
+                summary_md += f"| Did not meet dividend yield | {failure_counts.get('FAIL_DIVIDEND', 0)} |\n"
+                summary_md += f"| Did not meet market cap | {failure_counts.get('FAIL_MCAP', 0)} |\n"
+                summary_md += f"| Sector did not match | {failure_counts.get('FAIL_SECTOR', 0)} |\n"
+                summary_md += f"| Ticker not found or incomplete data | {failure_counts.get('NOT_FOUND', 0) + failure_counts.get('INCOMPLETE_DATA', 0) + failure_counts.get('ERROR', 0)} |\n"
+                st.markdown(summary_md)
+
             if not validated_companies: st.warning("No companies met all your criteria."); return
             
             analysis_df = pd.DataFrame(validated_companies)
