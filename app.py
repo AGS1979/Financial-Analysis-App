@@ -5327,7 +5327,7 @@ def investment_pipeline_agent():
             return tickers
         except Exception: return []
 
-    def find_instrument_data(ticker: str, country_full_name: str, api_key: str) -> dict:
+    def find_instrument_data(ticker: str, country_code: str, api_key: str) -> dict:
         """Uses the EODHD Search API to find the correct exchange for a ticker."""
         try:
             url = f"https://eodhistoricaldata.com/api/search/{ticker}?api_token={api_key}&fmt=json"
@@ -5336,8 +5336,8 @@ def investment_pipeline_agent():
             
             search_results = response.json()
             for result in search_results:
-                # --- FIX: Match against the full country name ---
-                if result.get('Country') == country_full_name:
+                # --- FIX 3: The comparison now correctly checks "USA" against the API's "USA". ---
+                if result.get('Country') == country_code:
                     return result
             return None
         except Exception:
@@ -5428,16 +5428,15 @@ def investment_pipeline_agent():
     st.subheader("Step 1: Define Your Investment Theme")
     qualitative_theme = st.text_area("**Describe the Qualitative Theme**", "Companies leading the artificial intelligence revolution in enterprise software.", height=75)
     st.subheader("Step 2: Define Validation Criteria")
-    
-    # --- FIX: New dictionary to map short name to full name for the API ---
-    COUNTRY_MAP = {"USA": "United States", "India": "India", "Germany": "Germany"}
-    country_options = list(COUNTRY_MAP.keys())
-    selected_country_short_name = st.selectbox("Target Country", options=country_options, index=country_options.index("USA"))
-    
+
+    # --- FIX 1: Remove the COUNTRY_MAP. Use a simple list of codes that match the EODHD API output. ---
+    country_options = ["USA", "India", "Germany"]
+    selected_country_code = st.selectbox("Target Country", options=country_options, index=country_options.index("USA"))
+
     col1, col2 = st.columns(2)
     with col1: mkt_cap_min = st.slider("Min Market Cap (Billion USD)", 0.0, 500.0, 10.0, 1.0)
     with col2: dividend_yield_min = st.slider("Min Dividend Yield (%)", 0.0, 10.0, 1.2, 0.1)
-    
+
     st.subheader("Step 3: Generate and Analyze Ideas")
     if st.button("🚀 Generate, Validate, and Analyze", type="primary"):
         if not qualitative_theme: st.warning("Please describe your theme."); return
@@ -5448,13 +5447,12 @@ def investment_pipeline_agent():
             if not company_tickers: st.error("AI brainstorming returned no ideas."); return
 
             user_filters = {"market_cap_min": mkt_cap_min, "dividend_yield_min": dividend_yield_min}
-            
+
             validated_companies = []; failure_reasons = []
             progress = st.progress(0, text="Finding & Validating Tickers...")
             for i, ticker in enumerate(company_tickers):
-                # --- FIX: Use the full country name for the search ---
-                country_full_name = COUNTRY_MAP[selected_country_short_name]
-                instrument = find_instrument_data(ticker, country_full_name, eodhd_api_key)
+                # --- FIX 2: Pass the selected country code (e.g., "USA") directly to the function. ---
+                instrument = find_instrument_data(ticker, selected_country_code, eodhd_api_key)
                 
                 if not instrument:
                     failure_reasons.append(("NOT_FOUND", {"name": ticker}))
