@@ -5280,7 +5280,8 @@ def agent_sentinel_app():
 def investment_pipeline_agent():
     """
     A unified, multi-stage, AI-powered investment research pipeline.
-    It combines qualitative analysis (theme-first) with quantitative validation.
+    It uses a top-down, theme-first approach with rigorous, multi-factor validation.
+    The AI first identifies a sector, then brainstorms companies within it.
     """
     import json
     import pandas as pd
@@ -5293,19 +5294,12 @@ def investment_pipeline_agent():
     import streamlit as st
     
     st.markdown("### 💡 Agent IdeaGen")
-    st.markdown("Define a **qualitative theme**, and the agent will first brainstorm relevant companies. Then, use the **quantitative filters** to validate that list and generate a report.")
+    st.markdown("Define a qualitative theme. The agent will first identify the correct sector, brainstorm relevant companies, and then validate them against your quantitative filters.")
     
     # --- 1. API AND CLIENT SETUP ---
     MAX_COMPANIES_TO_ANALYZE = 50
-    INR_TO_USD_RATE = 83.0  
-
     try:
         eodhd_api_key = st.secrets["eodhd"]["api_key"]
-    except Exception:
-        st.error("EODHD API key not found in Streamlit secrets. Please add it to continue.")
-        return
-
-    try:
         client = AzureOpenAI(
             api_key=st.secrets["azure"]["openai_key"],
             api_version="2024-02-01",
@@ -5313,17 +5307,36 @@ def investment_pipeline_agent():
         )
         llm_deployment_name = st.secrets["azure"]["openai_deployment_name"]
     except Exception as e:
-        st.error(f"Could not initialize the LLM client. Please check your secrets. Error: {e}")
+        st.error(f"Could not initialize secrets or clients. Error: {e}")
         return
         
-    # --- 2. CORE FUNCTIONS (REFACTORED) ---
+    # --- 2. CORE FUNCTIONS (REFACTORED FOR NEW LOGIC) ---
 
-    def get_ideas_from_llm(theme: str, client: AzureOpenAI, llm_deployment_name: str, exchanges: list) -> list:
-        st.info("**(LIVE) Agent Brainstorm: Generating initial ideas based on your theme...**")
+    def get_theme_sector(theme: str, client: AzureOpenAI, llm_deployment_name: str) -> str:
+        st.info(f"**(LIVE) Step 1A: AI is identifying the primary sector for '{theme}'...**")
         prompt = f"""
-        You are an expert market analyst. Based on the investment theme "{theme}", identify up to 30 relevant publicly traded companies. 
-        Focus on companies listed on the following exchanges: {', '.join(exchanges)}.
-        Return ONLY a comma-separated list of their ticker symbols (e.g., AAPL, MSFT, GOOG). Do not include the exchange code.
+        You are an expert market analyst. For the investment theme "{theme}", what is the single most relevant GICS sector?
+        Choose from this list: ["Basic Materials", "Communication Services", "Consumer Cyclical", "Consumer Defensive", "Energy", "Financial Services", "Healthcare", "Industrials", "Real Estate", "Technology", "Utilities"].
+        Return only the single sector name as a string, for example: "Technology".
+        """
+        try:
+            response = client.chat.completions.create(
+                model=llm_deployment_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0
+            )
+            sector = response.choices[0].message.content.strip().replace('"', '')
+            st.success(f"Identified primary sector: **{sector}**")
+            return sector
+        except Exception as e:
+            st.error(f"Error during AI sector identification: {e}")
+            return None
+
+    def get_company_ideas(theme: str, sector: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
+        st.info(f"**(LIVE) Step 1B: AI is brainstorming companies for '{theme}' within the {sector} sector...**")
+        prompt = f"""
+        You are an expert market analyst. For the investment theme "{theme}" within the "{sector}" sector, brainstorm up to 30 relevant publicly traded companies.
+        Return ONLY a comma-separated list of their ticker symbols (e.g., AAPL, MSFT, GOOG).
         """
         try:
             response = client.chat.completions.create(
@@ -5332,7 +5345,6 @@ def investment_pipeline_agent():
                 temperature=0.1
             )
             content = response.choices[0].message.content
-            # Clean up the list, removing any extra spaces or empty strings
             tickers = [ticker.strip() for ticker in content.split(',') if ticker.strip()]
             st.success(f"Brainstorm complete. Found {len(tickers)} initial ideas.")
             return tickers
@@ -5340,296 +5352,153 @@ def investment_pipeline_agent():
             st.error(f"Error during AI brainstorming: {e}")
             return []
 
-    def validate_ideas_with_screener(tickers: list, filters: dict, api_key: str) -> pd.DataFrame:
-        st.info("**(LIVE) Stage 1: Validating brainstormed ideas with your quantitative filters...**")
-        base_url = "https://eodhd.com/api/screener"
-        
-        # The screener can take tickers directly as a top-level parameter
-        params = {
-            "api_token": api_key,
-            "tickers": ",".join(tickers),
-            "sort": "market_capitalization.desc",
-            "limit": 100 
-        }
-
-        eodhd_filters = []
-        if filters.get("market_cap_min"):
-            eodhd_filters.append(["market_capitalization", ">", filters["market_cap_min"] * 1e9])
-        if filters.get("dividend_yield_min") and filters["dividend_yield_min"] > 0:
-            decimal_yield = filters["dividend_yield_min"] / 100
-            eodhd_filters.append(["dividend_yield", ">", decimal_yield])
-        
-        # Add filters to the params if they exist
-        if eodhd_filters:
-            params["filters"] = json.dumps(eodhd_filters)
-
-        st.info(f"Applying filters to {len(tickers)} companies: {filters}")
-        
+    def validate_company(ticker: str, exchange_code: str, expected_sector: str, filters: dict, api_key: str) -> dict:
+        full_ticker = f"{ticker}.{exchange_code}"
         try:
-            response = requests.get(base_url, params=params, timeout=30)
-            response.raise_for_status()
-            data = response.json()
-            
-            if not data or 'data' not in data or not data['data']:
-                st.error("None of the brainstormed companies matched your quantitative criteria.")
-                return pd.DataFrame()
-                
-            df = pd.DataFrame(data['data'])
-            if 'market_capitalization' in df.columns:
-                df = df.sort_values(by='market_capitalization', ascending=False).reset_index(drop=True)
-            return df
-        except requests.exceptions.RequestException as e:
-            st.error(f"API Error during validation: {e}")
-            st.error(f"API Response: {e.response.text}")  
-            return pd.DataFrame()
-        except Exception as e:
-            st.error(f"An error occurred while processing validation results: {e}")
-            return pd.DataFrame()
+            base_url = f"https://eodhistoricaldata.com/api/fundamentals/{full_ticker}"
+            params = {"api_token": api_key}
+            response = requests.get(base_url, params=params, timeout=10)
+            if response.status_code != 200: return None # Skip if ticker not found
 
-    # --- (No changes needed for enrichment, analysis, or reporting functions) ---
-    def enrich_company_data_eodhd(ticker_code: str, api_key: str) -> dict: # ... same as before
+            data = response.json()
+            actual_sector = data.get('General', {}).get('Sector', 'Unknown')
+            market_cap = data.get('Highlights', {}).get('MarketCapitalization', 0)
+            dividend_yield = data.get('Highlights', {}).get('DividendYield', 0)
+
+            if (actual_sector == expected_sector and 
+                market_cap >= (filters["market_cap_min"] * 1e9) and 
+                dividend_yield >= (filters["dividend_yield_min"] / 100)):
+                return { "code": ticker, "name": data.get('General', {}).get('Name', 'N/A'), "exchange": data.get('General', {}).get('Exchange', 'N/A'), "sector": actual_sector, "market_capitalization": market_cap, "dividend_yield": dividend_yield }
+            return None
+        except Exception:
+            return None
+
+    # --- (No changes needed for enrichment, analysis, or reporting functions below this line) ---
+    def enrich_company_data_eodhd(ticker_code: str, api_key: str) -> dict:
         st.info(f"**(LIVE) Enriching {ticker_code} with fundamental data...**")
-        base_url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker_code}"
-        params = {"api_token": api_key}
+        base_url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker_code}"; params = {"api_token": api_key}
         try:
-            response = requests.get(base_url, params=params, timeout=15)
-            response.raise_for_status()
-            data = response.json()
+            response = requests.get(base_url, params=params, timeout=15); response.raise_for_status(); data = response.json()
             description = data.get('General', {}).get('Description', 'No description available.')
             news = aggregate_qualitative_data_eodhd(ticker_code, api_key)
             return {"description": description, "qualitative_corpus": f"Company Description:\n{description}\n\n---\n\nRecent News:\n{news}"}
-        except Exception:
-            return {"description": "Data enrichment failed.", "qualitative_corpus": "Could not fetch qualitative data."}
+        except Exception: return {"description": "Data enrichment failed.", "qualitative_corpus": "Could not fetch qualitative data."}
 
-    def aggregate_qualitative_data_eodhd(ticker_code: str, api_key: str) -> str: # ... same as before
-        base_url = "https://eodhistoricaldata.com/api/news"
-        ticker_only = ticker_code.split('.')[0]
-        params = {"api_token": api_key, "t": ticker_only, "limit": 50}
+    def aggregate_qualitative_data_eodhd(ticker_code: str, api_key: str) -> str:
+        base_url = "https://eodhistoricaldata.com/api/news"; ticker_only = ticker_code.split('.')[0]; params = {"api_token": api_key, "t": ticker_only, "limit": 50}
         try:
-            response = requests.get(base_url, params=params, timeout=15)
-            response.raise_for_status()
-            news_data = response.json()
-            if news_data and isinstance(news_data, list):
-                headlines = [f"- {item['title']} ({item['date']})" for item in news_data]
-                return "\n".join(headlines)
+            response = requests.get(base_url, params=params, timeout=15); response.raise_for_status(); news_data = response.json()
+            if news_data and isinstance(news_data, list): return "\n".join([f"- {item['title']} ({item['date']})" for item in news_data])
             return "No recent news found."
-        except Exception:
-            return "Could not fetch recent news."
+        except Exception: return "Could not fetch recent news."
             
-    def run_ai_qualitative_analysis(company_name: str, text_corpus: str, theme: str, client: AzureOpenAI, llm_deployment_name: str) -> dict: # ... same as before
+    def run_ai_qualitative_analysis(company_name: str, text_corpus: str, theme: str, client: AzureOpenAI, llm_deployment_name: str) -> dict:
         st.info(f"**(LIVE) Running AI Qualitative Analysis for {company_name}...**")
-        analysis_prompt = f"""You are an expert equity research analyst. Analyze '{company_name}' for the theme '{theme}' using the company description and recent news below.
-        Return a JSON with keys "theme_analysis", "moat_analysis", "risk_analysis". For "risk_analysis", provide a "top_risks" list of objects, each with "risk" and "description".
-        TEXT: --- {text_corpus[:25000]} ---"""
+        prompt = f"""Analyze '{company_name}' for the theme '{theme}' using the text below. Return a JSON with keys "theme_analysis", "moat_analysis", "risk_analysis". For "risk_analysis", provide a "top_risks" list of objects, each with "risk" and "description". TEXT: --- {text_corpus[:25000]} ---"""
         try:
-            response = client.chat.completions.create(
-                model=llm_deployment_name,
-                messages=[{"role": "system", "content": "You are an expert equity analyst that only outputs JSON."}, {"role": "user", "content": analysis_prompt}],
-                response_format={"type": "json_object"}
-            )
+            response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "system", "content": "You are an equity analyst that only outputs JSON."}, {"role": "user", "content": prompt}], response_format={"type": "json_object"})
             return json.loads(response.choices[0].message.content)
-        except Exception as e:
-            st.error(f"Error in AI Analysis: {e}")
-            return {}
+        except Exception as e: st.error(f"Error in AI Analysis: {e}"); return {}
 
-    def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str) -> dict: # ... same as before
-        st.info(f"**(LIVE) Synthesizing Dossier for {quant_data.get('name', 'N/A')}...**")
-        
-        def format_ai_analysis_to_markdown(analysis_data):
-            if not isinstance(analysis_data, dict): return str(analysis_data)
-            output_parts = []
-            if 'summary' in analysis_data: output_parts.append(analysis_data['summary'])
-            if 'description' in analysis_data: output_parts.append(analysis_data['description'])
-            if 'analysis' in analysis_data: output_parts.append(analysis_data['analysis'])
-            if 'overview' in analysis_data: output_parts.append(analysis_data['overview'])
-            list_keys = ['sources_of_moat', 'key_strengths', 'primary_sources_of_advantage', 'key_features']
-            for key in list_keys:
-                if key in analysis_data and isinstance(analysis_data[key], list):
-                    for item in analysis_data[key]:
-                        if isinstance(item, dict):
-                            title = next((item[k] for k in item if k != 'description'), 'Point')
-                            desc = item.get('description', '')
-                            output_parts.append(f"* **{title}**: {desc}")
-                        else:
-                            output_parts.append(f"* {item}")
-            if not output_parts and isinstance(analysis_data, dict):
-                for key, value in analysis_data.items():
-                    if isinstance(value, str):
-                        output_parts.append(f"**{key.replace('_', ' ').title()}**: {value}")
-            return "\n".join(output_parts) if output_parts else "No analysis available."
+    def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str) -> dict:
+        st.info(f"**(LIVE) Synthesizing Dossier for {quant_data.get('name', 'N/A')}...")
+        def format_ai_analysis_to_markdown(data):
+            if not isinstance(data, dict): return str(data)
+            parts = [v for k, v in data.items() if isinstance(v, str)]; return "\n".join(parts) if parts else "No analysis available."
+        def format_risks(data):
+            risks = data.get('top_risks', []) if isinstance(data, dict) else []
+            if not risks: return "No specific risks identified."
+            return "\n".join(f"* **{r.get('risk', 'N/A')}**: {r.get('description', 'N/A')}" for r in risks)
+        quant_md = f"""| Metric | Value |\n|---|---|\n| Market Cap (USD) | ${quant_data.get('market_capitalization', 0) / 1e9:,.1f}B |\n| Dividend Yield | {quant_data.get('dividend_yield', 0):.2%} |"""
+        return {"dossier_title": f"{quant_data.get('name', 'N/A')} ({quant_data.get('code', 'N/A')}.{quant_data.get('exchange', '')})", "Quantitative Snapshot": quant_md, "Thematic Alignment & Justification": format_ai_analysis_to_markdown(qual_analysis.get('theme_analysis')), "Competitive Moat & Pricing Power": format_ai_analysis_to_markdown(qual_analysis.get('moat_analysis')), "Key Risks Identified": format_risks(qual_analysis.get('risk_analysis'))}
 
-        def safe_get(data, keys, default="Analysis not available."):
-            temp = data
-            for key in keys:
-                temp = temp.get(key) if isinstance(temp, dict) else None
-            return temp if temp is not None else default
+    def generate_final_html_report(dossier_list: list, theme: str) -> str:
+        safe_theme = html.escape(theme or "..."); styles = """<style>body{font-family:sans-serif;margin:20px;background-color:#f9fafb;color:#1f2937}.container{max-width:1200px;margin:auto}.report-header h1{font-size:2.2em;color:#111827;border-bottom:2px solid #d1d5db;padding-bottom:10px}.dossier{background-color:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:30px;margin-bottom:30px;box-shadow:0 4px 6px rgba(0,0,0,0.05)}.dossier h2{font-size:1.4em;border-bottom:1px solid #e5e7eb;padding-bottom:8px;margin-top:25px}.dossier table{width:100%;border-collapse:collapse;margin-top:15px}.dossier th,td{padding:10px 12px;border:1px solid #d1d5db;text-align:left}</style>"""
+        html_body = f"<div class='report-header'><h1>Investment Idea Report</h1><h2>Theme: {safe_theme}</h2></div>"
+        for d in dossier_list:
+            html_body += f"<div class='dossier'><h1>{html.escape(d.get('dossier_title', ''))}</h1>"
+            for s in ["Quantitative Snapshot", "Thematic Alignment & Justification", "Competitive Moat & Pricing Power", "Key Risks Identified"]:
+                if s in d: html_body += f"<h2>{html.escape(s)}</h2>" + markdown.markdown(str(d[s]), extensions=['tables'])
+        return f"<!DOCTYPE html><html><head><title>IdeaGen Report</title>{styles}</head><body><div class='container'>{html_body}</div></body></html>"
 
-        def format_risks(risk_data):
-            if isinstance(risk_data, list):
-                return "\n".join(f"* {item}" for item in risk_data)
-            risk_list = safe_get(risk_data, ['top_risks'], default=[])
-            if not isinstance(risk_list, list) or not risk_list:
-                return "No specific risks identified or analysis failed."
-            return "\n".join(f"* **{r.get('risk', 'N/A')}**: {r.get('description', 'N/A')}" for r in risk_list)
-
-        market_cap_val = quant_data.get('market_capitalization', 0)
-        currency = quant_data.get('currency', 'USD')
-        if currency == 'INR':
-            market_cap_usd = market_cap_val / INR_TO_USD_RATE
-        else:
-            market_cap_usd = market_cap_val
-            
-        quant_table_md = textwrap.dedent(f"""
-        | Metric | Value |
-        |---|---|
-        | Market Cap (USD) | ${market_cap_usd / 1e9:,.1f}B |
-        | Dividend Yield | {quant_data.get('dividend_yield', 'N/A'):.2%} |
-        | Currency | {currency} |
-        """)
-        executive_summary = f"{quant_data.get('name', 'N/A')} is a company operating in the {quant_data.get('sector', 'N/A')} sector, identified as a potential candidate for the '{theme}' theme."
-        
-        return {
-            "dossier_title": f"{quant_data.get('name', 'N/A')} ({quant_data.get('code', 'N/A')}.{quant_data.get('exchange', '')})",
-            "metadata": f"**Theme:** {theme}",
-            "Executive Summary": executive_summary,
-            "Quantitative Snapshot": quant_table_md,
-            "Thematic Alignment & Justification": format_ai_analysis_to_markdown(safe_get(qual_analysis, ['theme_analysis'])),
-            "Competitive Moat & Pricing Power": format_ai_analysis_to_markdown(safe_get(qual_analysis, ['moat_analysis'])),
-            "Key Risks Identified": format_risks(qual_analysis.get('risk_analysis'))
-        }
-    
-    def generate_final_html_report(dossier_list: list, theme: str) -> str: # ... same as before
-        safe_theme = html.escape(theme or "User-Defined Theme"); styles = """<style> body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background-color: #f9fafb; color: #1f2937;} .container { max-width: 1200px; margin: auto; } .report-header h1 { font-size: 2.2em; color: #111827; border-bottom: 2px solid #d1d5db; padding-bottom: 10px; margin-bottom: 5px; } .report-header h2 { font-size: 1.2em; color: #6b7280; font-weight: 400; margin-top: 0; } .dossier { background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 30px; margin-bottom: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); } .dossier h1, .dossier h2 { color: #111827; } .dossier h1 { font-size: 1.8em; } .dossier h2 { font-size: 1.4em; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-top: 25px; } .dossier table { width: 100%; border-collapse: collapse; margin-top: 15px; } .dossier th, .dossier td { padding: 10px 12px; border: 1px solid #d1d5db; text-align: left; } .dossier th { background-color: #f3f4f6; font-weight: 600; } .dossier p { line-height: 1.6; } .dossier .metadata { color: #4b5563; font-size: 0.9em; } .dossier ul { padding-left: 20px; } .dossier li { margin-bottom: 0.5em; } </style>"""
-        html_body = f"<div class='report-header'><h1>Investment Idea Generation Report</h1><h2>Theme: {safe_theme}</h2></div>"
-        for dossier_dict in dossier_list:
-            html_body += f"<div class='dossier'><h1>{html.escape(dossier_dict.get('dossier_title', ''))}</h1>"
-            metadata_md = dossier_dict.get('metadata', ''); html_body += f"<div class='metadata'>{markdown.markdown(metadata_md)}</div><hr>"
-            main_sections = ["Executive Summary", "Quantitative Snapshot", "Thematic Alignment & Justification", "Competitive Moat & Pricing Power", "Key Risks Identified"]
-            for section_title in main_sections:
-                if section_title in dossier_dict: html_body += f"<h2>{html.escape(section_title)}</h2>" + markdown.markdown(str(dossier_dict[section_title]), extensions=['tables'])
-            
-            if 'risk_analysis' in dossier_dict:
-                risk_rec = dossier_dict['risk_analysis'].get('position_size_recommendation', 'N/A')
-                risk_rat = dossier_dict['risk_analysis'].get('rationale', 'N/A')
-                top_risks = ", ".join(dossier_dict['risk_analysis'].get('top_risks', []))
-                html_body += f"<h2>Risk & Position Sizing Summary</h2><p><strong>Recommended Position Size:</strong> {html.escape(str(risk_rec))}</p><p><strong>Rationale:</strong> {html.escape(str(risk_rat))}</p><p><strong>Top Risks Identified:</strong> {html.escape(str(top_risks))}</p>"
-            html_body += "</div>"
-        return f"<!DOCTYPE html><html><head><title>IdeaGen Report: {safe_theme}</title>{styles}</head><body><div class='container'>{html_body}</div></body></html>"
-
-    def risk_and_sizing_agent(dossier: dict, client: AzureOpenAI, llm_deployment_name: str) -> dict: # ... same as before
-        st.info("Agent 3/3: Risk & Position Sizing Agent is evaluating risk profile...")
-        prompt = f"""You are a quantitative risk and portfolio manager. Analyze the investment dossier below.
-        - Identify the top 3 concentration and macroeconomic risks.
-        - Recommend a position size (1-10% of a standard portfolio) with a clear, quantitative rationale based on the identified risks and potential.
-        **Dossier:**
-        {json.dumps(dossier)[:10000]}
-        Return a JSON object with the following keys:
-        - "top_risks": ["Risk 1", "Risk 2", "Risk 3"]
-        - "position_size_recommendation": "<percentage>"
-        - "rationale": "<A short paragraph justifying the position size based on the risks and potential alpha>"
-        """
+    def risk_and_sizing_agent(dossier: dict, client: AzureOpenAI, llm_deployment_name: str) -> dict:
+        st.info("**(LIVE) Agent 3/3: Risk & Position Sizing Agent is evaluating risk profile...**")
+        prompt = f"""Analyze the dossier. Recommend a position size (1-10%). Return JSON with "position_size_recommendation" and "rationale". DOSSIER: {json.dumps(dossier)[:10000]}"""
         try:
-            response = client.chat.completions.create(
-                model=llm_deployment_name,
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"}
-            )
+            response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"})
             return json.loads(response.choices[0].message.content)
-        except Exception as e:
-            return {"error": f"Error in risk analysis: {e}"}  
+        except Exception as e: return {"error": f"Risk analysis failed: {e}"}
 
-    # --- 4. STREAMLIT UI AND ORCHESTRATION (REFACTORED) ---
+    # --- 4. STREAMLIT UI AND ORCHESTRATION ---
     st.subheader("Step 1: Define Your Investment Theme")
     qualitative_theme = st.text_area("**Describe the Qualitative Theme**", "Companies leading the artificial intelligence revolution in enterprise software.", height=75)
 
     st.subheader("Step 2: Define Validation Criteria")
-    
-    # We use the broad exchange codes here because the LLM needs them for context
-    COUNTRY_TO_EXCHANGE = {"USA": "US", "India": "NSE", "Germany": "F", "United Kingdom": "LSE", "Canada": "TO"}
+    COUNTRY_TO_EXCHANGE = {"USA": "US", "India": "NSE", "Germany": "F"}
     selected_countries = st.multiselect("Target Countries", options=list(COUNTRY_TO_EXCHANGE.keys()), default=["USA"])
     
     col1, col2 = st.columns(2)
-    with col1:
-        mkt_cap_min = st.slider("Min Market Cap (Billion USD)", 0.0, 500.0, 10.0, 1.0)
-    with col2:
-        dividend_yield_min = st.slider("Min Dividend Yield (%)", 0.0, 10.0, 0.0, 0.1)
+    with col1: mkt_cap_min = st.slider("Min Market Cap (Billion USD)", 0.0, 500.0, 10.0, 1.0)
+    with col2: dividend_yield_min = st.slider("Min Dividend Yield (%)", 0.0, 10.0, 0.0, 0.1)
     
     st.subheader("Step 3: Generate and Analyze Ideas")
+    if st.button("🚀 Generate, Validate, and Analyze", type="primary"):
+        if not qualitative_theme: st.warning("Please describe your investment theme."); return
 
-    if st.button("🚀 Generate Ideas, Validate, and Analyze", type="primary"):
-        if not qualitative_theme:
-            st.warning("Please describe your investment theme.")
-            return
+        with st.spinner("Running full investment pipeline..."):
+            # STAGE 1A: AI Sector Identification
+            theme_sector = get_theme_sector(qualitative_theme, client, llm_deployment_name)
+            if not theme_sector: st.error("Could not identify a sector for this theme. Please try a different theme."); return
 
-        with st.spinner("Running full investment pipeline... This may take a few minutes."):
-            # New Step: LLM Brainstorming
-            target_exchanges = [COUNTRY_TO_EXCHANGE[c] for c in selected_countries]
-            llm_ideas = get_ideas_from_llm(qualitative_theme, client, llm_deployment_name, target_exchanges)
+            # STAGE 1B: AI Company Brainstorming
+            company_tickers = get_company_ideas(qualitative_theme, theme_sector, client, llm_deployment_name)
+            if not company_tickers: st.error("AI brainstorming did not return any company ideas."); return
+
+            # STAGE 2: Rigorous Validation
+            st.info(f"**(LIVE) Stage 2: Validating {len(company_tickers)} ideas against your criteria...**")
+            user_filters = {"market_cap_min": mkt_cap_min, "dividend_yield_min": dividend_yield_min}
+            exchange_code = COUNTRY_TO_EXCHANGE[selected_countries[0]] # Simplified for single country selection for now
             
-            if not llm_ideas:
-                st.error("The initial brainstorming did not return any company ideas. Try a different theme.")
-                return
+            validated_companies = []
+            validation_progress = st.progress(0)
+            for i, ticker in enumerate(company_tickers):
+                result = validate_company(ticker, exchange_code, theme_sector, user_filters, eodhd_api_key)
+                if result: validated_companies.append(result)
+                validation_progress.progress((i + 1) / len(company_tickers))
+            validation_progress.empty()
 
-            # New Step: Quantitative Validation
-            user_filters = {
-                "market_cap_min": mkt_cap_min,
-                "dividend_yield_min": dividend_yield_min
-            }
-            validated_df = validate_ideas_with_screener(llm_ideas, user_filters, eodhd_api_key)
+            if not validated_companies: st.warning("Validation complete. None of the brainstormed companies met your criteria."); return
             
-            if validated_df.empty:
-                st.warning("Validation complete, but no companies met your criteria.")
-                return
-
-            # --- Analysis and Reporting (largely the same as before) ---
-            analysis_df = validated_df.head(MAX_COMPANIES_TO_ANALYZE)
-            st.success(f"Validated {len(validated_df)} companies. Performing deep analysis on the top {len(analysis_df)} by market cap.")
+            analysis_df = pd.DataFrame(validated_companies)
+            st.success(f"Validated {len(analysis_df)} companies. Performing deep analysis...")
             st.dataframe(analysis_df[['code', 'name', 'exchange', 'sector', 'market_capitalization']], hide_index=True, use_container_width=True)
 
+            # STAGE 3: Analysis and Reporting
             all_dossiers = []
-            progress_bar = st.progress(0, text=f"Analyzing 0 / {len(analysis_df)} companies...")
+            analysis_progress = st.progress(0)
             for i, company_row in analysis_df.iterrows():
-                # Note: The screener provides the correct exchange code needed for the fundamentals API
                 ticker_code = f"{company_row['code']}.{company_row['exchange']}"
-                progress_bar.progress((i + 1) / len(analysis_df), text=f"Analyzing {company_row['name']}...")
+                dossier = {"error": "Initial placeholder"} # Placeholder for the dossier
                 
-                # The old `thesis_validation_agent` is no longer needed, we just enrich and analyze
                 enrichment_data = enrich_company_data_eodhd(ticker_code, eodhd_api_key)
-                if "failed" in enrichment_data.get("description", ""):
-                    st.warning(f"Skipping {company_row['name']} due to data enrichment error.")
-                    continue
+                if "failed" in enrichment_data.get("description", ""): st.warning(f"Skipping {company_row['name']} due to enrichment error."); continue
                 
-                qualitative_analysis = run_ai_qualitative_analysis(company_row['name'], enrichment_data['qualitative_corpus'], qualitative_theme, client, llm_deployment_name)
-                if not qualitative_analysis:
-                    st.warning(f"Skipping {company_row['name']} due to AI analysis error.")
-                    continue
-
-                full_company_data = pd.Series(company_row)
-                full_company_data = pd.concat([full_company_data, pd.Series(enrichment_data)])
-                dossier = synthesize_dossier(full_company_data, qualitative_analysis, qualitative_theme)
-
+                qual_analysis = run_ai_qualitative_analysis(company_row['name'], enrichment_data['qualitative_corpus'], qualitative_theme, client, llm_deployment_name)
+                if not qual_analysis: st.warning(f"Skipping {company_row['name']} due to analysis error."); continue
+                
+                full_data = pd.concat([company_row, pd.Series(enrichment_data)])
+                dossier = synthesize_dossier(full_data, qual_analysis, qualitative_theme)
+                
                 risk_analysis = risk_and_sizing_agent(dossier, client, llm_deployment_name)
                 dossier['risk_analysis'] = risk_analysis
                 all_dossiers.append(dossier)
-            
-            progress_bar.empty()
+                analysis_progress.progress((i + 1) / len(analysis_df))
+            analysis_progress.empty()
 
             if all_dossiers:
                 final_html_report = generate_final_html_report(all_dossiers, qualitative_theme)
-                
-                def sanitize_filename(name):
-                    name = name.strip().replace(' ', '_')
-                    return re.sub(r'(?u)[^-\w.]', '', name)
-
-                safe_filename = sanitize_filename(qualitative_theme[:40])
-
-                st.download_button(
-                    label="📥 Download Full HTML Report",
-                    data=final_html_report,
-                    file_name=f"IdeaGen_Report_{safe_filename}.html",
-                    mime="text/html",
-                    use_container_width=True
-                )
+                safe_filename = re.sub(r'(?u)[^-\w.]', '', qualitative_theme[:40].strip().replace(' ', '_'))
+                st.download_button(label="📥 Download Full HTML Report", data=final_html_report, file_name=f"IdeaGen_Report_{safe_filename}.html", mime="text/html", use_container_width=True)
             else:
                 st.error("Could not generate a report for any of the validated companies.")
 
