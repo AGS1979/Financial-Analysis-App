@@ -5503,14 +5503,38 @@ def investment_pipeline_agent():
         return f"<!DOCTYPE html><html><head><title>IdeaGen Report: {safe_theme}</title>{styles}</head><body><div class='container'>{html_body}</div></body></html>"
 
 
-    def thesis_validation_agent(company_data: dict, theme: str, client: AzureOpenAI, eodhd_api_key: str, llm_deployment_name: str) -> dict:
-        st.info(f"Agent 2/3: Thesis Validation Agent is gathering data and generating dossier for {company_data['name']}...")
-        enrichment_data = enrich_company_data_eodhd(company_data['code'], eodhd_api_key)
+    def thesis_validation_agent(company_data: dict, theme: str, client: AzureOpenAI, eodhd_api_key: str, llm_deployment_name: str, user_filters: dict) -> dict:
+    
+        # --- STEP 1: ENRICH AND VALIDATE THE COMPANY ---
+        ticker_code = f"{company_data['code']}.{company_data['exchange']}"
+        enrichment_data = enrich_company_data_eodhd(ticker_code, eodhd_api_key)
+        
         if "failed" in enrichment_data.get("description", ""):
             return {"error": f"Could not enrich data for {company_data['name']}."}
+
+        # --- THIS IS THE FILTERING LOGIC ---
+        if not user_filters.get("include_adrs"):
+            general_info = enrichment_data.get("general", {})
+            company_type = general_info.get('Type', 'N/A')
+            company_country = general_info.get('CountryName', 'N/A')
+            
+            # Condition 1: Must be Common Stock
+            if company_type != 'Common Stock':
+                st.warning(f"Skipping {company_data['name']} (Type: {company_type}) because it is not Common Stock.")
+                return {"error": "Skipped: Not Common Stock."}
+                
+            # Condition 2: Must be domiciled in one of the selected countries
+            if company_country not in user_filters.get("countries", []):
+                st.warning(f"Skipping {company_data['name']} (Domiciled in {company_country}) as it is outside selected regions.")
+                return {"error": "Skipped: Domicile country mismatch."}
+        # --- END OF FILTERING LOGIC ---
+
+        # --- STEP 2: PROCEED WITH AI ANALYSIS IF VALIDATED ---
+        st.info(f"Validation passed for {company_data['name']}. Running AI analysis...")
         qualitative_analysis = run_ai_qualitative_analysis(company_data['name'], enrichment_data['qualitative_corpus'], theme, client, llm_deployment_name)
         if not qualitative_analysis:
             return {"error": f"Qualitative analysis failed for {company_data['name']}."}
+            
         full_company_data = pd.Series(company_data)
         full_company_data = pd.concat([full_company_data, pd.Series(enrichment_data)])
         dossier = synthesize_dossier(full_company_data, qualitative_analysis, theme)
