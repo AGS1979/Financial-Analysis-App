@@ -5358,7 +5358,7 @@ def investment_pipeline_agent():
         except Exception:
             return None
 
-    def validate_company_with_reason(instrument: dict, expected_sectors: list, filters: dict, api_key: str) -> (str, dict):
+    def validate_company_with_reason(instrument: dict, expected_sectors: list, filters: dict, api_key: str, exchange_rate_cache: dict) -> (str, dict):
         ticker, exchange = instrument['Code'], instrument['Exchange']
         try:
             url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker}.{exchange}?api_token={api_key}"
@@ -5368,29 +5368,60 @@ def investment_pipeline_agent():
             
             general = data.get('General', {}); highlights = data.get('Highlights', {})
             name = general.get('Name', ticker)
-            market_cap = highlights.get('MarketCapitalization')
+            
+            # --- CURRENCY FIX: Get local currency and market cap ---
+            local_currency = general.get('CurrencyCode', 'USD')
+            market_cap_local = highlights.get('MarketCapitalization')
 
-            # --- FIX 1: Treat missing DividendYield as 0 instead of failing. ---
-            # A None value often means the company doesn't pay a dividend.
+            # Treat missing DividendYield as 0
             dividend_yield = highlights.get('DividendYield') or 0.0
-
-            # --- FIX 2: Remove the strict sector check. The qualitative analysis will determine the true fit. ---
-            # This prevents rejecting good ideas like GOOG just because its GICS sector is "Communication Services".
+            
+            # Remove the strict sector check
             actual_sector = general.get('Sector', 'N/A') 
 
-            # Check for the most critical missing data
-            if not all([name, market_cap is not None]):
+            if not all([name, market_cap_local is not None]):
                 return "INCOMPLETE_DATA", {"name": name}
 
-            # Validate against user filters
-            if market_cap < (filters["market_cap_min"] * 1e9):
-                return "FAIL_MCAP", {"name": name, "value": market_cap}
+            # --- CURRENCY FIX: Convert market cap to USD ---
+            rate_to_usd = get_exchange_rate(local_currency, "USD", api_key, exchange_rate_cache)
+            market_cap_usd = market_cap_local / rate_to_usd # Divide to convert local currency to USD
+
+            # --- MILLIONS & CURRENCY FIX: Validate against user filters in USD and Millions ---
+            if market_cap_usd < (filters["market_cap_min"] * 1e6):
+                return "FAIL_MCAP", {"name": name, "value": market_cap_usd}
             if dividend_yield < (filters["dividend_yield_min"] / 100):
                 return "FAIL_DIVIDEND", {"name": name, "value": dividend_yield}
 
-            return "PASS", { "code": ticker, "name": name, "exchange": exchange, "sector": actual_sector, "market_capitalization": market_cap, "dividend_yield": dividend_yield }
+            return "PASS", { "code": ticker, "name": name, "exchange": exchange, "sector": actual_sector, "market_capitalization": market_cap_usd, "dividend_yield": dividend_yield }
         except (requests.RequestException, json.JSONDecodeError):
             return "ERROR", {"name": instrument.get('Name')}
+
+
+    def get_exchange_rate(from_currency: str, to_currency: str, api_key: str, cache: dict) -> float:
+        """Fetches the exchange rate for a currency pair, using a cache to avoid redundant API calls."""
+        pair = f"{from_currency.upper()}{to_currency.upper()}"
+        if pair in cache:
+            return cache[pair]
+        if from_currency == to_currency:
+            return 1.0
+        
+        try:
+            # NOTE: EODHD real-time API uses a different format for the pair in the URL
+            url = f"https://eodhistoricaldata.com/api/real-time/{from_currency.upper()}.{to_currency.upper()}?api_token={api_key}&fmt=json"
+            response = requests.get(url, timeout=5)
+            if response.status_code == 200:
+                # The rate is how many 'from_currency' units you get for 1 'to_currency' unit.
+                # E.g., for INR.USD, it returns ~83, meaning 83 INR for 1 USD.
+                rate = response.json().get('close') 
+                if rate and rate > 0:
+                    cache[pair] = rate
+                    return rate
+            return 1.0 # Fallback to 1.0 if API fails, preventing a crash
+        except Exception:
+            return 1.0 # Fallback
+
+
+
 
     # --- (All other analysis, enrichment, and reporting functions are unchanged) ---
     def enrich_company_data_eodhd(ticker_code: str, api_key: str) -> dict: # ... unchanged
@@ -5470,7 +5501,7 @@ def investment_pipeline_agent():
     selected_country_code = st.selectbox("Target Country", options=country_options, index=country_options.index("USA"))
 
     col1, col2 = st.columns(2)
-    with col1: mkt_cap_min = st.slider("Min Market Cap (Billion USD)", 0.0, 500.0, 10.0, 1.0)
+    with col1: mkt_cap_min = st.slider("Min Market Cap (Million USD)", 100.0, 500000.0, 10000.0, 100.0)
     with col2: dividend_yield_min = st.slider("Min Dividend Yield (%)", 0.0, 10.0, 1.2, 0.1)
 
     st.subheader("Step 3: Generate and Analyze Ideas")
@@ -5485,6 +5516,7 @@ def investment_pipeline_agent():
             user_filters = {"market_cap_min": mkt_cap_min, "dividend_yield_min": dividend_yield_min}
 
             validated_companies = []; failure_reasons = []
+            exchange_rate_cache = {} # Create the cache here
             progress = st.progress(0, text="Finding & Validating Tickers...")
             for i, ticker in enumerate(company_tickers):
                 # --- FIX 2: Pass the selected country code (e.g., "USA") directly to the function. ---
@@ -5493,9 +5525,11 @@ def investment_pipeline_agent():
                 if not instrument:
                     failure_reasons.append(("NOT_FOUND", {"name": ticker}))
                 else:
-                    status, result = validate_company_with_reason(instrument, theme_sectors, user_filters, eodhd_api_key)
+                    # Pass the cache into the validation function
+                    status, result = validate_company_with_reason(instrument, theme_sectors, user_filters, eodhd_api_key, exchange_rate_cache)
                     if status == 'PASS': validated_companies.append(result)
                     else: failure_reasons.append((status, result))
+                    
                 progress.progress((i + 1) / len(company_tickers))
             progress.empty()
 
