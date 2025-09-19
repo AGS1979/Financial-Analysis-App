@@ -5426,11 +5426,21 @@ def investment_pipeline_agent():
     # --- 4. STREAMLIT UI AND ORCHESTRATION ---
     st.subheader("Step 1: Define Your Investment Theme")
     qualitative_theme = st.text_area("**Describe the Qualitative Theme**", "Companies leading the artificial intelligence revolution in enterprise software.", height=75)
+
     st.subheader("Step 2: Define Validation Criteria")
-    selected_country = st.selectbox("Target Country", options=["USA", "India", "Germany"], default="USA")
+
+    # --- START OF FIX ---
+    # Define the options for the selectbox
+    country_options = ["USA", "India", "Germany"]
+    # Use the 'index' parameter to set the default value
+    selected_country = st.selectbox("Target Country", options=country_options, index=country_options.index("USA"))
+    # --- END OF FIX ---
+
     col1, col2 = st.columns(2)
-    with col1: mkt_cap_min = st.slider("Min Market Cap (Billion USD)", 0.0, 500.0, 10.0, 1.0)
-    with col2: dividend_yield_min = st.slider("Min Dividend Yield (%)", 0.0, 10.0, 1.2, 0.1)
+    with col1: 
+        mkt_cap_min = st.slider("Min Market Cap (Billion USD)", 0.0, 500.0, 10.0, 1.0)
+    with col2: 
+        dividend_yield_min = st.slider("Min Dividend Yield (%)", 0.0, 10.0, 1.2, 0.1)
     
     st.subheader("Step 3: Generate and Analyze Ideas")
     if st.button("🚀 Generate, Validate, and Analyze", type="primary"):
