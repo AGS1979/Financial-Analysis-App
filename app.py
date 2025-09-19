@@ -5340,7 +5340,7 @@ def investment_pipeline_agent():
         # If the user does NOT want ADRs, add a strict filter for the company's domicile country
         if not filters.get("include_adrs") and filters.get("countries"):
             st.info("Filtering for companies domiciled in selected countries (excluding ADRs)...")
-            eodhd_filters.append(["country", "in", filters["countries"]])
+            eodhd_filters.append(["country_name", "in", filters["countries"]])
         # --- END OF LOGIC FIX ---
 
         if not eodhd_filters:
