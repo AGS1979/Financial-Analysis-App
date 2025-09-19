@@ -5325,9 +5325,16 @@ def investment_pipeline_agent():
             return sectors
         except Exception: return None
 
-    def get_company_ideas(theme: str, sectors: list, client: AzureOpenAI, llm_deployment_name: str) -> list:
+    def get_company_ideas(theme: str, sectors: list, country: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
         st.info(f"**(LIVE) Step 1B: AI is brainstorming companies for '{theme}'...**")
-        prompt = f"""For the theme "{theme}" within sectors '{', '.join(sectors)}', brainstorm up to 20 public companies. Return ONLY a comma-separated list of ticker symbols."""
+        
+        # --- FIX: Add the selected country to the prompt to constrain the AI's brainstorming ---
+        prompt = f"""
+        For the theme "{theme}" within sectors '{', '.join(sectors)}', brainstorm up to 20 public companies that are primarily listed in the country: {country}.
+        
+        Return ONLY a comma-separated list of their most common ticker symbols on their primary exchange. 
+        For example, for Germany, use tickers from the XETRA exchange where possible (e.g., SAP, DTE).
+        """
         try:
             response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], temperature=0.1)
             tickers = [t.strip() for t in response.choices[0].message.content.split(',') if t.strip()]
@@ -5469,7 +5476,7 @@ def investment_pipeline_agent():
         with st.spinner("Running full investment pipeline..."):
             theme_sectors = get_theme_sectors(qualitative_theme, client, llm_deployment_name)
             if not theme_sectors: st.error("Could not identify sectors for this theme."); return
-            company_tickers = get_company_ideas(qualitative_theme, theme_sectors, client, llm_deployment_name)
+            company_tickers = get_company_ideas(qualitative_theme, theme_sectors, selected_country_code, client, llm_deployment_name)
             if not company_tickers: st.error("AI brainstorming returned no ideas."); return
 
             user_filters = {"market_cap_min": mkt_cap_min, "dividend_yield_min": dividend_yield_min}
