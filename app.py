@@ -5358,20 +5358,41 @@ def investment_pipeline_agent():
             base_url = f"https://eodhistoricaldata.com/api/fundamentals/{full_ticker}"
             params = {"api_token": api_key}
             response = requests.get(base_url, params=params, timeout=10)
-            if response.status_code != 200: return None # Skip if ticker not found
+            
+            # Skip if the ticker is not found (common with LLM suggestions)
+            if response.status_code != 200:
+                return None
 
             data = response.json()
-            actual_sector = data.get('General', {}).get('Sector', 'Unknown')
-            market_cap = data.get('Highlights', {}).get('MarketCapitalization', 0)
-            dividend_yield = data.get('Highlights', {}).get('DividendYield', 0)
 
+            # --- START OF FIX ---
+            # The correct path to these values is inside the "Highlights" object
+            highlights = data.get('Highlights', {})
+            market_cap = highlights.get('MarketCapitalization', 0)
+            dividend_yield = highlights.get('DividendYield', 0)
+            
+            general_info = data.get('General', {})
+            actual_sector = general_info.get('Sector', 'Unknown')
+            # --- END OF FIX ---
+
+            # Now, perform the validation using the correctly retrieved values
             if (actual_sector == expected_sector and 
                 market_cap >= (filters["market_cap_min"] * 1e9) and 
                 dividend_yield >= (filters["dividend_yield_min"] / 100)):
-                return { "code": ticker, "name": data.get('General', {}).get('Name', 'N/A'), "exchange": data.get('General', {}).get('Exchange', 'N/A'), "sector": actual_sector, "market_capitalization": market_cap, "dividend_yield": dividend_yield }
-            return None
+                
+                # If all checks pass, return the company's data
+                return {
+                    "code": ticker,
+                    "name": general_info.get('Name', 'N/A'),
+                    "exchange": general_info.get('Exchange', 'N/A'),
+                    "sector": actual_sector,
+                    "market_capitalization": market_cap,
+                    "dividend_yield": dividend_yield
+                }
+            
+            return None # Return None if any validation check fails
         except Exception:
-            return None
+            return None # Any other error also results in a failed validation
 
     # --- (No changes needed for enrichment, analysis, or reporting functions below this line) ---
     def enrich_company_data_eodhd(ticker_code: str, api_key: str) -> dict:
