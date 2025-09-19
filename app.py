@@ -5491,20 +5491,16 @@ def investment_pipeline_agent():
         market_cap_usd = market_cap_local / rate_usd_to_local if rate_usd_to_local else 0
         
         quant_md = f"""| Metric | Value |\n|---|---|\n| Market Cap (USD) | ${market_cap_usd / 1e9:,.1f}B |\n| Dividend Yield | {quant_data.get('dividend_yield', 0):.2%} |"""
-        
-        # (The rest of the function for formatting qualitative data remains the same)
+
         def format_ai_analysis_to_markdown(data):
-            # ... (unchanged)
+            if not isinstance(data, dict): return str(data)
+            parts = [v for k, v in data.items() if isinstance(v, str)]; return "\n".join(parts) if parts else "No analysis available."
         def format_risks(data):
-            # ... (unchanged)
-            
-        return {
-            "dossier_title": f"{quant_data.get('name', 'N/A')} ({quant_data.get('code', 'N/A')}.{quant_data.get('exchange', '')})",
-            "Quantitative Snapshot": quant_md,
-            "Thematic Alignment & Justification": format_ai_analysis_to_markdown(qual_analysis.get('theme_analysis')),
-            "Competitive Moat & Pricing Power": format_ai_analysis_to_markdown(qual_analysis.get('moat_analysis')),
-            "Key Risks Identified": format_risks(qual_analysis.get('risk_analysis'))
-        }
+            risks = data.get('top_risks', []) if isinstance(data, dict) else [];
+            if not risks: return "No specific risks identified."
+            return "\n".join(f"* **{r.get('risk', 'N/A')}**: {r.get('description', 'N/A')}" for r in risks)
+        quant_md = f"""| Metric | Value |\n|---|---|\n| Market Cap (USD) | ${quant_data.get('market_capitalization', 0) / 1e9:,.1f}B |\n| Dividend Yield | {quant_data.get('dividend_yield', 0):.2%} |"""
+        return {"dossier_title": f"{quant_data.get('name', 'N/A')} ({quant_data.get('code', 'N/A')}.{quant_data.get('exchange', '')})", "Quantitative Snapshot": quant_md, "Thematic Alignment & Justification": format_ai_analysis_to_markdown(qual_analysis.get('theme_analysis')), "Competitive Moat & Pricing Power": format_ai_analysis_to_markdown(qual_analysis.get('moat_analysis')), "Key Risks Identified": format_risks(qual_analysis.get('risk_analysis'))}
 
     def generate_final_html_report(dossier_list: list, theme: str) -> str:
         safe_theme = html.escape(theme or "...")
