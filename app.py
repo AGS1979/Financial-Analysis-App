@@ -5332,17 +5332,9 @@ def investment_pipeline_agent():
         if filters.get("sectors"):
             eodhd_filters.append(["sector", "in", filters["sectors"]])
             
-        # Always filter by the selected exchanges first
+        # We ONLY filter by exchange here. Country/type filtering happens later.
         if filters.get("exchanges"):
             eodhd_filters.append(["exchange", "in", filters["exchanges"]])
-        
-        # --- START OF FIX ---
-        # To exclude ADRs, we filter for the instrument type "Common Stock".
-        # This is the correct way to ensure we get domestically registered companies.
-        if not filters.get("include_adrs"):
-            st.info("Filtering for Common Stock only (excluding ADRs)...")
-            eodhd_filters.append(["type", "=", "Common Stock"])
-        # --- END OF FIX ---
 
         if not eodhd_filters:
             st.warning("Please define at least one filter.")
