@@ -738,7 +738,17 @@ def investment_memo_app():
 
     def save_sections_to_word(sections_dict, company_name="Company", output_dir="documents"):
         os.makedirs(output_dir, exist_ok=True)
-        filename = f"{company_name.replace(' ', '_')}_PreIPO_Memo_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
+        
+        # Sanitize the company name for the filename
+        sanitized_company_name = re.sub(r'[\\/*?:"<>|]', "", company_name)
+        sanitized_company_name = sanitized_company_name.replace(' ', '_')
+        
+        # Truncate to a reasonable length to avoid "File name too long" errors
+        max_len = 50 
+        if len(sanitized_company_name) > max_len:
+            sanitized_company_name = sanitized_company_name[:max_len]
+
+        filename = f"{sanitized_company_name}_PreIPO_Memo_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
         full_path = os.path.join(output_dir, filename)
         
         doc = Document()
