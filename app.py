@@ -5352,13 +5352,22 @@ def investment_pipeline_agent():
             data = response.json()
             
             general = data.get('General', {}); highlights = data.get('Highlights', {})
-            name = general.get('Name', ticker); actual_sector = general.get('Sector')
-            market_cap = highlights.get('MarketCapitalization'); dividend_yield = highlights.get('DividendYield')
+            name = general.get('Name', ticker)
+            market_cap = highlights.get('MarketCapitalization')
 
-            if not all([name, actual_sector, market_cap, dividend_yield is not None]):
+            # --- FIX 1: Treat missing DividendYield as 0 instead of failing. ---
+            # A None value often means the company doesn't pay a dividend.
+            dividend_yield = highlights.get('DividendYield') or 0.0
+
+            # --- FIX 2: Remove the strict sector check. The qualitative analysis will determine the true fit. ---
+            # This prevents rejecting good ideas like GOOG just because its GICS sector is "Communication Services".
+            actual_sector = general.get('Sector', 'N/A') 
+
+            # Check for the most critical missing data
+            if not all([name, market_cap is not None]):
                 return "INCOMPLETE_DATA", {"name": name}
-            if actual_sector not in expected_sectors:
-                return "FAIL_SECTOR", {"name": name, "value": actual_sector}
+
+            # Validate against user filters
             if market_cap < (filters["market_cap_min"] * 1e9):
                 return "FAIL_MCAP", {"name": name, "value": market_cap}
             if dividend_yield < (filters["dividend_yield_min"] / 100):
