@@ -5325,18 +5325,23 @@ def investment_pipeline_agent():
         if filters.get("market_cap_min"):
             eodhd_filters.append(["market_capitalization", ">", filters["market_cap_min"] * 1e9])
             
-        # --- FIX STARTS HERE ---
         if filters.get("dividend_yield_min") and filters["dividend_yield_min"] > 0:
-            # Convert the percentage from the slider (e.g., 2.0) to a decimal (0.02)
             decimal_yield = filters["dividend_yield_min"] / 100
             eodhd_filters.append(["dividend_yield", ">", decimal_yield])
-        # --- FIX ENDS HERE ---
             
         if filters.get("sectors"):
             eodhd_filters.append(["sector", "in", filters["sectors"]])
             
+        # --- START OF LOGIC FIX FOR ADRs ---
+        # Always filter by the selected exchanges first
         if filters.get("exchanges"):
             eodhd_filters.append(["exchange", "in", filters["exchanges"]])
+        
+        # If the user does NOT want ADRs, add a strict filter for the company's domicile country
+        if not filters.get("include_adrs") and filters.get("countries"):
+            st.info("Filtering for companies domiciled in selected countries (excluding ADRs)...")
+            eodhd_filters.append(["country", "in", filters["countries"]])
+        # --- END OF LOGIC FIX ---
 
         if not eodhd_filters:
             st.warning("Please define at least one filter.")
@@ -5541,92 +5546,100 @@ def investment_pipeline_agent():
             return {"error": f"Error in risk analysis: {e}"}  
 
     # --- 4. STREAMLIT UI AND ORCHESTRATION ---
-    st.subheader("Step 1: Define Theme and Screening Criteria")
-    qualitative_theme = st.text_area("**Describe the Qualitative Theme**", "Companies leading the artificial intelligence revolution in enterprise software.", height=75)
-    st.subheader("Quantitative Filters")
-    COUNTRY_TO_EXCHANGE = {"USA": "US", "India": "NSE", "Germany": "F", "United Kingdom": "LSE", "Canada": "TO", "Japan": "TSE", "China": "SS", "Australia": "AU", "Mexico": "MX", "South Africa": "JSE", "France": "PA"}
-    SECTORS = ["Basic Materials", "Communication Services", "Consumer Cyclical", "Consumer Defensive", "Energy", "Financial Services", "Healthcare", "Industrials", "Real Estate", "Technology", "Utilities"]
+st.subheader("Step 1: Define Theme and Screening Criteria")
+qualitative_theme = st.text_area("**Describe the Qualitative Theme**", "Companies leading the artificial intelligence revolution in enterprise software.", height=75)
+st.subheader("Quantitative Filters")
+COUNTRY_TO_EXCHANGE = {"USA": "US", "India": "NSE", "Germany": "F", "United Kingdom": "LSE", "Canada": "TO", "Japan": "TSE", "China": "SS", "Australia": "AU", "Mexico": "MX", "South Africa": "JSE", "France": "PA"}
+SECTORS = ["Basic Materials", "Communication Services", "Consumer Cyclical", "Consumer Defensive", "Energy", "Financial Services", "Healthcare", "Industrials", "Real Estate", "Technology", "Utilities"]
 
-    # --- THE FIX: Let the user select sectors manually, with an AI suggestion as a default ---
-    
-    # AI suggestion block
-    ai_sectors = []
-    if st.button("Suggest Sectors based on Theme"):
-        with st.spinner("Asking AI for sector suggestions..."):
-            prompt_sectors = f"Given the investment theme: '{qualitative_theme}', what are 3 key sectors or industries to screen? Return a comma-separated list of names. For example: 'Basic Materials, Industrials, Technology'."
-            try:
-                response = client.chat.completions.create(
-                    model=llm_deployment_name,
-                    messages=[{"role": "user", "content": prompt_sectors}],
-                    temperature=0.0
-                )
-                ai_sectors = [s.strip() for s in response.choices[0].message.content.split(',')]
-            except Exception as e:
-                st.error(f"Error identifying sectors: {e}")
-                ai_sectors = ["Technology"] # Fallback
-
-    # Manual override for sectors
-    selected_sectors = st.multiselect("Sectors", options=SECTORS, default=ai_sectors if ai_sectors else ["Technology"])
-    
-    # --- End of fix ---
-
-    selected_countries = st.multiselect("Countries", options=list(COUNTRY_TO_EXCHANGE.keys()), default=["USA", "India"])
-    col1, col2 = st.columns(2)
-    with col1:
-        mkt_cap_min = st.slider("Min Market Cap (Billion USD)", 0.0, 500.0, 10.0, 1.0)
-    with col2:
-        dividend_yield_min = st.slider("Min Dividend Yield (%)", 0.0, 10.0, 0.0, 0.1)
-    st.subheader("Step 2: Generate Screen")
-
-    if st.button("🚀 Find Companies & Generate Screen", type="primary"):
-        if not qualitative_theme:
-            st.warning("Please describe your investment theme.")
-            return
-        user_filters = {"exchanges": [COUNTRY_TO_EXCHANGE[c] for c in selected_countries], "sectors": selected_sectors, "market_cap_min": mkt_cap_min, "dividend_yield_min": dividend_yield_min}
-
-        with st.spinner("Finding, analyzing, and building your screen... This may take a few minutes."):
-            screener_df = get_eodhd_screener_results(user_filters, eodhd_api_key)
-            if screener_df.empty:
-                return 
-            analysis_df = screener_df.head(MAX_COMPANIES_TO_ANALYZE)
-            st.success(f"Found {len(screener_df)} companies. Performing deep analysis on the top {len(analysis_df)} by market cap.")
-            st.dataframe(analysis_df[['code', 'name', 'exchange', 'sector', 'market_capitalization']], hide_index=True, use_container_width=True)
-
-            all_dossiers = []
-            progress_bar = st.progress(0, text=f"Analyzing 0 / {len(analysis_df)} companies...")
-            for i, company_row in analysis_df.iterrows():
-                ticker_code = f"{company_row['code']}.{company_row['exchange']}"
-                progress_bar.progress((i + 1) / len(analysis_df), text=f"Analyzing {company_row['name']}...")
-                
-                dossier = thesis_validation_agent(company_row.to_dict(), qualitative_theme, client, eodhd_api_key, llm_deployment_name)
-
-                if "error" not in dossier:
-                    risk_analysis = risk_and_sizing_agent(dossier, client, llm_deployment_name)
-                    dossier['risk_analysis'] = risk_analysis
-                    all_dossiers.append(dossier)
-                else:
-                    st.warning(f"Skipping {company_row['name']} due to an error: {dossier['error']}")
+# AI suggestion block for sectors
+ai_sectors = []
+if st.button("Suggest Sectors based on Theme"):
+    with st.spinner("Asking AI for sector suggestions..."):
+        prompt_sectors = f"Given the investment theme: '{qualitative_theme}', what are 3 key sectors or industries to screen? Return a comma-separated list of names. For example: 'Basic Materials, Industrials, Technology'."
+        try:
+            response = client.chat.completions.create(
+                model=llm_deployment_name,
+                messages=[{"role": "user", "content": prompt_sectors}],
+                temperature=0.0
+            )
+            ai_sectors = [s.strip() for s in response.choices[0].message.content.split(',')]
+        except Exception as e:
+            st.error(f"Error identifying sectors: {e}")
+            ai_sectors = ["Technology"] # Fallback
             
-            progress_bar.empty()
+selected_sectors = st.multiselect("Sectors", options=SECTORS, default=ai_sectors if ai_sectors else ["Technology"])
 
-            if all_dossiers:
-                final_html_report = generate_final_html_report(all_dossiers, qualitative_theme)
-                
-                def sanitize_filename(name):
-                    name = name.strip().replace(' ', '_')
-                    return re.sub(r'(?u)[^-\w.]', '', name)
+# --- START OF UI FIX FOR ADRs ---
+selected_countries = st.multiselect("Countries (for listing exchange)", options=list(COUNTRY_TO_EXCHANGE.keys()), default=["USA"])
+include_adrs = st.checkbox("Include foreign companies listed in these countries (e.g., ADRs)?", value=False, help="Check this to include companies domiciled elsewhere but listed on the selected countries' exchanges.")
+# --- END OF UI FIX ---
 
-                safe_filename = sanitize_filename(qualitative_theme[:40])
+col1, col2 = st.columns(2)
+with col1:
+    mkt_cap_min = st.slider("Min Market Cap (Billion USD)", 0.0, 500.0, 10.0, 1.0)
+with col2:
+    dividend_yield_min = st.slider("Min Dividend Yield (%)", 0.0, 10.0, 0.0, 0.1)
+st.subheader("Step 2: Generate Screen")
 
-                st.download_button(
-                    label="📥 Download Full HTML Report",
-                    data=final_html_report,
-                    file_name=f"IdeaGen_Report_{safe_filename}.html",
-                    mime="text/html",
-                    use_container_width=True
-                )
+if st.button("🚀 Find Companies & Generate Screen", type="primary"):
+    if not qualitative_theme:
+        st.warning("Please describe your investment theme.")
+        return
+        
+    # --- Pass the new parameters to the filter dictionary ---
+    user_filters = {
+        "exchanges": [COUNTRY_TO_EXCHANGE[c] for c in selected_countries],
+        "countries": selected_countries,  # Pass country names for domicile filtering
+        "include_adrs": include_adrs,    # Pass the checkbox state
+        "sectors": selected_sectors,
+        "market_cap_min": mkt_cap_min,
+        "dividend_yield_min": dividend_yield_min
+    }
+
+    with st.spinner("Finding, analyzing, and building your screen... This may take a few minutes."):
+        screener_df = get_eodhd_screener_results(user_filters, eodhd_api_key)
+        if screener_df.empty:
+            return 
+        analysis_df = screener_df.head(MAX_COMPANIES_TO_ANALYZE)
+        st.success(f"Found {len(screener_df)} companies. Performing deep analysis on the top {len(analysis_df)} by market cap.")
+        st.dataframe(analysis_df[['code', 'name', 'exchange', 'country', 'sector', 'market_capitalization']], hide_index=True, use_container_width=True) # Added 'country' to view
+
+        all_dossiers = []
+        progress_bar = st.progress(0, text=f"Analyzing 0 / {len(analysis_df)} companies...")
+        for i, company_row in analysis_df.iterrows():
+            ticker_code = f"{company_row['code']}.{company_row['exchange']}"
+            progress_bar.progress((i + 1) / len(analysis_df), text=f"Analyzing {company_row['name']}...")
+            
+            dossier = thesis_validation_agent(company_row.to_dict(), qualitative_theme, client, eodhd_api_key, llm_deployment_name)
+
+            if "error" not in dossier:
+                risk_analysis = risk_and_sizing_agent(dossier, client, llm_deployment_name)
+                dossier['risk_analysis'] = risk_analysis
+                all_dossiers.append(dossier)
             else:
-                st.error("Could not generate a report for any of the found companies. This might be due to data availability issues.")
+                st.warning(f"Skipping {company_row['name']} due to an error: {dossier['error']}")
+        
+        progress_bar.empty()
+
+        if all_dossiers:
+            final_html_report = generate_final_html_report(all_dossiers, qualitative_theme)
+            
+            def sanitize_filename(name):
+                name = name.strip().replace(' ', '_')
+                return re.sub(r'(?u)[^-\w.]', '', name)
+
+            safe_filename = sanitize_filename(qualitative_theme[:40])
+
+            st.download_button(
+                label="📥 Download Full HTML Report",
+                data=final_html_report,
+                file_name=f"IdeaGen_Report_{safe_filename}.html",
+                mime="text/html",
+                use_container_width=True
+            )
+        else:
+            st.error("Could not generate a report for any of the found companies. This might be due to data availability issues.")
 
 
 # ==============================================================================
