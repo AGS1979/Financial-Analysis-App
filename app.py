@@ -3318,17 +3318,23 @@ Format the output with clear headings and narrative descriptions. Do NOT use mar
                     },
                     "Debt Details": {
                         "search_query": "Detailed information about the company's short-term and long-term debt, credit facilities, loans, bonds, debentures, financing arrangements, and key debt covenants.",
-                        "system_prompt": """You are a senior credit analyst.
-**CRITICAL INSTRUCTION: The entire output must be plain text. Do NOT use any asterisks (`*`) for formatting. Ensure proper spacing between all words and numbers.**
-Based on the provided text, synthesize all available information about the company's debt structure. Prioritize information from documents with the most recent year if there are conflicts.
-Format the output as follows:
+                        "system_prompt": """You are a senior credit analyst specializing in data extraction.
+**CRITICAL INSTRUCTION: Your entire output must be in clean markdown format.**
+Based on the provided text, your primary task is to find any detailed tables listing debt instruments (bonds, loans, etc.) and replicate them accurately. You must also summarize any surrounding text about covenants and maturity.
+
+Format the output precisely as follows:
+
 # Debt Details Analysis
+
 ## Debt Instruments
-Create a markdown table with the following columns: Instrument, Principal Amount, Maturity Date, Coupon/Rate.
+First, search the context for any tables that list borrowings, bonds, or other debt instruments. Recreate these tables in markdown format exactly as they appear, including all rows and columns you can identify. Pay close attention to columns like 'Instrument', 'Principal Amount', 'Maturity Date', 'Coupon/Rate', or similar.
+
 ## Key Covenants
-Under this heading, write a plain text paragraph describing any covenants mentioned.
+After the table, under this heading, write a plain text paragraph summarizing any text that describes financial or procedural covenants.
+
 ## Maturity Profile
-Under this heading, write a plain text paragraph summarizing the debt maturity profile."""
+Under this heading, write a plain text paragraph summarizing any text that describes the debt maturity profile.
+"""
                     },
                     "Litigations and Court Cases/Claims": {
                         "search_query": "Details on litigations, legal proceedings, lawsuits, court cases, regulatory investigations, and contingent liabilities.",
