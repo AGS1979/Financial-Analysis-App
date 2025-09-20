@@ -836,7 +836,7 @@ def investment_memo_app():
         style.font.size = Pt(11)
 
         title_para = doc.add_paragraph()
-        title_run = title_para.add_run(f"{company_name} Agent Pre-IPO")
+        title_run = title_para.add_run(f"{company_name} Pre-IPO Memo")
         title_run.font.name = 'Aptos Display'
         title_run.font.size = Pt(20)
         title_run.bold = True
