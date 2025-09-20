@@ -705,6 +705,35 @@ def investment_memo_app():
         response.raise_for_status()
         return response.json()['choices'][0]['message']['content'].strip()
 
+    def find_relevant_text_for_section(full_text, section_title, keywords_map):
+        """
+        Searches the full document text for keywords related to a specific section title
+        and returns a relevant chunk of text for the LLM to use as context.
+        """
+        # Get the specific keywords for the given section title
+        keywords = keywords_map.get(section_title, [])
+        if not keywords:
+            # Fallback to a generic chunk if no keywords are defined for a title
+            return full_text[:16000]
+
+        # Create a regex pattern to find any of the keywords, ignoring case
+        # This pattern looks for the keyword as a potential heading.
+        pattern = re.compile(r'^\s*(' + '|'.join(map(re.escape, keywords)) + r')\s*$', re.IGNORECASE | re.MULTILINE)
+        
+        match = pattern.search(full_text)
+        
+        if match:
+            # If a keyword is found, extract the text following it
+            start_index = match.end()
+            # Extract a substantial chunk of text to provide enough context
+            context_text = full_text[start_index : start_index + 20000]
+            return context_text
+        else:
+            # If no specific section is found, return the initial part of the document as a fallback.
+            # This is not ideal but prevents errors. The key is a good keywords_map.
+            st.warning(f"Could not find a specific section for '{section_title}'. Using initial text as fallback.")
+            return full_text[:16000]
+
     def generate_memo_sections(filtered_text, custom_notes=""):
         section_titles = [
             "1. IPO Offer Details", "2. Company Overview", "3. Industry Overview and Outlook",
@@ -712,28 +741,74 @@ def investment_memo_app():
             "6. Guidance and Outlook on future financial performance",
             "7. Peer Comparison and Competitors", "8. Risks", "9. Investment Highlights"
         ]
+
+        # A map to find the right DRHP sections for each memo title. This is crucial.
+        keywords_map = {
+            "1. IPO Offer Details": ["Details of the Offer", "The Offer"],
+            "2. Company Overview": ["Our Business", "Company Overview", "Summary of Business"],
+            "3. Industry Overview and Outlook": ["Industry Overview"],
+            "4. Business Model": ["Business Model", "Our Business"],
+            "5. Financial Highlights": ["Financial Highlights", "Financial Information", "Restated Consolidated Financial Information", "Summary of Restated Consolidated Financial Information"],
+            "6. Guidance and Outlook on future financial performance": ["Management's Discussion and Analysis", "Guidance and Outlook"],
+            "7. Peer Comparison and Competitors": ["Peer Comparison", "Competitive Landscape", "Competitors"],
+            "8. Risks": ["Risk Factors", "Risks"],
+            "9. Investment Highlights": ["Investment Rationale", "Investment Highlights", "Our Competitive Strengths"]
+        }
+        
         sections = {}
-        for title in section_titles:
+        st.info("Generating memo sections with targeted context analysis...")
+        progress_bar = st.progress(0)
+        
+        for i, title in enumerate(section_titles):
+            st.write(f"Finding context for: **{title[3:]}**...")
+            
+            # --- THIS IS THE CORE FIX ---
+            # Find relevant text specifically for THIS section, instead of using the same generic text for all.
+            relevant_text = find_relevant_text_for_section(filtered_text, title, keywords_map)
+            
+            st.write(f"Generating content for: **{title[3:]}**...")
+            
             prompt = (
-                f"You are writing a professional Agent Pre-IPO section titled: {title[3:]}. "
-                "Please generate ~500 words of clean, structured, analytical prose suitable for institutional investors. "
-                "Do not mention this is a memo. Avoid starting with the section title, and avoid phrases like 'In this section'. "
-                "Strictly avoid markdown (no asterisks, hashes, underscores). Use plain text only.\n\n"
+                f"You are a professional financial analyst writing a Pre-IPO memo section titled: '{title[3:]}'.\n"
+                "Based STRICTLY on the 'Relevant DRHP Text' provided below, generate approximately 500 words of clean, structured, analytical prose suitable for institutional investors.\n"
+                "IMPORTANT RULES:\n"
+                "- ONLY use information present in the provided text. Do not invent or hallucinate any data, figures, or facts.\n"
+                "- If specific information (e.g., financial numbers, competitor names) is not in the text, state that the information is not available in the provided context.\n"
+                "- Do not mention this is a memo. Do not start with the section title (e.g., avoid 'The Business Model is...').\n"
+                "- Avoid phrases like 'In this section' or 'The provided text states...'. Write authoritatively.\n"
+                "- Use plain, professional text only. Strictly avoid markdown (no asterisks, hashes, underscores).\n\n"
             )
             if custom_notes:
-                prompt += f"Focus on this angle: {custom_notes.strip()}\n\n"
-            prompt += f"Relevant DRHP Text:\n{filtered_text[:16000]}"
+                prompt += f"USER'S CUSTOM FOCUS: {custom_notes.strip()}\n\n"
+            
+            prompt += f"Relevant DRHP Text:\n{relevant_text}" # We use the specifically found relevant_text
             
             messages = [
-                {"role": "system", "content": "You are an expert financial analyst."},
+                {"role": "system", "content": "You are an expert financial analyst writing an investment memo based *only* on provided text."},
                 {"role": "user", "content": prompt}
             ]
-            response = requests.post(DEEPSEEK_API_URL, headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}, json={"model": "deepseek-chat", "messages": messages})
-            response.raise_for_status()
-            raw_content = response.json()['choices'][0]['message']['content']
-            cleaned = clean_markdown(raw_content)
-            cleaned = re.sub(rf"^{re.escape(title[3:])}[\s:—-]*", "", cleaned, flags=re.IGNORECASE | re.MULTILINE)
-            sections[title] = cleaned.strip()
+            
+            try:
+                response = requests.post(
+                    DEEPSEEK_API_URL, 
+                    headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}, 
+                    json={"model": "deepseek-chat", "messages": messages, "temperature": 0.2}
+                )
+                response.raise_for_status()
+                raw_content = response.json()['choices'][0]['message']['content']
+                
+                # Clean the generated content
+                cleaned = clean_markdown(raw_content)
+                cleaned = re.sub(rf"^{re.escape(title[3:])}[\s:—-]*", "", cleaned, flags=re.IGNORECASE | re.MULTILINE)
+                sections[title] = cleaned.strip()
+                
+            except requests.RequestException as e:
+                st.error(f"API call failed for section '{title[3:]}': {e}")
+                sections[title] = f"Error generating this section. {e}"
+
+            progress_bar.progress((i + 1) / len(section_titles))
+            
+        st.success("All memo sections generated.")
         return sections
 
     def save_sections_to_word(sections_dict, company_name="Company", output_dir="documents"):
@@ -949,22 +1024,16 @@ def investment_memo_app():
             )
         # --- END NEW UI ---
 
+        # In your main app flow, under the "if st.button..."
         if st.button("📘 Generate Investment Memo", key="gen_memo"):
             with st.spinner("⏳ Analyzing document and generating memo... This may take a few minutes."):
                 try:
-                    # MODIFICATION: Conditional logic for PDF vs HTML processing
                     full_text = ""
                     if st.session_state.doc_path.endswith(".pdf"):
+                        # The extract_text_by_page function returns a list of strings (one per page)
                         text_by_page, _ = extract_text_by_page(st.session_state.doc_path)
-                        default_query = (
-                            "Extract pages with: 'Management’s Discussion and Analysis', 'Financial Highlights', "
-                            "'Risk Factors', 'Business Overview', 'Industry Overview'."
-                        )
-                        pages_to_keep = get_relevant_pages_chunked(text_by_page, default_query)
-                        if not pages_to_keep:
-                            raise ValueError("No relevant pages found. The document may be incompatible or lack key sections.")
-                        
-                        full_text = extract_selected_pages_text(st.session_state.doc_path, pages_to_keep)
+                        # Join them all into one single large string
+                        full_text = "\n".join(text_by_page)
                     
                     elif st.session_state.doc_path.endswith(".html"):
                         full_text = extract_text_from_html(st.session_state.doc_path)
@@ -973,12 +1042,17 @@ def investment_memo_app():
                         raise ValueError("Could not extract text from the document.")
                     
                     company_name = extract_company_name(full_text)
+                    
+                    # --- CALL THE NEW, FIXED FUNCTION ---
+                    # It now takes the full_text and handles context internally.
                     sections_dict = generate_memo_sections(full_text, custom_focus)
+                    
                     memo_path = save_sections_to_word(sections_dict, company_name=company_name)
 
                     st.session_state.memo_generated = True
                     st.session_state.memo_path = memo_path
                     st.success("✅ Memo generated successfully!")
+                    
                 except Exception as e:
                     st.error(f"❌ Error generating memo: {e}")
                     st.session_state.memo_generated = False
