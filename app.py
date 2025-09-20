@@ -3317,8 +3317,8 @@ Format the output with clear headings and narrative descriptions. Do NOT use mar
 (Describe any mentioned financial or operational covenants in a paragraph.)"""
                     },
                     "Debt Details": {
-                        "search_query": "Detailed information about the company's short-term and long-term debt, credit facilities, loans, bonds, debentures, financing arrangements, and key debt covenants.",
-                        "system_prompt": """You are a senior credit analyst specializing in data extraction.
+    "search_query": "Table of borrowings, bonds, notes, and other debt instruments. Short term borrowings, medium and long term borrowings. Unsecured bank loans, overdrafts, sustainability linked loans. US bonds, EMTN programme bonds. Principal, coupon, maturity date, covenants.",
+    "system_prompt": """You are a senior credit analyst specializing in data extraction.
 **CRITICAL INSTRUCTION: Your entire output must be in clean markdown format.**
 Based on the provided text, your primary task is to find any detailed tables listing debt instruments (bonds, loans, etc.) and replicate them accurately. You must also summarize any surrounding text about covenants and maturity.
 
@@ -3335,7 +3335,7 @@ After the table, under this heading, write a plain text paragraph summarizing an
 ## Maturity Profile
 Under this heading, write a plain text paragraph summarizing any text that describes the debt maturity profile.
 """
-                    },
+},
                     "Litigations and Court Cases/Claims": {
                         "search_query": "Details on litigations, legal proceedings, lawsuits, court cases, regulatory investigations, and contingent liabilities.",
                         "system_prompt": """You are a legal analyst.
