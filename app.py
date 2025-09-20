@@ -695,7 +695,7 @@ def investment_memo_app():
         prompt = (
             "Extract only the legal name of the company from the following IPO or DRHP text. "
             "Return only the company name, nothing else.\n\n"
-            f"{text[:3000]}"
+            f"{text[:10000]}"
         )
         messages = [
             {"role": "system", "content": "You are an expert in IPO documents."},
