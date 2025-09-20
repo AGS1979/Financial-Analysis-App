@@ -703,7 +703,11 @@ def investment_memo_app():
         ]
         response = requests.post(DEEPSEEK_API_URL, headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}, json={"model": "deepseek-chat", "messages": messages})
         response.raise_for_status()
-        return response.json()['choices'][0]['message']['content'].strip()
+        
+        # --- THE FIX IS HERE ---
+        # Get the raw response and clean it by replacing newlines with spaces before returning.
+        company_name = response.json()['choices'][0]['message']['content'].strip()
+        return company_name.replace('\n', ' ')
 
     def find_relevant_text_for_section(full_text, section_title, keywords_map):
         """
