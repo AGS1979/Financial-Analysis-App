@@ -4127,6 +4127,9 @@ def pe_agent_app_azure():
     from azure.ai.documentintelligence import DocumentIntelligenceClient
     from azure.ai.documentintelligence.models import ContentFormat
     from openai import AzureOpenAI
+    # Imports for Word document generation
+    from docx import Document
+    from docx.shared import Pt
 
     st.markdown("### 🔒 Agent PE")
     st.markdown(
@@ -4297,6 +4300,26 @@ def pe_agent_app_azure():
             return response.choices[0].message.content
         except Exception as e:
             return f"Error generating email: {e}"
+            
+    def generate_word_document_from_drafts(drafts: list) -> bytes:
+        doc = Document()
+        doc.add_heading('Bulk Outreach Email Drafts', level=0)
+        # Set default font for the document
+        style = doc.styles['Normal']
+        style.font.name = 'Aptos Display'
+        style.font.size = Pt(11)
+
+        for item in drafts:
+            company_name = item.get('Company', 'Unknown Company').replace('_', ' ')
+            email_draft = item.get('Draft', 'No draft generated.')
+            doc.add_heading(company_name, level=2)
+            doc.add_paragraph(email_draft)
+            doc.add_page_break()
+        
+        buffer = io.BytesIO()
+        doc.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
 
     # --- UI WITH TABS FOR DUAL FUNCTIONALITY ---
     tab1, tab2 = st.tabs(["Deal Document Analysis", "Bulk Outreach Email Generation"])
@@ -4396,7 +4419,6 @@ def pe_agent_app_azure():
                 height=200,
                 placeholder="e.g., We are a growth equity firm specializing in scaling B2B SaaS companies. We provide not just capital, but also operational expertise in go-to-market strategy and international expansion. Our portfolio companies typically see a 3x increase in ARR post-investment."
             )
-            # --- NEW UI for Custom Prompt ---
             st.markdown("---")
             st.subheader("Advanced: Customize Email Generation Prompt")
             st.text_area(
@@ -4405,7 +4427,6 @@ def pe_agent_app_azure():
                 height=250,
                 key="pe_outreach_custom_prompt"
             )
-            # --- END NEW UI ---
 
             submitted = st.form_submit_button("🚀 Generate Email Drafts", use_container_width=True)
 
@@ -4423,7 +4444,6 @@ def pe_agent_app_azure():
                         
                         progress_bar.progress((i + 0.5) / len(companies), text=f"Drafting email for {company}...")
                         
-                        # Use custom prompt if provided, otherwise generate the email
                         custom_prompt = st.session_state.pe_outreach_custom_prompt
                         if custom_prompt:
                             final_prompt = custom_prompt.format(
@@ -4445,17 +4465,23 @@ def pe_agent_app_azure():
             st.success("✅ Email drafts generated successfully!")
             results = st.session_state.pe_outreach_results
             
-            df = pd.DataFrame(results)
-            csv = df.to_csv(index=False).encode('utf-8')
+            # Generate Word document in memory
+            word_bytes = generate_word_document_from_drafts(results)
             
             st.download_button(
-                "📥 Download All Drafts (.csv)", csv, "outreach_drafts.csv", "text/csv",
-                key='download-csv', use_container_width=True
+                label="📥 Download All Drafts (.docx)",
+                data=word_bytes,
+                file_name="outreach_drafts.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key='download-docx',
+                use_container_width=True
             )
             
             st.markdown("---")
             for item in results:
-                with st.expander(f"**{item['Company']}**"):
+                # FIX: Replace underscores with spaces for better display
+                display_name = item['Company'].replace('_', ' ')
+                with st.expander(f"**{display_name}**"):
                     st.code(item['Draft'], language='text')
 
 
