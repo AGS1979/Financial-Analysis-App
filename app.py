@@ -4339,7 +4339,7 @@ def pe_agent_app_azure():
         "Diligence Q&A", 
         "Expert Call Summarizer",
         "Key Terms Comparison",
-        "Advanced Outreach Generation"
+        "Email Outreach Generation"
     ]
     tab1, tab2, tab3, tab4, tab5 = st.tabs(tab_titles)
 
