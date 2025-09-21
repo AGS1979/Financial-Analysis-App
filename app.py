@@ -4116,11 +4116,10 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
 def pe_agent_app_azure():
     """
     A secure, confidential agent for Private Equity analysis using Azure services.
-    This version uses a robust markdown-to-HTML parsing pipeline for clean output
-    and supports analysis of both PDF and Excel files.
+    This version includes both a deal document analyzer and a bulk outreach email generator.
     """
-    # --- Local imports (safe even if you already import these at top-level) ---
-    import io, re, html, os
+    # --- Local imports ---
+    import io, re, html, os, json
     import markdown, pdfplumber
     import pandas as pd
     import streamlit as st
@@ -4131,8 +4130,7 @@ def pe_agent_app_azure():
 
     st.markdown("### 🔒 Agent PE")
     st.markdown(
-        "Analyze deal documents with enterprise-grade privacy. Documents are analyzed "
-        "within a secure environment."
+        "Analyze deal documents or generate personalized outreach emails with enterprise-grade privacy."
     )
 
     # --- AGENT CONFIG (Fetched from secrets for Azure) ---
@@ -4146,7 +4144,14 @@ def pe_agent_app_azure():
         st.error(f"Configuration error: Missing Azure secret: {e}. Please check your secrets.toml file.")
         st.stop()
 
-    # --- PROMPTS TO OUTPUT STRUCTURED MARKDOWN (Unchanged) ---
+    # --- Initialize AzureOpenAI client (once per run) ---
+    client = AzureOpenAI(
+        api_key=openai_key,
+        api_version="2024-02-01",
+        azure_endpoint=openai_endpoint,
+    )
+
+    # --- PROMPTS FOR DOCUMENT ANALYSIS (Unchanged) ---
     ANALYSIS_PROMPTS = {
         "Investment Thesis": (
             "You are a top-tier private equity analyst. Generate a comprehensive investment thesis based on the provided context. "
@@ -4175,15 +4180,15 @@ def pe_agent_app_azure():
         ),
     }
 
-    # --- HELPER FUNCTIONS ---
+    # --- HELPER FUNCTIONS for Document Analysis ---
     def parse_pdf_with_azure_di(file_bytes: bytes) -> tuple[str, list]:
         try:
-            client = DocumentIntelligenceClient(
+            di_client = DocumentIntelligenceClient(
                 endpoint=di_endpoint,
                 credential=AzureKeyCredential(di_key),
             )
             stream = io.BytesIO(file_bytes)
-            poller = client.begin_analyze_document(
+            poller = di_client.begin_analyze_document(
                 model_id="prebuilt-layout",
                 analyze_request=stream,
                 content_type="application/pdf",
@@ -4204,9 +4209,6 @@ def pe_agent_app_azure():
         return "\n".join(text).strip()
 
     def parse_excel_to_markdown(file_bytes: bytes, file_name: str) -> str:
-        """
-        Parses an Excel file and converts each sheet to a markdown table string.
-        """
         try:
             xls = pd.ExcelFile(io.BytesIO(file_bytes))
             markdown_texts = []
@@ -4222,24 +4224,13 @@ def pe_agent_app_azure():
             st.warning(f"Could not process Excel file {file_name}: {e}")
             return ""
 
-    def analyze_with_azure_openai(_context: str, _prompt: str) -> str:
+    def analyze_document_with_azure_openai(_context: str, _prompt: str) -> str:
         try:
-            client = AzureOpenAI(
-                api_key=openai_key,
-                api_version="2024-02-01",
-                azure_endpoint=openai_endpoint,
-            )
             response = client.chat.completions.create(
                 model=openai_deployment_name,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": "You are an expert financial analyst that responds only with clean, structured markdown as instructed.",
-                    },
-                    {
-                        "role": "user",
-                        "content": f"CONTEXT DOCUMENT:\n---\n{_context}\n---\nYOUR TASK: {_prompt}",
-                    },
+                    {"role": "system", "content": "You are an expert financial analyst that responds only with clean, structured markdown as instructed."},
+                    {"role": "user", "content": f"CONTEXT DOCUMENT:\n---\n{_context}\n---\nYOUR TASK: {_prompt}"},
                 ],
             )
             return response.choices[0].message.content
@@ -4255,7 +4246,6 @@ def pe_agent_app_azure():
             .analysis-container p { margin-bottom: 1em; line-height: 1.6; color: #333; }
             .analysis-container ul { list-style-position: outside; padding-left: 20px; margin-top: 1em; margin-bottom: 1em; }
             .analysis-container li { margin-bottom: 0.75em; line-height: 1.6; }
-            .analysis-container strong, .analysis-container b { font-weight: normal; color: inherit; }
             .analysis-container table { width: 100%; border-collapse: collapse; margin: 15px 0; }
             .analysis-container th, .analysis-container td { border: 1px solid #ddd; padding: 8px; text-align: left; }
             .analysis-container th { background-color: #f2f2f2; }
@@ -4270,123 +4260,203 @@ def pe_agent_app_azure():
         content_div = f"<div class='analysis-container'>{full_html_body}</div>"
         return styles, content_div
 
-    # --- UI & WORKFLOW ---
-    st.subheader("1. Upload Confidential Documents")
-    uploaded_files = st.file_uploader(
-        "Upload Teasers, CIMs, or Financials (PDF, XLSX, XLS)",
-        type=["pdf", "xlsx", "xls"],
-        accept_multiple_files=True,
-        key="pe_agent_uploader_azure",
-    )
-
-    if uploaded_files and "pe_agent_text" not in st.session_state:
-        if st.button("Process Documents", type="primary"):
-            with st.spinner("Processing documents in secure Azure environment..."):
-                all_texts = []
-                for doc in uploaded_files:
-                    file_bytes = doc.getvalue()
-                    MAX_BYTES = 45 * 1024 * 1024 # 45MB
-                    if len(file_bytes) > MAX_BYTES:
-                        st.error(f"File '{doc.name}' is too large. Max size is 45MB.")
-                        continue
-
-                    st.write(f"Processing '{doc.name}'...")
-                    file_ext = os.path.splitext(doc.name)[1].lower()
-                    doc_content = ""
-
-                    if file_ext == ".pdf":
-                        text, _ = parse_pdf_with_azure_di(file_bytes)
-                        if not text:
-                            st.warning(f"Azure DI failed for '{doc.name}'. Falling back to local text extraction.")
-                            text = fallback_pdf_text(file_bytes)
-                        doc_content = text
-                    
-                    elif file_ext in [".xlsx", ".xls"]:
-                        doc_content = parse_excel_to_markdown(file_bytes, doc.name)
-                    
-                    if doc_content:
-                        all_texts.append(f"--- START OF DOCUMENT: {doc.name} ---\n\n{doc_content}\n\n--- END OF DOCUMENT: {doc.name} ---")
-
-                if all_texts:
-                    st.session_state.pe_agent_text = "\n\n".join(all_texts)
-                    st.rerun()
-                else:
-                    st.error("Document parsing failed for all uploaded files. Please try another document.")
-
-    if "pe_agent_text" in st.session_state:
-        st.success("✅ Documents processed successfully.")
-        st.markdown("---")
-        st.subheader("2. Select and Generate Analysis")
-        analysis_choices = st.multiselect(
-            "Choose the analyses you want to perform:",
-            options=list(ANALYSIS_PROMPTS.keys()),
-            default=list(ANALYSIS_PROMPTS.keys()),
-        )
-        # --- NEW UI for Custom Prompts (No Expander) ---
-        # Check if the user has selected any analyses to show the custom prompt section
-        if analysis_choices:
-            st.markdown("---")
-            st.subheader("Advanced: Customize Analysis Prompts")
-            st.info("You can provide your own prompts for the selected analyses below. If a text box is left empty, the agent's default prompt will be used.")
-
-            # This loop will display a text area for each analysis the user selects
-            for choice in analysis_choices:
-                st.markdown(f"##### Custom Prompt for: {choice}")
-                st.text_area(
-                    label=f"Custom prompt for {choice}",
-                    placeholder=f"Enter your full custom prompt for the '{choice}' analysis here...",
-                    height=200,
-                    key=f"pe_custom_prompt_{choice}",
-                    label_visibility="collapsed"
-                )
-        # --- END NEW UI ---
-        if st.button("Generate Analysis", use_container_width=True):
-            if not analysis_choices:
-                st.warning("Please select at least one analysis type.")
-            else:
-                full_text = st.session_state.pe_agent_text
-                analysis_results = {}
-                with st.spinner("Generating insights..."):
-                    for choice in analysis_choices:
-                        prompt = ANALYSIS_PROMPTS[choice]
-                        result = analyze_with_azure_openai(full_text, prompt)
-                        analysis_results[choice] = result
-                st.session_state.pe_agent_analysis_results = analysis_results
-                st.rerun()
-
-    if "pe_agent_analysis_results" in st.session_state:
-        st.markdown("---")
-        st.subheader("3. Generated Analysis")
-        styles_html, content_html = parse_markdown_to_html(st.session_state.pe_agent_analysis_results)
-        
-        st.markdown(styles_html, unsafe_allow_html=True)
-        st.markdown(content_html, unsafe_allow_html=True)
-
-        st.markdown("---")
-        full_html_for_download = f"""
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>PE Investment Analysis Report</title>
-            <link rel="preconnect" href="https://fonts.googleapis.com">
-            <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-            <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
-            {styles_html}
-        </head>
-        <body>
-            {content_html}
-        </body>
-        </html>
+    # --- NEW HELPER FUNCTIONS for Bulk Outreach ---
+    def research_company_for_outreach(company_name: str) -> str:
+        prompt = f"""
+        Provide a concise, bulleted list of key business points for the company '{company_name}' for a private equity outreach email. Focus on:
+        - Core Business: A one-sentence description of what they do.
+        - Recent Positive Development: A specific, recent success (e.g., product launch, market expansion, strong performance metric).
+        - Potential Challenge/Opportunity: A market headwind or operational challenge where a PE firm could add value.
+        Return only the bullet points. Do not add any introductory text.
         """
-        st.download_button(
-            label="📥 Download Report as HTML",
-            data=full_html_for_download,
-            file_name="pe_investment_analysis.html",
-            mime="text/html",
-            use_container_width=True
+        try:
+            response = client.chat.completions.create(model=openai_deployment_name, messages=[{"role": "user", "content": prompt}], temperature=0.2)
+            return response.choices[0].message.content
+        except Exception as e:
+            return f"Error researching company: {e}"
+
+    def generate_outreach_email(company_name: str, research_points: str, value_prop: str) -> str:
+        prompt = f"""
+        You are an associate at a private equity firm. Your writing style is professional, concise, and direct. Avoid generic, verbose, or overly salesy language.
+        Your task is to draft a personalized outreach email to the CEO of '{company_name}'.
+
+        Use the following information:
+        - Your Firm's Value Proposition: {value_prop}
+        - Key Research on {company_name}:
+        {research_points}
+
+        **Instructions:**
+        1.  Start with a personalized opening that references the specific "Recent Positive Development" you found.
+        2.  Briefly introduce your firm and connect your "Value Proposition" to their "Potential Challenge/Opportunity". Show how your firm can help them solve a problem or accelerate growth.
+        3.  Keep the email under 150 words.
+        4.  End with a clear, low-friction call to action, like "Would you be open to a brief introductory call next week?".
+        5.  Return ONLY the email draft, starting with "Subject:". Do not include any pre-amble or explanation.
+        """
+        try:
+            response = client.chat.completions.create(model=openai_deployment_name, messages=[{"role": "user", "content": prompt}], temperature=0.5)
+            return response.choices[0].message.content
+        except Exception as e:
+            return f"Error generating email: {e}"
+
+    # --- UI WITH TABS FOR DUAL FUNCTIONALITY ---
+    tab1, tab2 = st.tabs(["Deal Document Analysis", "Bulk Outreach Email Generation"])
+
+    # --- TAB 1: DEAL DOCUMENT ANALYSIS ---
+    with tab1:
+        st.subheader("1. Upload Confidential Documents")
+        uploaded_files = st.file_uploader(
+            "Upload Teasers, CIMs, or Financials (PDF, XLSX, XLS)",
+            type=["pdf", "xlsx", "xls"],
+            accept_multiple_files=True,
+            key="pe_agent_uploader_azure",
         )
+
+        if uploaded_files and "pe_agent_text" not in st.session_state:
+            if st.button("Process Documents", type="primary", key="process_docs"):
+                with st.spinner("Processing documents in secure Azure environment..."):
+                    all_texts = []
+                    for doc in uploaded_files:
+                        file_bytes = doc.getvalue()
+                        MAX_BYTES = 45 * 1024 * 1024
+                        if len(file_bytes) > MAX_BYTES:
+                            st.error(f"File '{doc.name}' is too large. Max size is 45MB.")
+                            continue
+                        st.write(f"Processing '{doc.name}'...")
+                        file_ext = os.path.splitext(doc.name)[1].lower()
+                        doc_content = ""
+                        if file_ext == ".pdf":
+                            text, _ = parse_pdf_with_azure_di(file_bytes)
+                            if not text:
+                                st.warning(f"Azure DI failed for '{doc.name}'. Falling back to local text extraction.")
+                                text = fallback_pdf_text(file_bytes)
+                            doc_content = text
+                        elif file_ext in [".xlsx", ".xls"]:
+                            doc_content = parse_excel_to_markdown(file_bytes, doc.name)
+                        if doc_content:
+                            all_texts.append(f"--- START OF DOCUMENT: {doc.name} ---\n\n{doc_content}\n\n--- END OF DOCUMENT: {doc.name} ---")
+                    if all_texts:
+                        st.session_state.pe_agent_text = "\n\n".join(all_texts)
+                        st.rerun()
+                    else:
+                        st.error("Document parsing failed for all uploaded files. Please try another document.")
+
+        if "pe_agent_text" in st.session_state:
+            st.success("✅ Documents processed successfully.")
+            st.markdown("---")
+            st.subheader("2. Select and Generate Analysis")
+            analysis_choices = st.multoselect(
+                "Choose the analyses you want to perform:",
+                options=list(ANALYSIS_PROMPTS.keys()),
+                default=list(ANALYSIS_PROMPTS.keys()),
+            )
+            if analysis_choices:
+                st.markdown("---")
+                st.subheader("Advanced: Customize Analysis Prompts")
+                st.info("You can provide your own prompts for the selected analyses below. If a text box is left empty, the agent's default prompt will be used.")
+                for choice in analysis_choices:
+                    st.markdown(f"##### Custom Prompt for: {choice}")
+                    st.text_area(label=f"Custom prompt for {choice}", placeholder=f"Enter your full custom prompt for the '{choice}' analysis here...", height=200, key=f"pe_custom_prompt_{choice}", label_visibility="collapsed")
+            if st.button("Generate Analysis", use_container_width=True, key="generate_analysis"):
+                if not analysis_choices:
+                    st.warning("Please select at least one analysis type.")
+                else:
+                    full_text = st.session_state.pe_agent_text
+                    analysis_results = {}
+                    with st.spinner("Generating insights..."):
+                        for choice in analysis_choices:
+                            prompt = st.session_state.get(f"pe_custom_prompt_{choice}") or ANALYSIS_PROMPTS[choice]
+                            result = analyze_document_with_azure_openai(full_text, prompt)
+                            analysis_results[choice] = result
+                    st.session_state.pe_agent_analysis_results = analysis_results
+                    st.rerun()
+
+        if "pe_agent_analysis_results" in st.session_state:
+            st.markdown("---")
+            st.subheader("3. Generated Analysis")
+            styles_html, content_html = parse_markdown_to_html(st.session_state.pe_agent_analysis_results)
+            st.markdown(styles_html, unsafe_allow_html=True)
+            st.markdown(content_html, unsafe_allow_html=True)
+            st.markdown("---")
+            full_html_for_download = f"<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'><title>PE Investment Analysis Report</title><link href='https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap' rel='stylesheet'>{styles_html}</head><body>{content_html}</body></html>"
+            st.download_button(label="📥 Download Report as HTML", data=full_html_for_download, file_name="pe_investment_analysis.html", mime="text/html", use_container_width=True)
+
+    # --- TAB 2: BULK OUTREACH EMAIL GENERATION ---
+    with tab2:
+        st.subheader("Generate Personalized Outreach Emails in Bulk")
+        st.info("Paste a list of company names, define your firm's value proposition, and generate customized drafts instantly.", icon="✉️")
+
+        with st.form("outreach_form"):
+            company_list_input = st.text_area(
+                "**1. Enter Company Names** (one per line)",
+                height=150,
+                placeholder="Example Corp\nInnovate Inc.\nGlobal Solutions Ltd."
+            )
+            firm_value_prop = st.text_area(
+                "**2. Define Your Firm's Value Proposition**",
+                height=200,
+                placeholder="e.g., We are a growth equity firm specializing in scaling B2B SaaS companies. We provide not just capital, but also operational expertise in go-to-market strategy and international expansion. Our portfolio companies typically see a 3x increase in ARR post-investment."
+            )
+            # --- NEW UI for Custom Prompt ---
+            st.markdown("---")
+            st.subheader("Advanced: Customize Email Generation Prompt")
+            st.text_area(
+                "Enter your custom prompt template for email generation:",
+                placeholder="You can use placeholders like {COMPANY_NAME}, {COMPANY_RESEARCH}, and {FIRM_VALUE_PROP}.",
+                height=250,
+                key="pe_outreach_custom_prompt"
+            )
+            # --- END NEW UI ---
+
+            submitted = st.form_submit_button("🚀 Generate Email Drafts", use_container_width=True)
+
+        if submitted:
+            if not company_list_input or not firm_value_prop:
+                st.warning("Please provide a list of companies and your firm's value proposition.")
+            else:
+                companies = [name.strip() for name in company_list_input.split('\n') if name.strip()]
+                email_drafts = []
+                with st.spinner(f"Generating outreach for {len(companies)} companies..."):
+                    progress_bar = st.progress(0, text="Initializing...")
+                    for i, company in enumerate(companies):
+                        progress_bar.progress((i) / len(companies), text=f"Researching {company}...")
+                        research = research_company_for_outreach(company)
+                        
+                        progress_bar.progress((i + 0.5) / len(companies), text=f"Drafting email for {company}...")
+                        
+                        # Use custom prompt if provided, otherwise generate the email
+                        custom_prompt = st.session_state.pe_outreach_custom_prompt
+                        if custom_prompt:
+                            final_prompt = custom_prompt.format(
+                                COMPANY_NAME=company, 
+                                COMPANY_RESEARCH=research, 
+                                FIRM_VALUE_PROP=firm_value_prop
+                            )
+                            response = client.chat.completions.create(model=openai_deployment_name, messages=[{"role": "user", "content": final_prompt}])
+                            email = response.choices[0].message.content
+                        else:
+                            email = generate_outreach_email(company, research, firm_value_prop)
+                        
+                        email_drafts.append({"Company": company, "Draft": email})
+                    progress_bar.progress(1.0, text="Completed!")
+
+                st.session_state.pe_outreach_results = email_drafts
+
+        if 'pe_outreach_results' in st.session_state:
+            st.success("✅ Email drafts generated successfully!")
+            results = st.session_state.pe_outreach_results
+            
+            df = pd.DataFrame(results)
+            csv = df.to_csv(index=False).encode('utf-8')
+            
+            st.download_button(
+                "📥 Download All Drafts (.csv)", csv, "outreach_drafts.csv", "text/csv",
+                key='download-csv', use_container_width=True
+            )
+            
+            st.markdown("---")
+            for item in results:
+                with st.expander(f"**{item['Company']}**"):
+                    st.code(item['Draft'], language='text')
 
 
 # ==============================================================================
