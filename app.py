@@ -4116,27 +4116,29 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
 def pe_agent_app_azure():
     """
     A secure, confidential agent for Private Equity analysis using Azure services.
-    This version includes both a deal document analyzer and a bulk outreach email generator.
+    This version includes a deal document analyzer and an advanced bulk outreach email generator
+    that analyzes websites or documents for deep customization.
     """
     # --- Local imports ---
-    import io, re, html, os, json
+    import io, re, html, os, json, uuid
     import markdown, pdfplumber
     import pandas as pd
     import streamlit as st
+    import requests
+    from bs4 import BeautifulSoup
     from azure.core.credentials import AzureKeyCredential
     from azure.ai.documentintelligence import DocumentIntelligenceClient
     from azure.ai.documentintelligence.models import ContentFormat
     from openai import AzureOpenAI
-    # Imports for Word document generation
     from docx import Document
     from docx.shared import Pt
 
     st.markdown("### 🔒 Agent PE")
     st.markdown(
-        "Analyze deal documents or generate personalized outreach emails with enterprise-grade privacy."
+        "Analyze deal documents or generate highly personalized outreach emails with enterprise-grade privacy."
     )
 
-    # --- AGENT CONFIG (Fetched from secrets for Azure) ---
+    # --- AGENT CONFIG ---
     try:
         di_endpoint = st.secrets["azure"]["di_endpoint"]
         di_key = st.secrets["azure"]["di_key"]
@@ -4147,14 +4149,14 @@ def pe_agent_app_azure():
         st.error(f"Configuration error: Missing Azure secret: {e}. Please check your secrets.toml file.")
         st.stop()
 
-    # --- Initialize AzureOpenAI client (once per run) ---
+    # --- Initialize AzureOpenAI client ---
     client = AzureOpenAI(
         api_key=openai_key,
         api_version="2024-02-01",
         azure_endpoint=openai_endpoint,
     )
 
-    # --- PROMPTS FOR DOCUMENT ANALYSIS (Unchanged) ---
+    # --- PROMPTS FOR DOCUMENT ANALYSIS (Fully expanded) ---
     ANALYSIS_PROMPTS = {
         "Investment Thesis": (
             "You are a top-tier private equity analyst. Generate a comprehensive investment thesis based on the provided context. "
@@ -4183,7 +4185,9 @@ def pe_agent_app_azure():
         ),
     }
 
-    # --- HELPER FUNCTIONS for Document Analysis ---
+    # --- HELPER FUNCTIONS ---
+
+    # Document Analysis helpers (Fully expanded)
     def parse_pdf_with_azure_di(file_bytes: bytes) -> tuple[str, list]:
         try:
             di_client = DocumentIntelligenceClient(
@@ -4232,8 +4236,14 @@ def pe_agent_app_azure():
             response = client.chat.completions.create(
                 model=openai_deployment_name,
                 messages=[
-                    {"role": "system", "content": "You are an expert financial analyst that responds only with clean, structured markdown as instructed."},
-                    {"role": "user", "content": f"CONTEXT DOCUMENT:\n---\n{_context}\n---\nYOUR TASK: {_prompt}"},
+                    {
+                        "role": "system",
+                        "content": "You are an expert financial analyst that responds only with clean, structured markdown as instructed.",
+                    },
+                    {
+                        "role": "user",
+                        "content": f"CONTEXT DOCUMENT:\n---\n{_context}\n---\nYOUR TASK: {_prompt}",
+                    },
                 ],
             )
             return response.choices[0].message.content
@@ -4263,44 +4273,84 @@ def pe_agent_app_azure():
         content_div = f"<div class='analysis-container'>{full_html_body}</div>"
         return styles, content_div
 
-    # --- NEW HELPER FUNCTIONS for Bulk Outreach ---
-    def research_company_for_outreach(company_name: str) -> str:
+    # --- ADVANCED OUTREACH HELPER FUNCTIONS ---
+    def scrape_website_text(url: str) -> str:
+        """Scrapes and cleans text content from a given URL."""
+        if not (url.startswith('http://') or url.startswith('https://')):
+            url = 'http://' + url
+        try:
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+            response = requests.get(url, headers=headers, timeout=15)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.content, 'html.parser')
+            for element in soup(["script", "style", "nav", "footer", "header"]):
+                element.decompose()
+            text = soup.get_text(separator='\n', strip=True)
+            return re.sub(r'\n{3,}', '\n\n', text)
+        except requests.RequestException as e:
+            st.warning(f"Failed to scrape {url}: {e}")
+            return ""
+
+    def parse_word_doc(file_bytes: bytes) -> str:
+        """Parses and extracts text from a .docx file."""
+        try:
+            doc = Document(io.BytesIO(file_bytes))
+            return "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
+        except Exception:
+            st.warning("Failed to parse Word document. Please ensure it is a .docx file.")
+            return ""
+
+    def analyze_source_for_outreach(company_name: str, source_text: str) -> str:
+        """Uses LLM to extract key personalization points from source text."""
         prompt = f"""
-        Provide a concise, bulleted list of key business points for the company '{company_name}' for a private equity outreach email. Focus on:
-        - Core Business: A one-sentence description of what they do.
-        - Recent Positive Development: A specific, recent success (e.g., product launch, market expansion, strong performance metric).
-        - Potential Challenge/Opportunity: A market headwind or operational challenge where a PE firm could add value.
-        Return only the bullet points. Do not add any introductory text.
+        You are a private equity analyst reviewing source material for '{company_name}'.
+        Analyze the provided text and extract key points for a highly personalized outreach email.
+        
+        Extract the following:
+        1.  **Specific Achievement:** Identify one specific, recent achievement, product launch, or milestone mentioned.
+        2.  **Core Value Proposition:** Summarize what the company does and for whom in one sentence.
+        3.  **Implied Growth/Challenge Area:** Find a phrase or theme that suggests a future goal or challenge (e.g., "expanding globally", "scaling our platform", "tackling industry inefficiencies"). This is the hook for the PE firm's value prop.
+
+        Return a concise, bulleted list of your findings. If the text is empty or irrelevant, state that.
         """
         try:
-            response = client.chat.completions.create(model=openai_deployment_name, messages=[{"role": "user", "content": prompt}], temperature=0.2)
+            response = client.chat.completions.create(
+                model=openai_deployment_name,
+                messages=[{"role": "user", "content": f"{prompt}\n\nSOURCE TEXT:\n---\n{source_text[:12000]}\n---"}],
+                temperature=0.1
+            )
             return response.choices[0].message.content
         except Exception as e:
-            return f"Error researching company: {e}"
+            return f"Error during AI analysis: {e}"
 
-    def generate_outreach_email(company_name: str, research_points: str, value_prop: str, sender_name: str, sender_title: str, firm_name: str) -> str:
+    def generate_advanced_outreach_email(company_name: str, recipient_name: str, analysis_points: str, value_prop: str, sender_name: str, sender_title: str, firm_name: str) -> str:
+        if recipient_name:
+            salutation_instruction = f"Start with the salutation 'Dear {recipient_name},'."
+        else:
+            salutation_instruction = f"Start with a professional, generic salutation (e.g., 'Dear {company_name} Team,')."
+
         prompt = f"""
-        You are an associate at a private equity firm. Your writing style is professional, concise, and direct. Avoid generic, verbose, or overly salesy language.
+        You are an associate at a private equity firm. Your writing style is professional, concise, and highly personalized.
+        Draft a personalized outreach email based on the detailed analysis provided.
 
-        Your task is to draft a personalized outreach email to the leadership of '{company_name}'.
-
-        Use the following information:
-        - **Your Firm's Details:**
-          - Name: {sender_name}
-          - Title: {sender_title}
-          - Firm: {firm_name}
-          - Value Proposition: {value_prop}
-        - **Key Research on {company_name}:**
-        {research_points}
+        **DETAILS:**
+        - Company: {company_name}
+        - Recipient: {recipient_name if recipient_name else 'Leadership Team'}
+        - Your Name: {sender_name}
+        - Your Title: {sender_title}
+        - Your Firm: {firm_name}
+        - Your Firm's Value Proposition: {value_prop}
+        - **Detailed Analysis of {company_name}:**
+        {analysis_points}
 
         **Instructions:**
-        1.  Start with a professional, generic salutation (e.g., "Dear {company_name} Team,"). **Do not invent a person's name.**
-        2.  Include a personalized opening that references the specific "Recent Positive Development" you found for {company_name}.
-        3.  Briefly introduce your firm and connect your "Value Proposition" to their "Potential Challenge/Opportunity". Show how your firm can help them solve a problem or accelerate growth.
+        1.  {salutation_instruction}
+        2.  Weave the **Specific Achievement** from the analysis into your opening line to show you've done your research.
+        3.  Briefly introduce your firm and connect your **Value Proposition** to the **Implied Growth/Challenge Area** from the analysis.
         4.  Keep the email under 150 words.
-        5.  End with a clear, low-friction call to action, like "Would you be open to a brief introductory call next week?".
+        5.  End with a clear, low-friction call to action.
         6.  Sign off with the provided sender's details.
-        7.  Return ONLY the email draft, starting with "Subject:". Do not include any pre-amble or explanation.
+        7.  Return ONLY the email draft, starting with "Subject:".
         """
         try:
             response = client.chat.completions.create(model=openai_deployment_name, messages=[{"role": "user", "content": prompt}], temperature=0.5)
@@ -4314,7 +4364,6 @@ def pe_agent_app_azure():
         style = doc.styles['Normal']
         style.font.name = 'Aptos Display'
         style.font.size = Pt(11)
-
         for i, item in enumerate(drafts):
             company_name = item.get('Company', 'Unknown Company').replace('_', ' ')
             email_draft = item.get('Draft', 'No draft generated.')
@@ -4322,16 +4371,15 @@ def pe_agent_app_azure():
             doc.add_paragraph(email_draft)
             if i < len(drafts) - 1:
                 doc.add_page_break()
-        
         buffer = io.BytesIO()
         doc.save(buffer)
         buffer.seek(0)
         return buffer.getvalue()
 
-    # --- UI WITH TABS FOR DUAL FUNCTIONALITY ---
-    tab1, tab2 = st.tabs(["Deal Document Analysis", "Bulk Outreach Email Generation"])
+    # --- UI TABS ---
+    tab1, tab2 = st.tabs(["Deal Document Analysis", "Advanced Outreach Generation"])
 
-    # --- TAB 1: DEAL DOCUMENT ANALYSIS ---
+    # --- TAB 1: DEAL DOCUMENT ANALYSIS (Fully expanded) ---
     with tab1:
         st.subheader("1. Upload Confidential Documents")
         uploaded_files = st.file_uploader(
@@ -4410,95 +4458,94 @@ def pe_agent_app_azure():
             full_html_for_download = f"<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'><title>PE Investment Analysis Report</title><link href='https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap' rel='stylesheet'>{styles_html}</head><body>{content_html}</body></html>"
             st.download_button(label="📥 Download Report as HTML", data=full_html_for_download, file_name="pe_investment_analysis.html", mime="text/html", use_container_width=True)
 
-    # --- TAB 2: BULK OUTREACH EMAIL GENERATION ---
-    with tab2:
-        st.subheader("Generate Personalized Outreach Emails in Bulk")
-        st.info("Paste a list of company names, define your firm's value proposition, and generate customized drafts instantly.", icon="✉️")
 
-        with st.form("outreach_form"):
-            company_list_input = st.text_area(
-                "**1. Enter Company Names** (one per line)",
-                height=150,
-                placeholder="Example Corp\nInnovate Inc.\nGlobal Solutions Ltd."
-            )
-            firm_value_prop = st.text_area(
-                "**2. Define Your Firm's Value Proposition**",
-                height=200,
-                placeholder="e.g., We are a growth equity firm specializing in scaling B2B SaaS companies..."
-            )
-            st.markdown("---")
-            st.markdown("**3. Enter Your Details**")
-            col1, col2 = st.columns(2)
-            with col1:
-                sender_name = st.text_input("Your Name", placeholder="e.g., Alex Johnson", key="sender_name")
-            with col2:
-                sender_title = st.text_input("Your Title", placeholder="e.g., Associate", key="sender_title")
-            firm_name = st.text_input("Your Firm's Name", placeholder="e.g., Growth Equity Partners", key="firm_name")
+    # --- TAB 2: ADVANCED OUTREACH GENERATION ---
+    with tab2:
+        st.subheader("Generate Highly Personalized Outreach Emails")
+        
+        if 'pe_outreach_targets' not in st.session_state:
+            st.session_state.pe_outreach_targets = [{"id": str(uuid.uuid4())}]
+
+        with st.form("advanced_outreach_form"):
+            st.markdown("**1. Define Your Firm & Sender Details**")
+            firm_value_prop = st.text_area("Your Firm's Value Proposition", placeholder="e.g., We are a growth equity firm...")
+            c1, c2, c3 = st.columns(3)
+            sender_name = c1.text_input("Your Name", placeholder="Alex Johnson")
+            sender_title = c2.text_input("Your Title", placeholder="Associate")
+            firm_name = c3.text_input("Your Firm's Name", placeholder="Growth Equity Partners")
+
+            st.markdown("**2. Add Target Companies**")
             
-            st.markdown("---")
-            st.subheader("Advanced: Customize Email Generation Prompt")
-            st.text_area(
-                "Enter your custom prompt template for email generation:",
-                placeholder="You can use placeholders like {COMPANY_NAME}, {COMPANY_RESEARCH}, and {FIRM_VALUE_PROP}.",
-                height=250,
-                key="pe_outreach_custom_prompt"
-            )
+            for i, target in enumerate(st.session_state.pe_outreach_targets):
+                st.markdown(f"---")
+                cols = st.columns([4, 4, 5])
+                target['company_name'] = cols[0].text_input("Company Name", key=f"company_{target['id']}")
+                target['recipient_name'] = cols[1].text_input("Recipient Name (Optional)", key=f"recipient_{target['id']}")
+                target['source_type'] = cols[2].radio("Customization Source", ["Website URL", "Upload Document"], key=f"source_{target['id']}", horizontal=True)
+
+                if target['source_type'] == "Website URL":
+                    target['url'] = st.text_input("Website URL", placeholder="www.examplecorp.com", key=f"url_{target['id']}")
+                else:
+                    # File uploader needs a unique key that persists across reruns
+                    target['file'] = st.file_uploader("Upload PDF or Word Doc", type=['pdf', 'docx'], key=f"file_{target['id']}")
 
             submitted = st.form_submit_button("🚀 Generate Email Drafts", use_container_width=True)
 
         if submitted:
-            if not all([company_list_input, firm_value_prop, sender_name, firm_name]):
-                st.warning("Please fill out the Company List, Value Proposition, Your Name, and Your Firm's Name.")
+            if not all([firm_value_prop, sender_name, firm_name]):
+                st.warning("Please fill out your firm and sender details.")
             else:
-                companies = [name.strip() for name in company_list_input.split('\n') if name.strip()]
                 email_drafts = []
-                with st.spinner(f"Generating outreach for {len(companies)} companies..."):
-                    progress_bar = st.progress(0, text="Initializing...")
-                    for i, company in enumerate(companies):
-                        progress_bar.progress((i) / len(companies), text=f"Researching {company}...")
-                        research = research_company_for_outreach(company)
+                with st.spinner("Analyzing sources and generating drafts..."):
+                    for i, target in enumerate(st.session_state.pe_outreach_targets):
+                        company = target.get('company_name')
+                        if not company:
+                            st.warning(f"Skipping Target #{i+1} because company name is missing.")
+                            continue
+
+                        st.write(f"Processing: **{company}**")
+                        source_text = ""
+                        # To read the file, we must access it through session state via its key
+                        file_key = f"file_{target['id']}"
+                        uploaded_file_obj = st.session_state.get(file_key)
+
+                        if target['source_type'] == "Website URL" and target.get('url'):
+                            source_text = scrape_website_text(target['url'])
+                        elif target['source_type'] == "Upload Document" and uploaded_file_obj:
+                            file_bytes = uploaded_file_obj.getvalue()
+                            if uploaded_file_obj.name.lower().endswith('.pdf'):
+                                source_text, _ = parse_pdf_with_azure_di(file_bytes)
+                                if not source_text: # Fallback for PDF
+                                    source_text = fallback_pdf_text(file_bytes)
+                            elif uploaded_file_obj.name.lower().endswith('.docx'):
+                                source_text = parse_word_doc(file_bytes)
                         
-                        progress_bar.progress((i + 0.5) / len(companies), text=f"Drafting email for {company}...")
+                        if not source_text:
+                            st.warning(f"Could not extract content for {company}. A more generic email will be generated.")
                         
-                        custom_prompt = st.session_state.pe_outreach_custom_prompt
-                        if custom_prompt:
-                            # This block is not used if custom prompt is empty.
-                            # We can simplify the logic to just one call.
-                            pass
+                        analysis = analyze_source_for_outreach(company, source_text)
                         
-                        email = generate_outreach_email(
-                            company, 
-                            research, 
-                            firm_value_prop, 
-                            sender_name, 
-                            sender_title, 
-                            firm_name
+                        email = generate_advanced_outreach_email(
+                            company, target.get('recipient_name'), analysis,
+                            firm_value_prop, sender_name, sender_title, firm_name
                         )
-                        
                         email_drafts.append({"Company": company, "Draft": email})
-                    progress_bar.progress(1.0, text="Completed!")
 
-                st.session_state.pe_outreach_results = email_drafts
+                st.session_state.pe_advanced_outreach_results = email_drafts
 
-        if 'pe_outreach_results' in st.session_state:
+        if 'pe_advanced_outreach_results' in st.session_state:
             st.success("✅ Email drafts generated successfully!")
-            results = st.session_state.pe_outreach_results
+            results = st.session_state.pe_advanced_outreach_results
             
             word_bytes = generate_word_document_from_drafts(results)
-            
             st.download_button(
-                label="📥 Download All Drafts (.docx)",
-                data=word_bytes,
-                file_name="outreach_drafts.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                key='download-docx',
-                use_container_width=True
+                "📥 Download All Drafts (.docx)", word_bytes, "advanced_outreach_drafts.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True
             )
             
             st.markdown("---")
             for item in results:
-                display_name = item['Company'].replace('_', ' ')
-                st.subheader(display_name)
+                st.subheader(item['Company'].replace('_', ' '))
                 st.code(item['Draft'], language='text')
                 st.markdown("---")
 
