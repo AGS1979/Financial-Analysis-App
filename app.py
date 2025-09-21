@@ -4344,7 +4344,7 @@ def pe_agent_app_azure():
             st.success("✅ Documents processed successfully.")
             st.markdown("---")
             st.subheader("2. Select and Generate Analysis")
-            analysis_choices = st.multoselect(
+            analysis_choices = st.multiselect(
                 "Choose the analyses you want to perform:",
                 options=list(ANALYSIS_PROMPTS.keys()),
                 default=list(ANALYSIS_PROMPTS.keys()),
