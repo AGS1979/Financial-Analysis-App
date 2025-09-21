@@ -4278,22 +4278,29 @@ def pe_agent_app_azure():
         except Exception as e:
             return f"Error researching company: {e}"
 
-    def generate_outreach_email(company_name: str, research_points: str, value_prop: str) -> str:
+    def generate_outreach_email(company_name: str, research_points: str, value_prop: str, sender_name: str, sender_title: str, firm_name: str) -> str:
         prompt = f"""
         You are an associate at a private equity firm. Your writing style is professional, concise, and direct. Avoid generic, verbose, or overly salesy language.
-        Your task is to draft a personalized outreach email to the CEO of '{company_name}'.
+
+        Your task is to draft a personalized outreach email to the leadership of '{company_name}'.
 
         Use the following information:
-        - Your Firm's Value Proposition: {value_prop}
-        - Key Research on {company_name}:
+        - **Your Firm's Details:**
+          - Name: {sender_name}
+          - Title: {sender_title}
+          - Firm: {firm_name}
+          - Value Proposition: {value_prop}
+        - **Key Research on {company_name}:**
         {research_points}
 
         **Instructions:**
-        1.  Start with a personalized opening that references the specific "Recent Positive Development" you found.
-        2.  Briefly introduce your firm and connect your "Value Proposition" to their "Potential Challenge/Opportunity". Show how your firm can help them solve a problem or accelerate growth.
-        3.  Keep the email under 150 words.
-        4.  End with a clear, low-friction call to action, like "Would you be open to a brief introductory call next week?".
-        5.  Return ONLY the email draft, starting with "Subject:". Do not include any pre-amble or explanation.
+        1.  Start with a professional, generic salutation (e.g., "Dear {company_name} Team,"). **Do not invent a person's name.**
+        2.  Include a personalized opening that references the specific "Recent Positive Development" you found for {company_name}.
+        3.  Briefly introduce your firm and connect your "Value Proposition" to their "Potential Challenge/Opportunity". Show how your firm can help them solve a problem or accelerate growth.
+        4.  Keep the email under 150 words.
+        5.  End with a clear, low-friction call to action, like "Would you be open to a brief introductory call next week?".
+        6.  Sign off with the provided sender's details.
+        7.  Return ONLY the email draft, starting with "Subject:". Do not include any pre-amble or explanation.
         """
         try:
             response = client.chat.completions.create(model=openai_deployment_name, messages=[{"role": "user", "content": prompt}], temperature=0.5)
@@ -4304,7 +4311,6 @@ def pe_agent_app_azure():
     def generate_word_document_from_drafts(drafts: list) -> bytes:
         doc = Document()
         doc.add_heading('Bulk Outreach Email Drafts', level=0)
-        # Set default font for the document
         style = doc.styles['Normal']
         style.font.name = 'Aptos Display'
         style.font.size = Pt(11)
@@ -4314,7 +4320,6 @@ def pe_agent_app_azure():
             email_draft = item.get('Draft', 'No draft generated.')
             doc.add_heading(company_name, level=2)
             doc.add_paragraph(email_draft)
-            # Add a page break unless it's the last item
             if i < len(drafts) - 1:
                 doc.add_page_break()
         
@@ -4419,8 +4424,17 @@ def pe_agent_app_azure():
             firm_value_prop = st.text_area(
                 "**2. Define Your Firm's Value Proposition**",
                 height=200,
-                placeholder="e.g., We are a growth equity firm specializing in scaling B2B SaaS companies. We provide not just capital, but also operational expertise in go-to-market strategy and international expansion. Our portfolio companies typically see a 3x increase in ARR post-investment."
+                placeholder="e.g., We are a growth equity firm specializing in scaling B2B SaaS companies..."
             )
+            st.markdown("---")
+            st.markdown("**3. Enter Your Details**")
+            col1, col2 = st.columns(2)
+            with col1:
+                sender_name = st.text_input("Your Name", placeholder="e.g., Alex Johnson", key="sender_name")
+            with col2:
+                sender_title = st.text_input("Your Title", placeholder="e.g., Associate", key="sender_title")
+            firm_name = st.text_input("Your Firm's Name", placeholder="e.g., Growth Equity Partners", key="firm_name")
+            
             st.markdown("---")
             st.subheader("Advanced: Customize Email Generation Prompt")
             st.text_area(
@@ -4433,8 +4447,8 @@ def pe_agent_app_azure():
             submitted = st.form_submit_button("🚀 Generate Email Drafts", use_container_width=True)
 
         if submitted:
-            if not company_list_input or not firm_value_prop:
-                st.warning("Please provide a list of companies and your firm's value proposition.")
+            if not all([company_list_input, firm_value_prop, sender_name, firm_name]):
+                st.warning("Please fill out the Company List, Value Proposition, Your Name, and Your Firm's Name.")
             else:
                 companies = [name.strip() for name in company_list_input.split('\n') if name.strip()]
                 email_drafts = []
@@ -4448,15 +4462,18 @@ def pe_agent_app_azure():
                         
                         custom_prompt = st.session_state.pe_outreach_custom_prompt
                         if custom_prompt:
-                            final_prompt = custom_prompt.format(
-                                COMPANY_NAME=company, 
-                                COMPANY_RESEARCH=research, 
-                                FIRM_VALUE_PROP=firm_value_prop
-                            )
-                            response = client.chat.completions.create(model=openai_deployment_name, messages=[{"role": "user", "content": final_prompt}])
-                            email = response.choices[0].message.content
-                        else:
-                            email = generate_outreach_email(company, research, firm_value_prop)
+                            # This block is not used if custom prompt is empty.
+                            # We can simplify the logic to just one call.
+                            pass
+                        
+                        email = generate_outreach_email(
+                            company, 
+                            research, 
+                            firm_value_prop, 
+                            sender_name, 
+                            sender_title, 
+                            firm_name
+                        )
                         
                         email_drafts.append({"Company": company, "Draft": email})
                     progress_bar.progress(1.0, text="Completed!")
@@ -4479,7 +4496,6 @@ def pe_agent_app_azure():
             )
             
             st.markdown("---")
-            # FIX: Replace the st.expander with subheaders and code blocks to prevent UI issues.
             for item in results:
                 display_name = item['Company'].replace('_', ' ')
                 st.subheader(display_name)
