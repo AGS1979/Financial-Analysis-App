@@ -4368,7 +4368,7 @@ def pe_agent_app_azure():
         return buffer.getvalue()
 
     # --- UI TABS ---
-    tab1, tab2 = st.tabs(["Deal Document Analysis", "Advanced Outreach Generation"])
+    tab1, tab2 = st.tabs(["Deal Document Analysis", "Email Outreach Generation"])
 
     # --- TAB 1: DEAL DOCUMENT ANALYSIS ---
     with tab1:
