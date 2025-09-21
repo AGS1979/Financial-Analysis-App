@@ -4245,7 +4245,19 @@ def pe_agent_app_azure():
             return f"## Error\n\n**Error during Azure OpenAI analysis:** {e}"
 
     def parse_markdown_to_html(analysis_results: dict) -> tuple[str, str]:
-        styles = """<style>...</style>""" # Omitted for brevity
+        styles = """
+        <style>
+            .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9fafb; }
+            .analysis-container h2 { font-size: 1.5em; font-weight: 600; color: #00416A; border-bottom: 2px solid #00416A; padding-bottom: 10px; margin-top: 0; margin-bottom: 20px; }
+            .analysis-container h3 { font-size: 1.05em; font-weight: 600; color: #00416A; padding-bottom: 5px; margin-top: 25px; border-bottom: 1px solid #e6f1f6;}
+            .analysis-container p { margin-bottom: 1em; line-height: 1.6; color: #333; }
+            .analysis-container ul { list-style-position: outside; padding-left: 20px; margin-top: 1em; margin-bottom: 1em; }
+            .analysis-container li { margin-bottom: 0.75em; line-height: 1.6; }
+            .analysis-container table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+            .analysis-container th, .analysis-container td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+            .analysis-container th { background-color: #f2f2f2; }
+        </style>
+        """
         full_html_body = ""
         for title, markdown_content in analysis_results.items():
             full_html_body += f"<h2>{html.escape(title)}</h2>"
@@ -4281,7 +4293,17 @@ def pe_agent_app_azure():
             return ""
 
     def analyze_source_for_outreach(company_name: str, source_text: str) -> str:
-        prompt = "..." # Omitted for brevity
+        prompt = f"""
+        You are a private equity analyst reviewing source material for '{company_name}'.
+        Analyze the provided text and extract key points for a highly personalized outreach email.
+        
+        Extract the following:
+        1.  **Specific Achievement:** Identify one specific, recent achievement, product launch, or milestone mentioned.
+        2.  **Core Value Proposition:** Summarize what the company does and for whom in one sentence.
+        3.  **Implied Growth/Challenge Area:** Find a phrase or theme that suggests a future goal or challenge (e.g., "expanding globally", "scaling our platform", "tackling industry inefficiencies"). This is the hook for the PE firm's value prop.
+
+        Return a concise, bulleted list of your findings. If the text is empty or irrelevant, state that.
+        """
         try:
             response = client.chat.completions.create(
                 model=openai_deployment_name,
@@ -4293,7 +4315,34 @@ def pe_agent_app_azure():
             return f"Error during AI analysis: {e}"
 
     def generate_advanced_outreach_email(company_name: str, recipient_name: str, analysis_points: str, value_prop: str, sender_name: str, sender_title: str, firm_name: str) -> str:
-        prompt = "..." # Omitted for brevity
+        if recipient_name:
+            salutation_instruction = f"Start with the salutation 'Dear {recipient_name},'."
+        else:
+            salutation_instruction = f"Start with a professional, generic salutation (e.g., 'Dear {company_name} Team,')."
+
+        prompt = f"""
+        You are an associate at a private equity firm. Your writing style is professional, concise, and highly personalized.
+        Draft a personalized outreach email based on the detailed analysis provided.
+
+        **DETAILS:**
+        - Company: {company_name}
+        - Recipient: {recipient_name if recipient_name else 'Leadership Team'}
+        - Your Name: {sender_name}
+        - Your Title: {sender_title}
+        - Your Firm: {firm_name}
+        - Your Firm's Value Proposition: {value_prop}
+        - **Detailed Analysis of {company_name}:**
+        {analysis_points}
+
+        **Instructions:**
+        1.  {salutation_instruction}
+        2.  Weave the **Specific Achievement** from the analysis into your opening line to show you've done your research.
+        3.  Briefly introduce your firm and connect your **Value Proposition** to the **Implied Growth/Challenge Area** from the analysis.
+        4.  Keep the email under 150 words.
+        5.  End with a clear, low-friction call to action.
+        6.  Sign off with the provided sender's details.
+        7.  Return ONLY the email draft, starting with "Subject:".
+        """
         try:
             response = client.chat.completions.create(model=openai_deployment_name, messages=[{"role": "user", "content": prompt}], temperature=0.5)
             return response.choices[0].message.content
@@ -4321,20 +4370,107 @@ def pe_agent_app_azure():
     # --- UI TABS ---
     tab1, tab2 = st.tabs(["Deal Document Analysis", "Advanced Outreach Generation"])
 
-    # --- TAB 1: DEAL DOCUMENT ANALYSIS (UNCHANGED) ---
+    # --- TAB 1: DEAL DOCUMENT ANALYSIS ---
     with tab1:
-        # This entire section for Deal Document Analysis is unchanged and is omitted here for clarity.
-        # Its functionality remains fully intact.
-        st.info("The functionality for analyzing uploaded deal documents (CIMs, Teasers, etc.) is available and unchanged.")
+        st.subheader("1. Upload Confidential Documents")
+        uploaded_files = st.file_uploader(
+            "Upload Teasers, CIMs, or Financials (PDF, XLSX, XLS)",
+            type=["pdf", "xlsx", "xls"],
+            accept_multiple_files=True,
+            key="pe_agent_uploader_azure",
+        )
+        if uploaded_files and "pe_agent_text" not in st.session_state:
+            if st.button("Process Documents", type="primary", key="process_docs"):
+                with st.spinner("Processing documents in secure Azure environment..."):
+                    all_texts = []
+                    for doc in uploaded_files:
+                        file_bytes = doc.getvalue()
+                        if len(file_bytes) > 45 * 1024 * 1024:
+                            st.error(f"File '{doc.name}' is too large. Max size is 45MB.")
+                            continue
+                        st.write(f"Processing '{doc.name}'...")
+                        file_ext = os.path.splitext(doc.name)[1].lower()
+                        doc_content = ""
+                        if file_ext == ".pdf":
+                            text, _ = parse_pdf_with_azure_di(file_bytes)
+                            if not text:
+                                st.warning(f"Azure DI failed for '{doc.name}'. Falling back to local text extraction.")
+                                text = fallback_pdf_text(file_bytes)
+                            doc_content = text
+                        elif file_ext in [".xlsx", ".xls"]:
+                            doc_content = parse_excel_to_markdown(file_bytes, doc.name)
+                        if doc_content:
+                            all_texts.append(f"--- START OF DOCUMENT: {doc.name} ---\n\n{doc_content}\n\n--- END OF DOCUMENT: {doc.name} ---")
+                    if all_texts:
+                        st.session_state.pe_agent_text = "\n\n".join(all_texts)
+                        st.rerun()
+                    else:
+                        st.error("Document parsing failed for all uploaded files. Please try another document.")
+
+        if "pe_agent_text" in st.session_state:
+            st.success("✅ Documents processed successfully.")
+            st.markdown("---")
+            st.subheader("2. Select and Generate Analysis")
+            analysis_choices = st.multiselect(
+                "Choose the analyses you want to perform:",
+                options=list(ANALYSIS_PROMPTS.keys()),
+                default=list(ANALYSIS_PROMPTS.keys()),
+            )
+            if analysis_choices:
+                st.markdown("---")
+                st.subheader("Advanced: Customize Analysis Prompts")
+                st.info("You can provide your own prompts for the selected analyses below. If a text box is left empty, the agent's default prompt will be used.")
+                for choice in analysis_choices:
+                    st.markdown(f"##### Custom Prompt for: {choice}")
+                    st.text_area(label=f"Custom prompt for {choice}", placeholder=f"Enter your full custom prompt for the '{choice}' analysis here...", height=200, key=f"pe_custom_prompt_{choice}", label_visibility="collapsed")
+            if st.button("Generate Analysis", use_container_width=True, key="generate_analysis"):
+                if not analysis_choices:
+                    st.warning("Please select at least one analysis type.")
+                else:
+                    full_text = st.session_state.pe_agent_text
+                    analysis_results = {}
+                    with st.spinner("Generating insights..."):
+                        for choice in analysis_choices:
+                            prompt = st.session_state.get(f"pe_custom_prompt_{choice}") or ANALYSIS_PROMPTS[choice]
+                            result = analyze_document_with_azure_openai(full_text, prompt)
+                            analysis_results[choice] = result
+                    st.session_state.pe_agent_analysis_results = analysis_results
+                    st.rerun()
+
+        if "pe_agent_analysis_results" in st.session_state:
+            st.markdown("---")
+            st.subheader("3. Generated Analysis")
+            styles_html, content_html = parse_markdown_to_html(st.session_state.pe_agent_analysis_results)
+            st.markdown(styles_html, unsafe_allow_html=True)
+            st.markdown(content_html, unsafe_allow_html=True)
+            st.markdown("---")
+            full_html_for_download = f"<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'><title>PE Investment Analysis Report</title><link href='https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap' rel='stylesheet'>{styles_html}</head><body>{content_html}</body></html>"
+            st.download_button(label="📥 Download Report as HTML", data=full_html_for_download, file_name="pe_investment_analysis.html", mime="text/html", use_container_width=True)
 
 
     # --- TAB 2: ADVANCED OUTREACH GENERATION ---
     with tab2:
         st.subheader("Generate Highly Personalized Outreach Emails")
         
-        # Initialize session state for a dynamic list of targets
         if 'pe_outreach_targets' not in st.session_state:
-            st.session_state.pe_outreach_targets = [{'id': str(uuid.uuid4()), 'file_uploader_key': f'file_{uuid.uuid4()}'}]
+            st.session_state.pe_outreach_targets = []
+
+        num_targets = st.number_input(
+            "Number of Target Companies",
+            min_value=1,
+            max_value=20,
+            value=max(1, len(st.session_state.pe_outreach_targets)),
+            step=1,
+            key='num_outreach_targets'
+        )
+
+        current_len = len(st.session_state.pe_outreach_targets)
+        if current_len < num_targets:
+            for _ in range(num_targets - current_len):
+                new_id = str(uuid.uuid4())
+                st.session_state.pe_outreach_targets.append({'id': new_id, 'file_uploader_key': f'file_{new_id}'})
+        elif current_len > num_targets:
+            st.session_state.pe_outreach_targets = st.session_state.pe_outreach_targets[:num_targets]
 
         with st.form("advanced_outreach_form"):
             st.markdown("**1. Define Your Firm & Sender Details**")
@@ -4346,7 +4482,6 @@ def pe_agent_app_azure():
 
             st.markdown("**2. Define Target Companies**")
             
-            # This loop dynamically creates an input section for each target company in the list
             for i, target in enumerate(st.session_state.pe_outreach_targets):
                 st.markdown(f"---")
                 st.markdown(f"**Target Company #{i+1}**")
@@ -4362,25 +4497,12 @@ def pe_agent_app_azure():
 
             submitted = st.form_submit_button("🚀 Generate Email Drafts", use_container_width=True)
 
-        # --- Buttons to manage the target list (placed outside the form) ---
-        col1, col2, _ = st.columns([1, 1, 3])
-        if col1.button("➕ Add Another Target"):
-            new_id = str(uuid.uuid4())
-            st.session_state.pe_outreach_targets.append({'id': new_id, 'file_uploader_key': f'file_{new_id}'})
-            st.rerun()
-
-        if len(st.session_state.pe_outreach_targets) > 1:
-            if col2.button("➖ Remove Last Target"):
-                st.session_state.pe_outreach_targets.pop()
-                st.rerun()
-
         if submitted:
             if not all([firm_value_prop, sender_name, firm_name]):
                 st.warning("Please fill out your firm and sender details.")
             else:
                 email_drafts = []
                 with st.spinner("Analyzing sources and generating drafts..."):
-                    # Process each target from the list stored in session_state
                     for i, target_data in enumerate(st.session_state.pe_outreach_targets):
                         company = target_data.get('company_name')
                         if not company:
