@@ -4309,12 +4309,14 @@ def pe_agent_app_azure():
         style.font.name = 'Aptos Display'
         style.font.size = Pt(11)
 
-        for item in drafts:
+        for i, item in enumerate(drafts):
             company_name = item.get('Company', 'Unknown Company').replace('_', ' ')
             email_draft = item.get('Draft', 'No draft generated.')
             doc.add_heading(company_name, level=2)
             doc.add_paragraph(email_draft)
-            doc.add_page_break()
+            # Add a page break unless it's the last item
+            if i < len(drafts) - 1:
+                doc.add_page_break()
         
         buffer = io.BytesIO()
         doc.save(buffer)
@@ -4465,7 +4467,6 @@ def pe_agent_app_azure():
             st.success("✅ Email drafts generated successfully!")
             results = st.session_state.pe_outreach_results
             
-            # Generate Word document in memory
             word_bytes = generate_word_document_from_drafts(results)
             
             st.download_button(
@@ -4478,11 +4479,12 @@ def pe_agent_app_azure():
             )
             
             st.markdown("---")
+            # FIX: Replace the st.expander with subheaders and code blocks to prevent UI issues.
             for item in results:
-                # FIX: Replace underscores with spaces for better display
                 display_name = item['Company'].replace('_', ' ')
-                with st.expander(f"**{display_name}**"):
-                    st.code(item['Draft'], language='text')
+                st.subheader(display_name)
+                st.code(item['Draft'], language='text')
+                st.markdown("---")
 
 
 # ==============================================================================
