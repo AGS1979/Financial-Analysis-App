@@ -39,3 +39,4 @@ thefuzz
 python-Levenshtein
 
 openpyxl
+toml
