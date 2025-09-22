@@ -4670,6 +4670,8 @@ def agent_credit_app_azure():
     from azure.ai.documentintelligence.models import ContentFormat
     from openai import AzureOpenAI
     from st_supabase_connection import SupabaseConnection
+    import time
+    from openai import RateLimitError
 
     st.markdown("### 🔒 Agent Credit")
     st.markdown(
@@ -5035,6 +5037,9 @@ def agent_credit_app_azure():
 
     @st.cache_data(ttl=3600)
     def analyze_with_azure_openai(_context_hash, _prompt: str, as_json: bool = False):
+        """
+        Enhanced version with automatic retry logic for rate limiting.
+        """
         try:
             # Note: _context_hash is not used directly but ensures Streamlit caches based on content
             _context, _ = st.session_state.get('context_cache', {}).get(_context_hash, (None, None))
@@ -5043,22 +5048,37 @@ def agent_credit_app_azure():
 
             client = AzureOpenAI(api_key=openai_key, api_version="2024-02-01", azure_endpoint=openai_endpoint)
             kwargs = {"response_format": {"type": "json_object"}} if as_json else {}
-            response = client.chat.completions.create(
-                model=openai_deployment_name,
-                messages=[
-                    {"role": "system", "content": "You are a precise credit-document extractor. If JSON is requested, return ONLY strict JSON."},
-                    {"role": "user", "content": f"CONTEXT EXCERPT:\n---\n{_context}\n---\nTASK:\n{_prompt}"}
-                ],
-                **kwargs
-            )
-            txt = response.choices[0].message.content
-            if as_json:
+            
+            # --- NEW: Retry Logic ---
+            max_retries = 3
+            for attempt in range(max_retries):
                 try:
-                    return json.loads(txt)
-                except Exception:
-                    txt = re.sub(r"^```json|```$", "", txt.strip(), flags=re.MULTILINE)
-                    return json.loads(txt)
-            return txt
+                    response = client.chat.completions.create(
+                        model=openai_deployment_name,
+                        messages=[{"role": "system", "content": "You are a precise credit-document extractor. If JSON is requested, return ONLY strict JSON."},
+                                  {"role": "user", "content": f"CONTEXT EXCERPT:\n---\n{_context}\n---\nTASK:\n{_prompt}"}],
+                        **kwargs)
+                    
+                    txt = response.choices[0].message.content
+                    if as_json:
+                        try:
+                            return json.loads(txt)
+                        except json.JSONDecodeError:
+                            txt = re.sub(r"^```json|```$", "", txt.strip(), flags=re.MULTILINE)
+                            return json.loads(txt)
+                    return txt # Success, exit the loop
+                
+                except RateLimitError as e:
+                    wait_time = e.retry_after if hasattr(e, 'retry_after') and e.retry_after is not None else 15 * (attempt + 1)
+                    st.warning(f"Rate limit exceeded. Waiting for {wait_time} seconds before retrying... (Attempt {attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
+                
+                except Exception as e: # Catch other potential API errors
+                     return {"error": f"An unexpected API error occurred: {str(e)}"} if as_json else f"## Error\n**OpenAI Error:** {e}"
+            
+            # If all retries fail
+            return {"error": "Rate limit still exceeded after multiple retries."} if as_json else "## Error\n**Rate limit still exceeded after multiple retries.**"
+
         except Exception as e:
             return {"error": str(e)} if as_json else f"## Error\n**OpenAI Error:** {e}"
 
@@ -5215,20 +5235,42 @@ def agent_credit_app_azure():
                     context_hash = hash(full_text)
                     st.session_state.context_cache[context_hash] = (full_text, None)
 
+                
+                # --- Helper function for truncating context ---
+                def truncate_context(text: str, max_chars: int = 150000) -> str:
+                    """Safely truncates text to stay within model limits."""
+                    return text[:max_chars]
+                    
                 with st.spinner("Stage 1/2: Extracting key clauses..."):
                     extracted_context = {}
                     needed_keys = set(k for choice in analysis_choices_tab1 for k in REQUIRED_CONTEXT.get(choice, []))
+                    
+                    # --- NEW: Consolidated Snippet Logic ---
                     for key in needed_keys:
+                        st.write(f"Extracting clauses for: **{key.replace('_', ' ').title()}**")
                         candidate_snips = smart_candidates_for(key, full_text)
-                        # Hashing each snippet for caching
-                        aggregated = []
-                        for snip in candidate_snips[:3]:
-                           snip_hash = hash(snip)
-                           st.session_state.context_cache[snip_hash] = (snip, None)
-                           res = analyze_with_azure_openai(snip_hash, JSON_SCHEMAS[key]["instruction"], as_json=True)
-                           if "error" not in res:
-                               aggregated.append(res)
-                        extracted_context[key] = aggregated
+                        
+                        if not candidate_snips:
+                            extracted_context[key] = []
+                            continue
+
+                        # Consolidate all found snippets into one context block
+                        combined_context = "\n\n---\n\n".join(candidate_snips)
+                        safe_combined_context = truncate_context(combined_context)
+                        
+                        # Add the combined context to the cache
+                        snip_hash = hash(safe_combined_context)
+                        if 'context_cache' not in st.session_state: st.session_state.context_cache = {}
+                        st.session_state.context_cache[snip_hash] = (safe_combined_context, None)
+
+                        # Make ONE API call per topic instead of many
+                        res = analyze_with_azure_openai(snip_hash, JSON_SCHEMAS[key]["instruction"], as_json=True)
+                        
+                        if "error" not in res:
+                            extracted_context[key] = [res] # Store the result in a list to maintain structure
+                        else:
+                            extracted_context[key] = []
+                            st.error(f"Failed to extract '{key}': {res['error']}")
 
                 with st.spinner("Stage 2/2: Synthesizing report..."):
                     analysis_results = {}
