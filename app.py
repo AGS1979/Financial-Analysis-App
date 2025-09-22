@@ -6310,23 +6310,26 @@ def main():
         <html>
             <head>
                 <style>
-                /* This CSS is scoped to the component's iframe */
+                /* --- CSS FIX IS HERE --- */
                 .agent-grid {{
-                    display: grid;
-                    grid-template-columns: repeat(3, 1fr);
-                    grid-auto-rows: 1fr;
+                    display: flex; /* Changed from grid to flex */
+                    flex-wrap: wrap; /* Allows items to wrap to the next line */
                     gap: 20px;
                 }}
                 .agent-card {{
+                    /* This tells each card how to behave in the flex container */
+                    flex: 1 1 30%; /* Grow, Shrink, Basis (roughly 3 per row) */
+                    min-width: 300px; /* Prevents cards from getting too narrow */
+
+                    /* --- Original styling below is unchanged --- */
                     display: flex;
                     flex-direction: column;
                     background-color: #f8f9fa;
                     border: 1px solid #e0e0e0;
                     border-radius: 8px;
                     padding: 20px;
-                    height: 100%;
                     transition: box-shadow 0.2s ease-in-out;
-                    font-family: 'Poppins', sans-serif; /* Ensure font consistency */
+                    font-family: 'Poppins', sans-serif;
                 }}
                 .agent-card:hover {{
                     box-shadow: 0 4px 12px rgba(0,0,0,0.1);
@@ -6353,7 +6356,6 @@ def main():
         """
 
         # Using st.components.v1.html for robust rendering
-        # Calculate a dynamic height for the component frame
         num_rows = (len(visible_agent_details) + 2) // 3
         height_px = num_rows * 180 
         
