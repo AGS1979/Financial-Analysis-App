@@ -47,17 +47,18 @@ from utils import format_report_as_html
 from PIL import Image, ImageDraw, ImageFont # Make sure PIL imports are at the top
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from jinja2 import Template
+import toml
 
 
 # --- GLOBAL CLIENT INITIALIZATION ---
 # This code runs only once when the app starts
 try:
     openai_client = AzureOpenAI(
-        api_key=st.secrets["azure"]["openai_key"],
+        api_key=os.environ.get("AZURE_OPENAI_KEY"),
         api_version="2024-02-01",  # Match your API version
-        azure_endpoint=st.secrets["azure"]["openai_endpoint"],
+        azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
         # The deployed model name is CRITICAL here
-        azure_deployment=st.secrets["azure"]["openai_deployment_name"]
+        azure_deployment=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
     )
 except KeyError as e:
     st.error(f"Configuration error: Missing Azure secret: {e}. Please check your secrets.toml file.")
@@ -494,7 +495,7 @@ def validate_session():
 def whitelist_manager_ui():
     """Renders a UI in the sidebar for admins to manage the email whitelist in Supabase."""
     try:
-        admin_password = st.secrets.get("app", {}).get("admin_password")
+        admin_password = os.environ.get("APP_ADMIN_PASSWORD")
     except (KeyError, FileNotFoundError):
         admin_password = None
 
@@ -555,9 +556,9 @@ def whitelist_manager_ui():
 # It's best practice to manage secrets in one place.
 # The app will try to get keys and handle errors gracefully if not found.
 try:
-    DEEPSEEK_API_KEY = st.secrets.get("deepseek", {}).get("api_key")
-    FMP_API_KEY = st.secrets.get("fmp", {}).get("api_key")
-    OPENAI_API_KEY = st.secrets.get("openai", {}).get("api_key")
+    DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
+    FMP_API_KEY = os.environ.get("FMP_API_KEY")
+    OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 except (KeyError, FileNotFoundError):
     st.sidebar.error("API keys not found in Streamlit secrets.")
     st.stop()
@@ -620,7 +621,7 @@ def investment_memo_app():
     """
     
     # --- CONFIGURATION ---
-    DEEPSEEK_API_KEY = st.secrets.get("deepseek", {}).get("api_key")
+    DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
     DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
     CHUNK_SIZE = 50
 
@@ -1589,7 +1590,7 @@ def special_situations_app():
     # ========== CONFIG & SETUP ==========
     # This section handles API key loading and global constants.
     try:
-        DEEPSEEK_API_KEY = st.secrets["deepseek"]["api_key"]
+        DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
     except (KeyError, FileNotFoundError):
         st.error("DeepSeek API key not found. Please add it to your Streamlit secrets.")
         st.stop()
@@ -1597,7 +1598,7 @@ def special_situations_app():
     DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 
     try:
-        FMP_API_KEY = st.secrets["fmp"]["api_key"]
+        FMP_API_KEY = os.environ.get("FMP_API_KEY")
     except (KeyError, FileNotFoundError):
         st.error("FMP API key not found. Please add it to your Streamlit secrets.")
         st.stop()
@@ -2266,7 +2267,7 @@ def esg_analyzer_app():
         {text[:80000]}
         """
         try:
-            DEEPSEEK_API_KEY = st.secrets["deepseek"]["api_key"]
+            DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
             headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
             payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 8000, "response_format": {"type": "json_object"}}
             response = requests.post("https://api.deepseek.com/v1/chat/completions", headers=headers, json=payload, timeout=120)
@@ -3024,7 +3025,7 @@ def portfolio_agent_app(user_id: str):
             def __init__(self, user_id: str, index_name: str = "portfolio-agent"):
                 self.namespace = user_id
                 try:
-                    self.pc = Pinecone(api_key=st.secrets["pinecone"]["api_key"])
+                    self.pc = Pinecone(api_key=os.environ.get("PINECONE_API_KEY"))
                     if index_name not in [idx.name for idx in self.pc.list_indexes()]:
                         st.error(f"Pinecone index '{index_name}' was not found.")
                         raise NameError(f"Index '{index_name}' not found.")
@@ -3040,8 +3041,8 @@ def portfolio_agent_app(user_id: str):
             def _init_supabase(self):
                 from supabase import create_client, Client
                 # CORRECTED: Access secrets under the 'connections.supabase' structure
-                url = st.secrets.get("connections", {}).get("supabase", {}).get("SUPABASE_URL")
-                key = st.secrets.get("connections", {}).get("supabase", {}).get("SUPABASE_KEY")
+                url = os.environ.get("SUPABASE_URL")
+                key = os.environ.get("SUPABASE_KEY")
                 if not url or not key:
                     st.error("Supabase URL or Key is not configured in secrets for the agent. Please check [connections.supabase].")
                     return None
@@ -4140,11 +4141,11 @@ def pe_agent_app_azure():
 
     # --- AGENT CONFIG ---
     try:
-        di_endpoint = st.secrets["azure"]["di_endpoint"]
-        di_key = st.secrets["azure"]["di_key"]
-        openai_endpoint = st.secrets["azure"]["openai_endpoint"]
-        openai_key = st.secrets["azure"]["openai_key"]
-        openai_deployment_name = st.secrets["azure"]["openai_deployment_name"]
+        di_endpoint = os.environ.get("AZURE_DI_ENDPOINT")
+        di_key = os.environ.get("AZURE_DI_KEY")
+        openai_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+        openai_key = os.environ.get("AZURE_OPENAI_KEY")
+        openai_deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
     except KeyError as e:
         st.error(f"Configuration error: Missing Azure secret: {e}. Please check your secrets.toml file.")
         st.stop()
@@ -4680,11 +4681,11 @@ def agent_credit_app_azure():
 
     # --- AGENT CONFIG (Fetched from secrets for Azure) ---
     try:
-        di_endpoint = st.secrets["azure"]["di_endpoint"]
-        di_key = st.secrets["azure"]["di_key"]
-        openai_endpoint = st.secrets["azure"]["openai_endpoint"]
-        openai_key = st.secrets["azure"]["openai_key"]
-        openai_deployment_name = st.secrets["azure"]["openai_deployment_name"]
+        di_endpoint = os.environ.get("AZURE_DI_ENDPOINT")
+        di_key = os.environ.get("AZURE_DI_KEY")
+        openai_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+        openai_key = os.environ.get("AZURE_OPENAI_KEY")
+        openai_deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
         conn = st.connection("supabase", type=SupabaseConnection)
     except Exception as e:
         st.error(f"Configuration or Connection error: {e}. Please check your secrets.toml file.")
@@ -5240,7 +5241,7 @@ def agent_credit_app_azure():
                 def truncate_context(text: str, max_chars: int = 150000) -> str:
                     """Safely truncates text to stay within model limits."""
                     return text[:max_chars]
-                    
+
                 with st.spinner("Stage 1/2: Extracting key clauses..."):
                     extracted_context = {}
                     needed_keys = set(k for choice in analysis_choices_tab1 for k in REQUIRED_CONTEXT.get(choice, []))
@@ -5420,9 +5421,9 @@ def model_integrity_agent_app():
 
     # --- AGENT CONFIG (Fetched from secrets for Azure) ---
     try:
-        openai_endpoint = st.secrets["azure"]["openai_endpoint"]
-        openai_key = st.secrets["azure"]["openai_key"]
-        openai_deployment_name = st.secrets["azure"]["openai_deployment_name"]
+        openai_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+        openai_key = os.environ.get("AZURE_OPENAI_KEY")
+        openai_deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
     except KeyError as e:
         st.error(f"Configuration error: Missing Azure secret: {e}. Please check your secrets.toml file.")
         st.stop()
@@ -5599,10 +5600,10 @@ def agent_sentinel_app():
 
     # --- AGENT CONFIG (Fetched from secrets) ---
     try:
-        FMP_API_KEY = st.secrets["fmp"]["api_key"]
-        openai_endpoint = st.secrets["azure"]["openai_endpoint"]
-        openai_key = st.secrets["azure"]["openai_key"]
-        openai_deployment_name = st.secrets["azure"]["openai_deployment_name"]
+        FMP_API_KEY = os.environ.get("FMP_API_KEY")
+        openai_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+        openai_key = os.environ.get("AZURE_OPENAI_KEY")
+        openai_deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
     except KeyError as e:
         st.error(f"Configuration error: Missing a required secret: {e}. Please check your secrets.toml file.")
         st.stop()
@@ -5780,9 +5781,9 @@ def investment_pipeline_agent():
     # --- 1. API AND CLIENT SETUP ---
     MAX_COMPANIES_TO_ANALYZE = 50
     try:
-        eodhd_api_key = st.secrets["eodhd"]["api_key"]
-        client = AzureOpenAI(api_key=st.secrets["azure"]["openai_key"], api_version="2024-02-01", azure_endpoint=st.secrets["azure"]["openai_endpoint"])
-        llm_deployment_name = st.secrets["azure"]["openai_deployment_name"]
+        eodhd_api_key = os.environ.get("EODHD_API_KEY")
+        client = AzureOpenAI(api_key=os.environ.get("AZURE_OPENAI_KEY"), api_version="2024-02-01", azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"))
+        llm_deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
     except Exception as e:
         st.error(f"Could not initialize secrets or clients. Error: {e}")
         return
@@ -6172,7 +6173,7 @@ def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
         Simulates checking for new MNPI or regulatory filings using EODHD.
         """
         st.info("Agent 1/2: Compliance & Audit Agent is checking for new MNPI and regulatory risks...")
-        eodhd_api_key = st.secrets["eodhd"]["api_key"]
+        eodhd_api_key = os.environ.get("EODHD_API_KEY")
         
         compliance_findings = {}
         for ticker in tickers:
@@ -6187,7 +6188,7 @@ def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
                         # Use LLM to check for MNPI proxy
                         prompt = f"Does the following news headline for {ticker} contain any information that could be considered material non-public information (MNPI) for a public company? Answer 'Yes' or 'No' and provide a brief reason.\n\nHeadline: {item['title']}"
                         response = client.chat.completions.create(
-                            model=st.secrets["azure"]["openai_deployment_name"],
+                            model=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME"),
                             messages=[{"role": "user", "content": prompt}]
                         )
                         if "yes" in response.choices[0].message.content.lower():
@@ -6334,15 +6335,21 @@ def main():
 
     if 'st_supabase_connection' not in st.session_state:
         try:
-            supabase_url = st.secrets["connections"]["supabase"]["SUPABASE_URL"]
-            supabase_key = st.secrets["connections"]["supabase"]["SUPABASE_KEY"]
+            supabase_url = os.environ.get("SUPABASE_URL")
+            supabase_key = os.environ.get("SUPABASE_KEY")
             st.session_state.st_supabase_connection = SupabaseConnection('supabase', supabase_url=supabase_url, supabase_key=supabase_key)
         except Exception as e:
             st.error(f"Error initializing Supabase connection: {e}")
             st.stop()
 
     # --- DYNAMIC AGENT VISIBILITY LOGIC ---
-    permissions = st.secrets.get("user_permissions", {})
+    
+    # Load the config file
+    with open("config.toml", "r") as f:
+        config = toml.load(f)
+
+    # Get the permissions from the loaded config
+    permissions = config.get("user_permissions", {})
     current_user = st.session_state.get("username")
     visible_agents = permissions.get("__DEFAULT__", ["🏠 Welcome"]) 
     if current_user in permissions:
