@@ -6273,9 +6273,7 @@ def main():
         st.info("👈 **Select an agent from the sidebar to begin.**")
         st.subheader("Available Agents")
 
-        # ### NEW: MASTER LIST OF ALL AGENT DETAILS ###
-        # This list stores the information for every possible agent card.
-        # The 'name' must exactly match the name in your secrets.toml file.
+        # Master list of all agent details.
         ALL_AGENT_DETAILS = [
             {"name": "Agent IdeaGen", "title": "💡 Agent IdeaGen", "description": "Discover new investment ideas by screening the market based on a specific theme or set of custom criteria."},
             {"name": "Agent PE", "title": "🔒 Agent PE", "description": "Analyze confidential IMs and teasers with enterprise-grade secured environment."},
@@ -6291,11 +6289,10 @@ def main():
             {"name": "Real-Time Sentinel", "title": "🚨 Real-Time Sentinel", "description": "Provides a real-time warning system for compliance issues and tail risks."}
         ]
 
-        # ### MODIFIED: DYNAMICALLY GENERATE AGENT CARDS ###
-        # 1. Filter the master list to only include agents the user is allowed to see.
+        # Filter the master list to only include agents the user is allowed to see.
         visible_agent_details = [agent for agent in ALL_AGENT_DETAILS if agent["name"] in visible_agents]
 
-        # 2. Generate the HTML for each visible card.
+        # Generate the HTML for each visible card.
         card_html_list = []
         for agent in visible_agent_details:
             card_html_list.append(f"""
@@ -6305,8 +6302,42 @@ def main():
             </div>
             """)
 
-        # 3. Combine the cards into the grid and display.
-        st.markdown("""<style>...</style>""", unsafe_allow_html=True) # Your CSS is unchanged
+        # ### FINAL STEP: Inject the CSS and the dynamically generated cards ###
+        st.markdown("""
+        <style>
+        .agent-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-auto-rows: 1fr;
+            gap: 20px;
+        }
+        .agent-card {
+            display: flex;
+            flex-direction: column;
+            background-color: #f8f9fa;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            height: 100%;
+            transition: box-shadow 0.2s ease-in-out;
+        }
+        .agent-card:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .agent-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #1e1e1e;
+            margin-bottom: 10px;
+        }
+        .agent-description {
+            font-size: 0.95rem;
+            color: #4a4a4a;
+            line-height: 1.5;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
         st.markdown(f"""
         <div class="agent-grid">
             {''.join(card_html_list)}
