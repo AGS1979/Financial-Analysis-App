@@ -6195,7 +6195,7 @@ def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
 def main():
     """
     Main function to run the Streamlit app with authentication and routing.
-    This version includes dynamic agent visibility and uses st.components.v1.html for robust rendering.
+    This version ensures both the sidebar and welcome page cards are dynamically filtered.
     """
     
     if not authentication_ui():
@@ -6231,6 +6231,7 @@ def main():
         st.title("ARANC'AI'")
         st.write(f"Welcome, **{st.session_state.username}**")
         st.markdown("---")
+        # THIS IS NOW CORRECTLY USING THE DYNAMIC LIST
         app_mode = st.radio(
             "Choose a tool:",
             options=visible_agents,
@@ -6310,37 +6311,11 @@ def main():
         <html>
             <head>
                 <style>
-                .agent-grid {{
-                    display: flex;
-                    flex-wrap: wrap;
-                    gap: 20px;
-                }}
-                .agent-card {{
-                    flex: 1 1 30%;
-                    min-width: 300px;
-                    display: flex;
-                    flex-direction: column;
-                    background-color: #f8f9fa;
-                    border: 1px solid #e0e0e0;
-                    border-radius: 8px;
-                    padding: 20px;
-                    transition: box-shadow 0.2s ease-in-out;
-                    font-family: 'Poppins', sans-serif;
-                }}
-                .agent-card:hover {{
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-                }}
-                .agent-title {{
-                    font-size: 1.1rem;
-                    font-weight: 600;
-                    color: #1e1e1e;
-                    margin-bottom: 10px;
-                }}
-                .agent-description {{
-                    font-size: 0.95rem;
-                    color: #4a4a4a;
-                    line-height: 1.5;
-                }}
+                .agent-grid {{ display: flex; flex-wrap: wrap; gap: 20px; }}
+                .agent-card {{ flex: 1 1 30%; min-width: 300px; display: flex; flex-direction: column; background-color: #f8f9fa; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; transition: box-shadow 0.2s ease-in-out; font-family: 'Poppins', sans-serif; }}
+                .agent-card:hover {{ box-shadow: 0 4px 12px rgba(0,0,0,0.1); }}
+                .agent-title {{ font-size: 1.1rem; font-weight: 600; color: #1e1e1e; margin-bottom: 10px; }}
+                .agent-description {{ font-size: 0.95rem; color: #4a4a4a; line-height: 1.5; }}
                 </style>
             </head>
             <body>
@@ -6350,11 +6325,11 @@ def main():
             </body>
         </html>
         """
-
-        # --- THE FIX IS HERE ---
-        # By removing the 'height' parameter, we allow the component to auto-size
-        # to fit all the agent cards, preventing any from being cut off.
-        components.html(full_html, scrolling=False)
+        
+        # Using st.components.v1.html for robust rendering
+        num_rows = (len(visible_agent_details) + 2) // 3
+        height_px = num_rows * 180 
+        components.html(full_html, height=height_px)
 
 if __name__ == "__main__":
     main()
