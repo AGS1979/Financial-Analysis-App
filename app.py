@@ -4653,10 +4653,15 @@ def pe_agent_app_azure():
 def agent_credit_app_azure():
     """
     A secure, confidential agent for Private Credit analysis using Azure services.
-    It analyzes credit agreements and financial statements to extract key terms.
+    It analyzes credit agreements, monitors portfolio compliance, and compares deals.
     """
     # --- Local imports ---
-    import io, re, os, html, markdown
+    import io
+    import re
+    import os
+    import html
+    import json
+    import markdown
     import pdfplumber
     import pandas as pd
     import streamlit as st
@@ -4664,10 +4669,11 @@ def agent_credit_app_azure():
     from azure.ai.documentintelligence import DocumentIntelligenceClient
     from azure.ai.documentintelligence.models import ContentFormat
     from openai import AzureOpenAI
+    from st_supabase_connection import SupabaseConnection
 
     st.markdown("### 🔒 Agent Credit")
     st.markdown(
-        "Analyze confidential credit agreements, indentures, and financial statements with enterprise-grade privacy."
+        "Analyze, compare, and monitor confidential credit investments with enterprise-grade privacy."
     )
 
     # --- AGENT CONFIG (Fetched from secrets for Azure) ---
@@ -4677,10 +4683,12 @@ def agent_credit_app_azure():
         openai_endpoint = st.secrets["azure"]["openai_endpoint"]
         openai_key = st.secrets["azure"]["openai_key"]
         openai_deployment_name = st.secrets["azure"]["openai_deployment_name"]
-    except KeyError as e:
-        st.error(f"Configuration error: Missing Azure secret: {e}. Please check your secrets.toml file.")
+        conn = st.connection("supabase", type=SupabaseConnection)
+    except Exception as e:
+        st.error(f"Configuration or Connection error: {e}. Please check your secrets.toml file.")
         st.stop()
 
+    # --- START OF ORIGINAL HELPER FUNCTIONS ---
 
     # --- UNIVERSAL SECTION DISCOVERY (agnostic to numbering) ---
 
@@ -4819,10 +4827,7 @@ def agent_credit_app_azure():
         # still nothing? as a last resort, return the first N chars
         return blocks or [md_text[:20000]]
 
-
-
     # --- STAGE 1: FOCUSED EXTRACTION PROMPTS ---
-    # These prompts are designed to pull raw, verbatim text from the document.
     EXTRACTION_PROMPTS = {
         "capital_structure": "Find all sections describing the debt facilities, tranches, notes, or other instruments. Include details on amounts, arrangers, and purpose. Quote these sections verbatim.",
         "pricing_interest": "Find all sections describing interest rates, applicable margins, LIBOR/SOFR floors, and commitment fees for each debt tranche. Quote these sections verbatim.",
@@ -4835,9 +4840,9 @@ def agent_credit_app_azure():
         "events_of_default": "Find the 'Events of Default' section (e.g., Article 6) and quote the key clauses related to payment default, cross-default, and breach of covenants verbatim."
     }
 
-
     # --- REQUIRED CONTEXT FOR EACH ANALYSIS ---
     REQUIRED_CONTEXT = {
+        "Key Terms Sheet": ["capital_structure", "repayment_terms", "pricing_interest", "guarantees_security", "financial_covenant"],
         "Capital Structure Summary": ["capital_structure", "repayment_terms", "guarantees_security"],
         "Covenant Analysis": ["financial_covenant", "negative_covenants", "positive_covenants", "key_definitions", "events_of_default"],
         "Debt Maturity Profile": ["repayment_terms", "capital_structure"],
@@ -4925,34 +4930,7 @@ def agent_credit_app_azure():
         }
     }
 
-
-    SECTION_PATTERNS = [
-    # (label, regex pattern capturing a whole section block)
-    ("negative_covenants", r"(ARTICLE\s+V.*?NEGATIVE COVENANTS.*?)(?=ARTICLE|$)"),
-    ("positive_covenants", r"(AFFIRMATIVE|POSITIVE COVENANTS.*?)(?=ARTICLE|$)"),
-    ("financial_covenant", r"(Section\s+5\.03.*?Financial Covenant.*?)(?=Section\s+5\.0|ARTICLE|$)"),
-    ("repayment_terms",   r"(Section\s+2\.\d+.*?(Repayment|Maturity|Amortization).*?)(?=Section\s+2\.\d+|ARTICLE|$)"),
-    ("guarantees_security", r"(Section\s+\d\.\d+.*? (?:Guarantees|Security|Collateral).*?)(?=Section\s+\d\.\d+|ARTICLE|$)"),
-    ("key_definitions",   r"(ARTICLE\s+I.*?DEFINITIONS.*?)(?=ARTICLE|$)"),
-    ("events_of_default", r"(ARTICLE\s+VI.*?EVENTS OF DEFAULT.*?)(?=ARTICLE|$)"),
-    ("capital_structure", r"(DESCRIPTION OF NOTES|CAPITALIZATION|CREDIT AGREEMENT.*?)(?=ARTICLE|$)")
-    ]
-
-    def locate_sections(md_text: str) -> dict[str, list[str]]:
-        """
-        Use regex to carve out likely sections from the DI markdown to reduce LLM search space.
-        Returns dict: key -> [candidate_snippets]
-        """
-        found = {k: [] for (k, _) in SECTION_PATTERNS}
-        for key, pat in SECTION_PATTERNS:
-            for m in re.finditer(pat, md_text, flags=re.IGNORECASE|re.DOTALL):
-                snippet = m.group(0).strip()
-                if len(snippet) > 100:  # ignore tiny matches
-                    found[key].append(snippet[:20000])  # cap to keep tokens in check
-        return found
-
-
-    # --- STAGE 2: NARRATIVE SYNTHESIS PROMPTS (IMPROVED) ---
+    # --- STAGE 2: NARRATIVE SYNTHESIS PROMPTS ---
     SYNTHESIS_PROMPTS = {
         "Key Terms Sheet": (
             "You are a top-tier credit analyst. Using the provided context, generate a **markdown table** summarizing the key terms. Populate the table with the most critical information found in the extracted clauses. If a specific piece of information is not found, state 'Not Specified'.\n\n"
@@ -4992,8 +4970,8 @@ def agent_credit_app_azure():
         ),
     }
     
-    # --- HELPER FUNCTIONS (No changes needed here) ---
-    def parse_markdown_to_html(analysis_results: dict) -> tuple[str, str]:
+    # --- HELPER FUNCTIONS ---
+    def parse_markdown_to_html(analysis_results: dict, title: str) -> tuple[str, str]:
         styles = """
         <style>
             .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9fafb; margin: 20px; }
@@ -5009,58 +4987,35 @@ def agent_credit_app_azure():
             .analysis-container tr:nth-of-type(even) { background-color: #fdfdfd; }
         </style>
         """
-        report_title = "Credit Analysis Report"
-        full_html_body = f"<h1>{html.escape(report_title)}</h1>"
-        for title, markdown_content in analysis_results.items():
-            full_html_body += f"<h2>{html.escape(title)}</h2>"
-            html_from_md = markdown.markdown(markdown_content, extensions=['tables'])
-            processed_html = re.sub(r"<h2>(.*?)</h2>", r"<h3>\1</h3>", html_from_md)
-            full_html_body += processed_html
-        content_div = f"<div class='analysis-container'>{full_html_body}</div>"
+        html_body = f"<h1>{html.escape(title)}</h1>"
+        for section_title, md_content in analysis_results.items():
+            html_body += f"<h2>{html.escape(section_title)}</h2>" + markdown.markdown(md_content, extensions=['tables'])
+        content_div = f"<div class='analysis-container'>{html_body}</div>"
         return styles, content_div
 
     def parse_pdf_with_azure_di(file_bytes: bytes) -> tuple[str, list]:
-        """
-        Returns (markdown_text, metadata_list). For large PDFs, analyze in page ranges and concatenate.
-        """
         try:
-            # Count pages up front
             with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
                 n_pages = len(pdf.pages)
-
             client = DocumentIntelligenceClient(endpoint=di_endpoint, credential=AzureKeyCredential(di_key))
-            md_parts = []
-            page_ranges = []
-            step = 30  # analyze in batches of 30 pages (tune as needed)
-
+            md_parts, step = [], 30
             for start in range(1, n_pages + 1, step):
-                end = min(start + step - 1, n_pages)
-                page_spec = f"{start}-{end}"  # Azure DI supports page ranges like "1-30"
-                stream = io.BytesIO(file_bytes)
                 poller = client.begin_analyze_document(
-                    "prebuilt-layout",
-                    stream,
-                    content_type="application/pdf",
-                    pages=page_spec,
-                    output_content_format=ContentFormat.MARKDOWN,
+                    "prebuilt-layout", 
+                    io.BytesIO(file_bytes), 
+                    content_type="application/pdf", 
+                    pages=f"{start}-{min(start + step - 1, n_pages)}", 
+                    output_content_format=ContentFormat.MARKDOWN
                 )
-                result = poller.result()
-                md_parts.append(result.content or "")
-                page_ranges.append(page_spec)
-
-            return ("\n\n".join(md_parts), page_ranges)
-
+                md_parts.append(poller.result().content or "")
+            return "\n\n".join(md_parts), []
         except Exception as e:
-            st.error(f"Azure AI Document Intelligence error: {e}")
+            st.error(f"Azure DI error: {e}")
             return None, []
 
-
     def fallback_pdf_text(file_bytes: bytes) -> str:
-        text = []
         with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-            for page in pdf.pages:
-                text.append(page.extract_text() or "")
-        return "\n".join(text).strip()
+            return "\n".join(p.extract_text() or "" for p in pdf.pages)
 
     def parse_excel_to_markdown(file_bytes: bytes, file_name: str) -> str:
         try:
@@ -5078,24 +5033,21 @@ def agent_credit_app_azure():
             st.warning(f"Could not process Excel file {file_name}: {e}")
             return ""
 
-    import json
-
-    def analyze_with_azure_openai(_context: str, _prompt: str, as_json: bool = False):
+    @st.cache_data(ttl=3600)
+    def analyze_with_azure_openai(_context_hash, _prompt: str, as_json: bool = False):
         try:
+            # Note: _context_hash is not used directly but ensures Streamlit caches based on content
+            _context, _ = st.session_state.get('context_cache', {}).get(_context_hash, (None, None))
+            if not _context:
+                return {"error": "Context not found in cache"}
+
             client = AzureOpenAI(api_key=openai_key, api_version="2024-02-01", azure_endpoint=openai_endpoint)
-
-            kwargs = {}
-            if as_json:
-                # JSON mode if your Azure model supports it; otherwise we’ll parse manually
-                kwargs["response_format"] = {"type": "json_object"}
-
+            kwargs = {"response_format": {"type": "json_object"}} if as_json else {}
             response = client.chat.completions.create(
                 model=openai_deployment_name,
                 messages=[
-                    {"role": "system",
-                     "content": "You are a precise credit-document extractor. If JSON is requested, return ONLY strict JSON."},
-                    {"role": "user",
-                     "content": f"CONTEXT EXCERPT:\n---\n{_context}\n---\nTASK:\n{_prompt}"}
+                    {"role": "system", "content": "You are a precise credit-document extractor. If JSON is requested, return ONLY strict JSON."},
+                    {"role": "user", "content": f"CONTEXT EXCERPT:\n---\n{_context}\n---\nTASK:\n{_prompt}"}
                 ],
                 **kwargs
             )
@@ -5104,174 +5056,302 @@ def agent_credit_app_azure():
                 try:
                     return json.loads(txt)
                 except Exception:
-                    # fallback: try to strip code fences and parse
                     txt = re.sub(r"^```json|```$", "", txt.strip(), flags=re.MULTILINE)
                     return json.loads(txt)
             return txt
         except Exception as e:
-            if as_json:
-                return {"error": str(e)}
-            return f"## Error\n\n**Error during Azure OpenAI analysis:** {e}"
+            return {"error": str(e)} if as_json else f"## Error\n**OpenAI Error:** {e}"
+
+    # --- END OF ORIGINAL HELPER FUNCTIONS ---
 
 
-    # --- UI & WORKFLOW (No changes needed here) ---
-    st.subheader("1. Upload Confidential Documents")
-    uploaded_files = st.file_uploader(
-        "Upload Credit Agreements, CIMs, or Financials (PDF, XLSX, XLS)",
-        type=["pdf", "xlsx", "xls"],
-        accept_multiple_files=True,
-        key="agent_credit_uploader_azure",
-    )
+    # --- NEW HELPER FUNCTIONS FOR PORTFOLIO FEATURES ---
+    
+    @st.cache_data(ttl=600)
+    def get_deal_list():
+        """Fetches all previously analyzed deals from Supabase."""
+        try:
+            response = conn.client.table("credit_deals").select("id, deal_name").order("created_at", desc=True).execute()
+            return response.data
+        except Exception as e:
+            st.error(f"Could not fetch deal list from Supabase: {e}")
+            return []
 
-    if uploaded_files and "agent_credit_text" not in st.session_state:
-        if st.button("Process Documents", type="primary"):
-            with st.spinner("Processing documents in secure Azure environment..."):
-                all_texts = []
-                for doc in uploaded_files:
-                    file_bytes = doc.getvalue()
-                    st.write(f"Processing '{doc.name}'...")
-                    file_ext = os.path.splitext(doc.name)[1].lower()
-                    doc_content = ""
-                    if file_ext == ".pdf":
-                        text, _ = parse_pdf_with_azure_di(file_bytes)
-                        if not text:
-                            st.warning(f"Azure DI failed for '{doc.name}'. Falling back to local text extraction.")
-                            text = fallback_pdf_text(file_bytes)
-                        doc_content = text
-                    elif file_ext in [".xlsx", ".xls"]:
-                        doc_content = parse_excel_to_markdown(file_bytes, doc.name)
-                    if doc_content:
-                        all_texts.append(f"--- START OF DOCUMENT: {doc.name} ---\n\n{doc_content}\n\n--- END OF DOCUMENT: {doc.name} ---")
-                if all_texts:
-                    st.session_state.agent_credit_text = "\n\n".join(all_texts)
-                    st.success("✅ Documents processed and ready for analysis.")
-                    st.rerun()
+    # --- NEW FEATURE IMPLEMENTATIONS ---
+
+    def track_covenant_compliance(deal: dict, new_financials_doc: bytes, file_type: str):
+        st.subheader(f"Covenant Compliance Check for: {deal['deal_name']}")
+        with st.spinner("Analyzing new financials and checking compliance..."):
+            stored_terms = deal.get('structured_terms', {})
+            # Find the financial covenant from the stored terms
+            financial_covenant_data = stored_terms.get('financial_covenant', [])
+            if not financial_covenant_data or 'covenant' not in financial_covenant_data[0]:
+                st.warning("No financial covenant was extracted for this deal. Cannot perform compliance check.")
+                return
+            financial_covenant_clause = financial_covenant_data[0].get('covenant', {})
+
+            # Parse the new financial document
+            new_financials_text = ""
+            if file_type == '.pdf':
+                new_financials_text, _ = parse_pdf_with_azure_di(new_financials_doc)
+            elif file_type in ['.xlsx', '.xls']:
+                new_financials_text = parse_excel_to_markdown(new_financials_doc, "financials")
+            
+            if not new_financials_text:
+                st.error("Could not parse the uploaded financial document.")
+                return
+
+            if 'context_cache' not in st.session_state: st.session_state.context_cache = {}
+            context_hash = hash(new_financials_text)
+            st.session_state.context_cache[context_hash] = (new_financials_text, None)
+
+            # Use LLM to extract key metrics
+            extraction_prompt = 'From the financial text, extract values for the most recent period. Return JSON with "consolidated_ebitda" and "consolidated_total_debt".'
+            extracted_metrics = analyze_with_azure_openai(context_hash, extraction_prompt, as_json=True)
+            
+            ebitda = extracted_metrics.get("consolidated_ebitda")
+            debt = extracted_metrics.get("consolidated_total_debt")
+
+            if not ebitda or not debt:
+                st.error("Could not automatically extract EBITDA or Total Debt from the new financial document.")
+                st.write("LLM Response:", extracted_metrics)
+                return
+
+            # Perform calculation and display results
+            try:
+                current_leverage = float(debt) / float(ebitda)
+                covenant_limit = float(financial_covenant_clause.get('threshold', 0))
+                covenant_name = financial_covenant_clause.get('name', 'N/A')
+
+                cushion = covenant_limit - current_leverage
+                cushion_pct = (cushion / covenant_limit) * 100 if covenant_limit != 0 else 0
+
+                st.subheader(f"Results for {covenant_name}")
+
+                if current_leverage <= covenant_limit:
+                    st.success(f"✅ IN COMPLIANCE")
                 else:
-                    st.error("Document parsing failed for all uploaded files.")
-
-    if "agent_credit_text" in st.session_state:
-        st.markdown("---")
-        st.subheader("2. Select and Generate Analysis")
-        # Ensure the new "Key Terms Sheet" is the default selection
-        analysis_choices = st.multiselect(
-            "Choose the analyses you want to perform:",
-            options=list(SYNTHESIS_PROMPTS.keys()),
-            default=["Key Terms Sheet", "Capital Structure Summary", "Covenant Analysis", "Credit Risk Factors"],
-        )
-        if st.button("Generate Analysis", use_container_width=True):
-            if not analysis_choices:
-                st.warning("Please select at least one analysis type.")
-            else:
-                full_text = st.session_state.agent_credit_text
+                    st.error(f"🚨 POTENTIAL BREACH")
                 
-                # --- STAGE 1: FOCUSED EXTRACTION ---
-                extracted_context = {}
-                with st.spinner("Stage 1/2: Extracting key clauses from documents..."):
-                    # Only run keys required for chosen analyses
-                    needed_keys = set()
-                    for choice in analysis_choices:
-                        needed_keys.update(REQUIRED_CONTEXT.get(choice, []))
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Current Leverage", f"{current_leverage:.2f}x")
+                c2.metric("Covenant Limit", f"{covenant_limit:.2f}x")
+                c3.metric("Headroom / Cushion", f"{cushion:.2f}x", delta=f"{cushion_pct:.1f}%")
 
-                    # Build candidates once per key (agnostic to numbering)
+            except (ValueError, TypeError, ZeroDivisionError) as e:
+                st.error(f"Calculation Error: Could not convert extracted metrics to numbers. Details: {e}")
+                st.write("Extracted Metrics:", {"EBITDA": ebitda, "Debt": debt})
+
+    def spread_financial_statements(financials_doc_bytes: bytes):
+        st.subheader("Financial Statement Spreading")
+        with st.spinner("Extracting and standardizing financial statements..."):
+            markdown_text, _ = parse_pdf_with_azure_di(financials_doc_bytes)
+            if not markdown_text:
+                st.error("Failed to extract any text from the PDF.")
+                return
+
+            if 'context_cache' not in st.session_state: st.session_state.context_cache = {}
+            context_hash = hash(markdown_text)
+            st.session_state.context_cache[context_hash] = (markdown_text, None)
+
+            spreading_prompt = """
+            From the markdown text containing financial statements, identify the Income Statement, Balance Sheet, and Cash Flow Statement.
+            For each statement, extract the line items and values for the most recent two periods.
+            Return a single JSON object with three keys: "income_statement", "balance_sheet", "cash_flow".
+            Each key should hold a list of objects, where each object is a row with "line_item", "period_1_value", and "period_2_value".
+            Standardize common line items (e.g., 'Net Sales' -> 'Revenue').
+            """
+            spread_data = analyze_with_azure_openai(context_hash, spreading_prompt, as_json=True)
+
+            if spread_data and "error" not in spread_data:
+                for statement, data in spread_data.items():
+                    if data and isinstance(data, list):
+                        st.write(f"**{statement.replace('_', ' ').title()}**")
+                        df = pd.DataFrame(data)
+                        st.dataframe(df, use_container_width=True)
+                        csv = df.to_csv(index=False).encode('utf-8')
+                        st.download_button(f"Download {statement}.csv", csv, f"{statement}.csv", "text/csv", key=f"download_{statement}")
+            else:
+                st.error("Failed to spread financial statements.")
+                st.write("LLM Response:", spread_data)
+    
+    # --- UI & WORKFLOW ---
+    
+    tab_titles = ["New Deal Analysis", "Portfolio Monitoring", "Deal Comparison", "Financial Spreading", "Diligence Q&A"]
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(tab_titles)
+
+    # --- TAB 1: NEW DEAL ANALYSIS (Existing Logic with Saving) ---
+    with tab1:
+        st.subheader("1. Upload Confidential Documents")
+        deal_name_input = st.text_input("Enter a unique name for this deal:", key="deal_name_input")
+        uploaded_files = st.file_uploader("Upload Credit Agreements, CIMs, or Financials (PDF, XLSX, XLS)", type=["pdf", "xlsx", "xls"], accept_multiple_files=True, key="agent_credit_uploader_azure_tab1")
+        
+        analysis_choices_tab1 = st.multiselect(
+            "Choose analyses to perform:",
+            options=list(SYNTHESIS_PROMPTS.keys()),
+            default=["Key Terms Sheet", "Capital Structure Summary", "Covenant Analysis"],
+            key="analysis_choices_tab1"
+        )
+
+        if st.button("Process & Analyze Documents", type="primary", key="process_button"):
+            if not deal_name_input or not uploaded_files:
+                st.warning("Please provide a deal name and upload at least one document.")
+            else:
+                with st.spinner("Processing documents... This may take a few minutes."):
+                    all_texts = []
+                    for doc in uploaded_files:
+                        file_bytes = doc.getvalue()
+                        file_ext = os.path.splitext(doc.name)[1].lower()
+                        if file_ext == ".pdf":
+                            text, _ = parse_pdf_with_azure_di(file_bytes)
+                            if not text: text = fallback_pdf_text(file_bytes)
+                            all_texts.append(text)
+                        elif file_ext in [".xlsx", ".xls"]:
+                            all_texts.append(parse_excel_to_markdown(file_bytes, doc.name))
+                    
+                    full_text = "\n\n".join(all_texts)
+                    
+                    if 'context_cache' not in st.session_state: st.session_state.context_cache = {}
+                    context_hash = hash(full_text)
+                    st.session_state.context_cache[context_hash] = (full_text, None)
+
+                with st.spinner("Stage 1/2: Extracting key clauses..."):
+                    extracted_context = {}
+                    needed_keys = set(k for choice in analysis_choices_tab1 for k in REQUIRED_CONTEXT.get(choice, []))
                     for key in needed_keys:
                         candidate_snips = smart_candidates_for(key, full_text)
-
+                        # Hashing each snippet for caching
                         aggregated = []
                         for snip in candidate_snips[:3]:
-                            schema_prompt = JSON_SCHEMAS[key]["instruction"]
-                            res = analyze_with_azure_openai(snip, schema_prompt, as_json=True)
-                            if isinstance(res, dict) and "error" not in res:
-                                aggregated.append(res)
+                           snip_hash = hash(snip)
+                           st.session_state.context_cache[snip_hash] = (snip, None)
+                           res = analyze_with_azure_openai(snip_hash, JSON_SCHEMAS[key]["instruction"], as_json=True)
+                           if "error" not in res:
+                               aggregated.append(res)
+                        extracted_context[key] = aggregated
 
-                        # Self-heal: if no items parsed for a key, broaden with keyword windows of different size
-                        if not aggregated:
-                            for snip in candidates_by_keywords(full_text, key, window_chars=3500, topn=2):
-                                res = analyze_with_azure_openai(snip, JSON_SCHEMAS[key]["instruction"], as_json=True)
-                                if isinstance(res, dict) and "error" not in res:
-                                    aggregated.append(res)
-
-                        extracted_context[key] = aggregated  # list of JSON dicts
-
-                # --- STAGE 2: NARRATIVE SYNTHESIS ---
-                analysis_results = {}
-                with st.spinner("Stage 2/2: Synthesizing extracted data into narrative report..."):
-                    for choice in analysis_choices:
+                with st.spinner("Stage 2/2: Synthesizing report..."):
+                    analysis_results = {}
+                    for choice in analysis_choices_tab1:
                         req_keys = REQUIRED_CONTEXT.get(choice, [])
-                        compact_context = {k: extracted_context.get(k, []) for k in req_keys}
-
-                        # Let the model write the narrative but it now sees structured facts, not a swamp of text
-                        synthesis_prompt = (
-                            SYNTHESIS_PROMPTS[choice]
-                            + "\n\nUse ONLY the following structured facts (JSON). If a field is missing, say 'not disclosed'. "
-                              "Cite doc_section/page when present.\n\nFACTS:\n"
-                            + json.dumps(compact_context, ensure_ascii=False)[:120000]   # cap for safety
-                        )
-
-                        result_md = analyze_with_azure_openai("Structured facts provided above.", synthesis_prompt, as_json=False)
-                        analysis_results[choice] = result_md
-
+                        synthesis_prompt = f"{SYNTHESIS_PROMPTS[choice]}\n\nUse ONLY the following structured facts (JSON):\n{json.dumps({k: extracted_context.get(k, []) for k in req_keys})[:120000]}"
+                        analysis_results[choice] = analyze_with_azure_openai(context_hash, synthesis_prompt)
+                
                 st.session_state.agent_credit_analysis_results = analysis_results
+                
+                with st.spinner("Saving deal to portfolio database..."):
+                    try:
+                        conn.client.table("credit_deals").insert({
+                            "deal_name": deal_name_input,
+                            "structured_terms": extracted_context,
+                            "full_text_markdown": full_text
+                        }).execute()
+                        st.success(f"'{deal_name_input}' has been successfully analyzed and saved.")
+                        get_deal_list.clear() # Clear cache to refresh deal list
+                    except Exception as e:
+                        st.error(f"Failed to save deal to Supabase: {e}")
+                
                 st.rerun()
 
-                # Optional: build & show maturity and instrument tables for clarity
-                def to_df(list_of_json_dicts, key):
-                    rows = []
-                    for block in list_of_json_dicts:
-                        arr = block.get(key, [])
-                        if isinstance(arr, list):
-                            rows.extend(arr)
-                    return pd.DataFrame(rows) if rows else pd.DataFrame()
+        if "agent_credit_analysis_results" in st.session_state:
+            st.markdown("---")
+            styles, content = parse_markdown_to_html(st.session_state.agent_credit_analysis_results, f"Analysis for {st.session_state.get('last_analyzed_deal', 'the Deal')}")
+            st.markdown(styles, unsafe_allow_html=True)
+            st.markdown(content, unsafe_allow_html=True)
+    
+    # --- TAB 2: PORTFOLIO MONITORING ---
+    with tab2:
+        st.subheader("Portfolio Covenant Monitoring")
+        deal_list = get_deal_list()
+        if not deal_list:
+            st.info("No deals have been analyzed yet. Please analyze a new deal in the first tab.")
+        else:
+            deal_options = {d['id']: d['deal_name'] for d in deal_list}
+            selected_deal_id = st.selectbox("Select a Deal to Monitor", options=list(deal_options.keys()), format_func=lambda x: deal_options[x])
+            
+            uploaded_financials = st.file_uploader("Upload Latest Quarterly Financials (PDF or XLSX)", type=["pdf", "xlsx", "xls"], key="financials_uploader")
+            
+            if st.button("Run Compliance Check", key="compliance_button", use_container_width=True):
+                if selected_deal_id and uploaded_financials:
+                    response = conn.client.table("credit_deals").select("deal_name, structured_terms").eq("id", selected_deal_id).single().execute()
+                    track_covenant_compliance(response.data, uploaded_financials.getvalue(), os.path.splitext(uploaded_financials.name)[1].lower())
+                else:
+                    st.warning("Please select a deal and upload a financials document.")
+                    
+    # --- TAB 3: DEAL COMPARISON ---
+    with tab3:
+        st.subheader("Side-by-Side Deal Comparison")
+        deal_list = get_deal_list()
+        if len(deal_list) < 2:
+            st.info("You need at least two analyzed deals to make a comparison.")
+        else:
+            deal_options = {d['id']: d['deal_name'] for d in deal_list}
+            col1, col2 = st.columns(2)
+            deal_a_id = col1.selectbox("Select Deal A", options=list(deal_options.keys()), format_func=lambda x: deal_options[x], key="deal_a")
+            deal_b_id = col2.selectbox("Select Deal B", options=list(deal_options.keys()), format_func=lambda x: deal_options[x], key="deal_b", index=1 if len(deal_options) > 1 else 0)
+            
+            if st.button("Compare Deals", key="compare_deals", use_container_width=True):
+                if deal_a_id == deal_b_id:
+                    st.warning("Please select two different deals.")
+                else:
+                    with st.spinner("Fetching data and generating comparison..."):
+                        deal_a_data = conn.client.table("credit_deals").select("deal_name, structured_terms").eq("id", deal_a_id).single().execute().data
+                        deal_b_data = conn.client.table("credit_deals").select("deal_name, structured_terms").eq("id", deal_b_id).single().execute().data
+                        
+                        comparison_context = f"""
+                        DEAL A NAME: {deal_a_data['deal_name']}
+                        DEAL A TERMS: {json.dumps(deal_a_data['structured_terms'])}
 
-                st.markdown("### Quick Tables (auto-extracted)")
-                colA, colB = st.columns(2)
-                with colA:
-                    st.caption("Debt Instruments / Pricing")
-                    df_p = to_df(extracted_context.get("pricing_interest", []), "pricing")
-                    df_i = to_df(extracted_context.get("capital_structure", []), "instruments")
-                    if not df_p.empty: st.dataframe(df_p)
-                    if not df_i.empty: st.dataframe(df_i)
+                        DEAL B NAME: {deal_b_data['deal_name']}
+                        DEAL B TERMS: {json.dumps(deal_b_data['structured_terms'])}
+                        """
 
-                with colB:
-                    st.caption("Repayment Schedules / Negative Baskets")
-                    df_s = to_df(extracted_context.get("repayment_terms", []), "schedules")
-                    df_n = to_df(extracted_context.get("negative_covenants", []), "negatives")
-                    if not df_s.empty: st.dataframe(df_s)
-                    if not df_n.empty: st.dataframe(df_n)
+                        comparison_prompt = f"""
+                        You are a credit analyst. Compare the two sets of structured credit terms provided in the context.
+                        Generate a markdown table with three columns: 'Term', '{deal_a_data['deal_name']}', and '{deal_b_data['deal_name']}'.
+                        In the table, summarize the key terms for: Pricing & Fees, Maturity, Financial Covenants, and Security Package.
+                        After the table, provide a short paragraph highlighting the most significant differences between the two deals.
+                        """
+                        if 'context_cache' not in st.session_state: st.session_state.context_cache = {}
+                        context_hash = hash(comparison_context)
+                        st.session_state.context_cache[context_hash] = (comparison_context, None)
+                        
+                        comparison_md = analyze_with_azure_openai(context_hash, comparison_prompt)
+                        st.markdown(comparison_md)
 
-                covered = sorted([k for k, v in extracted_context.items() if v])
-                needed  = sorted(list(needed_keys))
-                missing = [k for k in needed if k not in covered]
-                st.markdown(f"**Coverage:** ✅ {', '.join(covered) if covered else 'None'}")
-                if missing:
-                    st.markdown(f"**Missing/Not found:** ⚠️ {', '.join(missing)}")
+    # --- TAB 4: FINANCIAL SPREADING ---
+    with tab4:
+        st.subheader("Automated Financial Statement Spreading")
+        uploaded_fs_pdf = st.file_uploader("Upload Financial Statement PDF", type="pdf", key="fs_spreader")
+        if st.button("Spread Financials", key="spread_button", disabled=not uploaded_fs_pdf, use_container_width=True):
+            spread_financial_statements(uploaded_fs_pdf.getvalue())
 
+    # --- TAB 5: DILIGENCE Q&A ---
+    with tab5:
+        st.subheader("Interactive Diligence Q&A")
+        deal_list = get_deal_list()
+        if not deal_list:
+            st.info("No deals have been analyzed yet.")
+        else:
+            deal_options = {d['id']: d['deal_name'] for d in deal_list}
+            qa_deal_id = st.selectbox("Select a Deal for Q&A", options=list(deal_options.keys()), format_func=lambda x: deal_options[x], key="qa_deal_select")
+            user_question = st.text_input("Ask a question about the deal documents:")
 
-    if "agent_credit_analysis_results" in st.session_state:
-        st.success("✅ Analysis complete!")
-        st.markdown("---")
-        st.subheader("3. Generated Report")
-        
-        styles_html, content_html = parse_markdown_to_html(st.session_state.agent_credit_analysis_results)
-        
-        # Display preview in the app
-        st.markdown(styles_html, unsafe_allow_html=True)
-        st.markdown(content_html, unsafe_allow_html=True)
+            if user_question and qa_deal_id:
+                with st.spinner("Searching for an answer..."):
+                    response = conn.client.table("credit_deals").select("full_text_markdown").eq("id", qa_deal_id).single().execute()
+                    context = response.data.get('full_text_markdown', '') if response.data else ''
+                    
+                    if not context:
+                        st.error("Could not retrieve document text for this deal.")
+                    else:
+                        if 'context_cache' not in st.session_state: st.session_state.context_cache = {}
+                        context_hash = hash(context)
+                        st.session_state.context_cache[context_hash] = (context, None)
 
-        st.markdown("---")
-        st.subheader("4. Download Report")
-        
-        full_html_for_download = f"""
-        <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Credit Analysis Report</title>
-        <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
-        {styles_html}</head><body>{content_html}</body></html>
-        """
-        st.download_button(
-            label="📥 Download Report as HTML",
-            data=full_html_for_download,
-            file_name="credit_analysis_report.html",
-            mime="text/html",
-            use_container_width=True,
-        )
+                        qa_prompt = f"Based ONLY on the provided document context, answer the following question. Quote the relevant text if possible.\n\nQuestion: {user_question}"
+                        answer = analyze_with_azure_openai(context_hash, qa_prompt)
+                        st.markdown(answer)
 
 
 
