@@ -5230,8 +5230,8 @@ def agent_credit_app_azure():
                            if "error" not in res:
                                aggregated.append(res)
 
-                            time.sleep(2)
-                            
+                           time.sleep(2)
+
                         extracted_context[key] = aggregated
 
                 with st.spinner("Stage 2/2: Synthesizing report..."):
