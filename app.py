@@ -6310,18 +6310,14 @@ def main():
         <html>
             <head>
                 <style>
-                /* --- CSS FIX IS HERE --- */
                 .agent-grid {{
-                    display: flex; /* Changed from grid to flex */
-                    flex-wrap: wrap; /* Allows items to wrap to the next line */
+                    display: flex;
+                    flex-wrap: wrap;
                     gap: 20px;
                 }}
                 .agent-card {{
-                    /* This tells each card how to behave in the flex container */
-                    flex: 1 1 30%; /* Grow, Shrink, Basis (roughly 3 per row) */
-                    min-width: 300px; /* Prevents cards from getting too narrow */
-
-                    /* --- Original styling below is unchanged --- */
+                    flex: 1 1 30%;
+                    min-width: 300px;
                     display: flex;
                     flex-direction: column;
                     background-color: #f8f9fa;
@@ -6355,11 +6351,10 @@ def main():
         </html>
         """
 
-        # Using st.components.v1.html for robust rendering
-        num_rows = (len(visible_agent_details) + 2) // 3
-        height_px = num_rows * 180 
-        
-        components.html(full_html, height=height_px)
+        # --- THE FIX IS HERE ---
+        # By removing the 'height' parameter, we allow the component to auto-size
+        # to fit all the agent cards, preventing any from being cut off.
+        components.html(full_html, scrolling=False)
 
 if __name__ == "__main__":
     main()
