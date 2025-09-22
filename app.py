@@ -6302,7 +6302,7 @@ def main():
             </div>
             """)
 
-        # ### FINAL STEP: Inject the CSS and the dynamically generated cards ###
+        # Inject the CSS for the grid.
         st.markdown("""
         <style>
         .agent-grid {
@@ -6338,11 +6338,12 @@ def main():
         </style>
         """, unsafe_allow_html=True)
 
+        # Combine the cards into the grid and display, NOW WITH THE CRITICAL PARAMETER.
         st.markdown(f"""
         <div class="agent-grid">
             {''.join(card_html_list)}
         </div>
-        """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True) # <-- THE FIX IS HERE
 
 
 if __name__ == "__main__":
