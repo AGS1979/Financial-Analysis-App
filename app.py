@@ -4670,6 +4670,7 @@ def agent_credit_app_azure():
     from azure.ai.documentintelligence.models import ContentFormat
     from openai import AzureOpenAI
     from st_supabase_connection import SupabaseConnection
+    import time
 
     st.markdown("### 🔒 Agent Credit")
     st.markdown(
@@ -5228,6 +5229,9 @@ def agent_credit_app_azure():
                            res = analyze_with_azure_openai(snip_hash, JSON_SCHEMAS[key]["instruction"], as_json=True)
                            if "error" not in res:
                                aggregated.append(res)
+
+                            time.sleep(2)
+                            
                         extracted_context[key] = aggregated
 
                 with st.spinner("Stage 2/2: Synthesizing report..."):
