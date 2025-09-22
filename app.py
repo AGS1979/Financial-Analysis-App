@@ -6228,6 +6228,20 @@ def main():
             st.error(f"Error initializing Supabase connection: {e}")
             st.stop()
 
+    # --- NEW: LOGIC TO DETERMINE VISIBLE AGENTS ---
+    # 1. Load the permissions map from secrets. Use .get() for safety.
+    permissions = st.secrets.get("user_permissions", {})
+    
+    # 2. Get the current logged-in user's email.
+    current_user = st.session_state.get("username")
+
+    # 3. Determine the list of agents this user can see.
+    # Start with the default list.
+    visible_agents = permissions.get("__DEFAULT__", ["🏠 Welcome"]) 
+    # If the user has a specific entry, use that instead.
+    if current_user in permissions:
+        visible_agents = permissions[current_user]
+
 
     # --- Sidebar Definition ---
     with st.sidebar:
@@ -6236,23 +6250,10 @@ def main():
         st.write(f"Welcome, **{st.session_state.username}**")
         st.markdown("---")
 
+        # --- MODIFIED: The radio button now uses the dynamic 'visible_agents' list ---
         app_mode = st.radio(
             "Choose a tool:",
-            [
-                "🏠 Welcome",
-                "Agent IdeaGen",
-                "Agent PE",
-                "Model Integrity Agent",
-                "Agent Credit",
-                "Agent Pre-IPO",
-                "DCF Ginny",
-                "Agent Special Situations",
-                "ESG Analyzer",
-                "Agent Portfolio",
-                "Agent Sentinel",
-                "Tariff Impact Tracker",
-                "Real-Time Sentinel"
-            ],
+            options=visible_agents, # <-- This list is now dynamic!
             key="app_tool_choice"
         )
         st.markdown("---")
