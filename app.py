@@ -6195,7 +6195,7 @@ def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
 def main():
     """
     Main function to run the Streamlit app with authentication and routing.
-    This version includes dynamic agent visibility for both the sidebar and the welcome page cards.
+    This version includes dynamic agent visibility and uses st.components.v1.html for robust rendering.
     """
     
     if not authentication_ui():
@@ -6305,49 +6305,59 @@ def main():
             </div>
             """)
 
-        # This is the original, static CSS block for the cards - it's correct
-        st.markdown("""
-        <style>
-        .agent-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            grid-auto-rows: 1fr;
-            gap: 20px;
-        }
-        .agent-card {
-            display: flex;
-            flex-direction: column;
-            background-color: #f8f9fa;
-            border: 1px solid #e0e0e0;
-            border-radius: 8px;
-            padding: 20px;
-            height: 100%;
-            transition: box-shadow 0.2s ease-in-out;
-        }
-        .agent-card:hover {
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-        }
-        .agent-title {
-            font-size: 1.1rem;
-            font-weight: 600;
-            color: #1e1e1e;
-            margin-bottom: 10px;
-        }
-        .agent-description {
-            font-size: 0.95rem;
-            color: #4a4a4a;
-            line-height: 1.5;
-        }
-        </style>
-        """, unsafe_allow_html=True)
+        # Combine the CSS and the dynamic HTML cards into a single block
+        full_html = f"""
+        <html>
+            <head>
+                <style>
+                /* This CSS is scoped to the component's iframe */
+                .agent-grid {{
+                    display: grid;
+                    grid-template-columns: repeat(3, 1fr);
+                    grid-auto-rows: 1fr;
+                    gap: 20px;
+                }}
+                .agent-card {{
+                    display: flex;
+                    flex-direction: column;
+                    background-color: #f8f9fa;
+                    border: 1px solid #e0e0e0;
+                    border-radius: 8px;
+                    padding: 20px;
+                    height: 100%;
+                    transition: box-shadow 0.2s ease-in-out;
+                    font-family: 'Poppins', sans-serif; /* Ensure font consistency */
+                }}
+                .agent-card:hover {{
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+                }}
+                .agent-title {{
+                    font-size: 1.1rem;
+                    font-weight: 600;
+                    color: #1e1e1e;
+                    margin-bottom: 10px;
+                }}
+                .agent-description {{
+                    font-size: 0.95rem;
+                    color: #4a4a4a;
+                    line-height: 1.5;
+                }}
+                </style>
+            </head>
+            <body>
+                <div class="agent-grid">
+                    {''.join(card_html_list)}
+                </div>
+            </body>
+        </html>
+        """
 
-        # This renders the dynamically generated list of cards
-        st.markdown(f"""
-        <div class="agent-grid">
-            {''.join(card_html_list)}
-        </div>
-        """, unsafe_allow_html=True)
-
+        # Using st.components.v1.html for robust rendering
+        # Calculate a dynamic height for the component frame
+        num_rows = (len(visible_agent_details) + 2) // 3
+        height_px = num_rows * 180 
+        
+        components.html(full_html, height=height_px)
 
 if __name__ == "__main__":
     main()
