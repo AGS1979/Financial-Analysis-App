@@ -2190,7 +2190,7 @@ Section to Summarize:
 def esg_analyzer_app():
     """
     Encapsulates the ESG Analyzer with a final, professional, data-rich dashboard.
-    This version balances graphical elements with deep, contextual detail and includes bug fixes.
+    This version is updated to be more robust by breaking the analysis into multiple, smaller API calls to prevent timeouts with large documents.
     """
     # --- Imports ---
     import re
@@ -2200,6 +2200,7 @@ def esg_analyzer_app():
     import fitz  # PyMuPDF
     import requests
     from bs4 import BeautifulSoup
+    from openai import AzureOpenAI
 
     st.markdown("### ✨ Advanced ESG Analyzer")
     st.markdown("Generate a professional ESG dashboard or a detailed insight report from sustainability disclosures.")
@@ -2224,65 +2225,102 @@ def esg_analyzer_app():
             st.error(f"Error reading PDF: {e}")
             return ""
 
-    # --- FINALIZED: AI prompt with generic placeholders instead of specific examples ---
-    def analyze_esg_with_structured_output(text):
-        if not text.strip():
-            return json.dumps({"error": "No text provided for analysis."})
-
-        # MODIFIED PROMPT: Now asks the AI to find the *best* KPIs instead of a fixed list.
-        prompt = f"""
-        You are an expert ESG analyst. Your task is to analyze the provided ESG report and return a comprehensive, structured JSON object based **only** on the text provided.
-        Your primary goal is to identify the **4 to 5 most relevant and quantifiable** Key Performance Indicators (KPIs) for each of the E, S, and G pillars. Do not include a KPI if a specific value is not present in the text.
-
-        **JSON Output Specification:**
-        - "executive_summary": "<A concise, 2-3 sentence narrative summary of the company's overall ESG posture>"
-        - "overall_score": <A float score from 0.0 to 10.0 for overall performance>
-        - "environmental_score": <A float score from 0.0 to 10.0 for the Environmental pillar>
-        - "social_score": <A float score from 0.0 to 10.0 for the Social pillar>
-        - "governance_score": <A float score from 0.0 to 10.0 for the Governance pillar>
-        - "kpis": {{
-          - "environmental": [
-            {{
-              "icon": "<a single relevant emoji for the KPI>",
-              "title": "<The name of the identified KPI>",
-              "value": "<The numeric or text value found>",
-              "unit": "<The unit of measure, if any>",
-              "context": "<A one-sentence contextual summary of the KPI>",
-              "rating": "<'Positive', 'Neutral', or 'Negative'>"
-            }}
-          ],
-          - "social": [ /* same list structure as environmental */ ],
-          - "governance": [ /* same list structure as environmental */ ]
-        }},
-        - "pillar_takeaways": {{
-            "environmental": ["<one_or_two_key_takeaways_for_this_pillar>"],
-            "social": ["<one_or_two_key_takeaways_for_this_pillar>"],
-            "governance": ["<one_or_two_key_takeaways_for_this_pillar>"]
-          }},
-        - "environmental_insights": [<list_of_objects_with_subcategory_and_detail>],
-        - "social_insights": [<list_of_objects_with_subcategory_and_detail>],
-        - "governance_insights": [<list_of_objects_with_subcategory_and_detail>]
-        
-        --- DOCUMENT TEXT ---
-        {text[:80000]}
+    # --- START: REVISED, MULTI-STAGE ANALYSIS FUNCTION ---
+    def analyze_esg_in_stages(text: str) -> dict:
         """
+        Performs ESG analysis in multiple stages to avoid API timeouts.
+        Stage 1: Get summary and scores.
+        Stage 2: Get KPIs and takeaways for each pillar separately.
+        """
+        if not text.strip():
+            return {"error": "No text provided for analysis."}
+            
         try:
-            DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
-            headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
-            payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 8000, "response_format": {"type": "json_object"}}
-            response = requests.post("https://api.deepseek.com/v1/chat/completions", headers=headers, json=payload, timeout=120)
-            response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
+            # Initialize client inside the function that uses it
+            client = AzureOpenAI(
+                api_key=os.environ.get("AZURE_OPENAI_KEY"),
+                api_version="2024-02-01",
+                azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT")
+            )
+            deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
         except Exception as e:
-            st.error(f"API Request Error: {e}")
-            return json.dumps({"error": f"API Request Error: {e}"})
+            st.error(f"Failed to initialize Azure OpenAI client: {e}")
+            return {"error": f"Azure client initialization failed: {e}"}
 
-    def parse_structured_esg_data(api_response_text):
-        try: return json.loads(api_response_text)
-        except json.JSONDecodeError:
-            st.error("Failed to decode the JSON response from the AI."); return {"error": "Invalid JSON response."}
-        except Exception as e:
-            st.error(f"An unexpected error occurred during parsing: {e}"); return {"error": str(e)}
+        full_esg_data = {}
+        
+        # --- Stage 1: Get overall summary and scores ---
+        with st.spinner("Analyzing overall posture and generating scores... (Stage 1/4)"):
+            try:
+                prompt_stage1 = f"""
+                You are an expert ESG analyst. Based on the provided ESG report, perform the following two tasks:
+                1. Write a concise, 2-3 sentence narrative summary of the company's overall ESG posture.
+                2. Provide an estimated score from 0.0 to 10.0 for the overall performance and for each of the E, S, and G pillars.
+
+                Return a single, valid JSON object with the following keys: "executive_summary", "overall_score", "environmental_score", "social_score", "governance_score".
+
+                DOCUMENT TEXT:
+                ---
+                {text[:80000]}
+                ---
+                """
+                response_stage1 = client.chat.completions.create(
+                    model=deployment_name,
+                    messages=[{"role": "user", "content": prompt_stage1}],
+                    response_format={"type": "json_object"},
+                    temperature=0.1
+                )
+                summary_and_scores = json.loads(response_stage1.choices[0].message.content)
+                full_esg_data.update(summary_and_scores)
+            except Exception as e:
+                st.error(f"Error during Stage 1 (Summary & Scores): {e}")
+                return {"error": f"Failed at Stage 1: {e}"}
+
+        # --- Stage 2: Get details for each pillar individually ---
+        pillars = ["environmental", "social", "governance"]
+        full_esg_data["kpis"] = {}
+        full_esg_data["pillar_takeaways"] = {}
+        full_esg_data["environmental_insights"] = [] # Initialize for classic report
+        full_esg_data["social_insights"] = []
+        full_esg_data["governance_insights"] = []
+
+
+        for i, pillar in enumerate(pillars):
+            with st.spinner(f"Extracting KPIs and takeaways for {pillar.title()} pillar... (Stage {i+2}/4)"):
+                try:
+                    prompt_stage2 = f"""
+                    You are an ESG analyst focused on the '{pillar.title()}' pillar. From the provided ESG report text, perform the following tasks:
+                    1.  Identify the 4-5 most relevant and quantifiable Key Performance Indicators (KPIs). For each KPI, provide its icon, title, value, unit, a brief context, and a rating ('Positive', 'Neutral', 'Negative').
+                    2.  Provide one or two key takeaways summarizing the company's performance.
+                    3.  Extract a list of detailed insights, where each insight is an object with "subcategory" and "detail".
+
+                    Return a single, valid JSON object with three keys: "kpis" (a list of objects), "takeaways" (a list of strings), and "insights" (a list of objects).
+                    
+                    DOCUMENT TEXT:
+                    ---
+                    {text[:80000]}
+                    ---
+                    """
+                    response_stage2 = client.chat.completions.create(
+                        model=deployment_name,
+                        messages=[{"role": "user", "content": prompt_stage2}],
+                        response_format={"type": "json_object"},
+                        temperature=0.1
+                    )
+                    pillar_data = json.loads(response_stage2.choices[0].message.content)
+                    full_esg_data["kpis"][pillar] = pillar_data.get("kpis", [])
+                    full_esg_data["pillar_takeaways"][pillar] = pillar_data.get("takeaways", [])
+                    full_esg_data[f"{pillar}_insights"] = pillar_data.get("insights", []) # For classic report
+                except Exception as e:
+                    st.error(f"Error during Stage 2 ({pillar.title()}): {e}")
+                    # Continue even if one pillar fails, initializing empty lists
+                    full_esg_data["kpis"][pillar] = []
+                    full_esg_data["pillar_takeaways"][pillar] = []
+                    full_esg_data[f"{pillar}_insights"] = []
+
+
+        return full_esg_data
+    # --- END: REVISED ANALYSIS FUNCTION ---
 
     # --- Helper functions for generating SVG charts ---
     def _create_gauge_chart_svg(score, size=180):
@@ -2295,14 +2333,7 @@ def esg_analyzer_app():
         """Creates a donut chart SVG using the reliable stroke-dasharray method."""
         if not isinstance(value, (int, float)): return ""
         value = max(0, min(100, value))
-        
-        # SVG circle geometry
-        radius = 15.9155
-        circumference = 2 * 3.14159 * radius
-        
-        # Calculate the length of the arc
-        arc_length = (value / 100) * circumference
-        
+        radius = 15.9155; circumference = 2 * 3.14159 * radius; arc_length = (value / 100) * circumference
         return f"""
         <div class="donut-container">
             <svg width="{size}" height="{size}" viewBox="0 0 36 36" class="donut-chart">
@@ -2332,17 +2363,14 @@ def esg_analyzer_app():
         def get_rating_color(rating_text):
             return {"Positive": "#27ae60", "Neutral": "#f39c12", "Negative": "#e74c3c"}.get(rating_text, "#6c757d")
 
-        # This new dynamic helper function is correct.
         def _create_kpi_card_from_dict(kpi_data):
             if not isinstance(kpi_data, dict): return ""
-            
             icon = kpi_data.get('icon', '💡')
             title = kpi_data.get('title', 'N/A')
             value = kpi_data.get('value', 'None')
             unit = kpi_data.get('unit', '')
             context = kpi_data.get('context', 'No context provided.')
             rating = kpi_data.get('rating', 'Neutral')
-            
             return f"""
             <div class="kpi-card">
                 <div class="kpi-header">
@@ -2358,12 +2386,7 @@ def esg_analyzer_app():
             </div>
             """
 
-        # --- NEW LOGIC TO FIND WATER DATA DYNAMICALLY ---
-        # This block searches the flexible KPI list for water data before creating the chart.
-        water_recycled_val = 0
-        water_fresh_val = 0
-        water_other_val = 0 # Assuming 'other' is not explicitly tracked, can be derived if total is known
-        
+        water_recycled_val = 0; water_fresh_val = 0; water_other_val = 0
         env_kpi_list = kpis.get("environmental", [])
         for kpi in env_kpi_list:
             title_lower = kpi.get('title', '').lower()
@@ -2374,12 +2397,9 @@ def esg_analyzer_app():
                 try: water_fresh_val = float(kpi.get('value', 0))
                 except (ValueError, TypeError): pass
 
-        # Loop through the AI-generated KPI lists to create the HTML.
         env_kpi_html = "".join([_create_kpi_card_from_dict(kpi) for kpi in env_kpi_list])
         soc_kpi_html = "".join([_create_kpi_card_from_dict(kpi) for kpi in kpis.get("social", [])])
         gov_kpi_html = "".join([_create_kpi_card_from_dict(kpi) for kpi in kpis.get("governance", [])])
-
-        # (The old, unused _create_kpi_card function has been removed)
         
         takeaways_html = "<div class='sidebar-card'><h3>Key Pillar Takeaways</h3><ul class='takeaways-list'>"
         takeaway_map = {"environmental": "🌍", "social": "🏢", "governance": "🏛️"}
@@ -2395,7 +2415,6 @@ def esg_analyzer_app():
         html_content = f"""
         <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>{company_name} ESG Dashboard</title>
         <style>
-            /* CSS styles remain the same */
             @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
             body {{ font-family: 'Poppins', sans-serif; background-color: #f4f7fc; color: #343a40; margin: 0; padding: 20px; }}
             .container {{ max-width: 1400px; margin: auto; background: #ffffff; border-radius: 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.08); padding: 40px; }}
@@ -2463,7 +2482,6 @@ def esg_analyzer_app():
         """
         return html_content.encode('utf-8'), f"ESG_Dashboard_{safe_company_name}.html"
     
-    # --- Functions for the "Classic Report & Comparison" Sub-tool (Unchanged) ---
     def generate_html_report_esg(esg_data, company_name):
         safe_company_name = re.sub(r'[^\w\-_]', '_', company_name)[:50]
         current_date = datetime.now().strftime("%B %d, %Y")
@@ -2479,10 +2497,8 @@ def esg_analyzer_app():
 
     def extract_data_from_html_for_comparison(soup, filename):
         data = {'company_name': filename.replace('.html', '').replace('ESG_Insights_', '')}
-        score_cards = soup.find_all('div', class_='score-card')
-        for card in score_cards:
-            title = card.find('h4').text.lower().replace(' ', '_').replace('esg_', '')
-            score = card.find('div', class_='score-value').text.split('/')[0]
+        for card in soup.find_all('div', class_='score-card'):
+            title = card.find('h4').text.lower().replace(' ', '_').replace('esg_', ''); score = card.find('div', class_='score-value').text.split('/')[0]
             data[title] = score
         for pillar, icon in [('environmental', '🌍'), ('social', '🏢'), ('governance', '🏛️')]:
             insights = []
@@ -2496,8 +2512,7 @@ def esg_analyzer_app():
 
     def generate_comparison_html_esg(esg_reports):
         if not 1 <= len(esg_reports) <= 5: return "<h1>Error: Please provide between 1 and 5 reports.</h1>".encode('utf-8'), "ESG_Comparison.html"
-        current_date = datetime.now().strftime("%B %d, %Y")
-        company_names = [report.get('company_name', 'Unknown') for report in esg_reports]
+        current_date = datetime.now().strftime("%B %d, %Y"); company_names = [r.get('company_name', 'Unknown') for r in esg_reports]
         def generate_score_comparison_table():
             header = "".join(f"<th>{name}</th>" for name in company_names)
             def score_row(title, key_prefix):
@@ -2508,14 +2523,11 @@ def esg_analyzer_app():
                 return f"<tr><td>{title}</td>{cells}</tr>"
             return f"<h2>Score Comparison</h2><table><thead><tr><th>Metric</th>{header}</tr></thead><tbody>{score_row('Overall ESG', 'overall')}{score_row('Environmental', 'environmental')}{score_row('Social', 'social')}{score_row('Governance', 'governance')}</tbody></table>"
         def generate_insight_comparison_section(title, icon, category_key):
-            all_subcategories = {insight['subcategory'] for report in esg_reports for insight in report.get(category_key, [])}
+            all_subcategories = {i['subcategory'] for r in esg_reports for i in r.get(category_key, [])}
             if not all_subcategories: return ""
-            insight_map = {name: {i['subcategory']: i['detail'] for i in report.get(category_key, [])} for name, report in zip(company_names, esg_reports)}
+            insight_map = {name: {i['subcategory']: i['detail'] for i in r.get(category_key, [])} for name, r in zip(company_names, esg_reports)}
             header = "".join(f"<th>{name}</th>" for name in company_names)
-            rows_html = ""
-            for subcat in sorted(list(all_subcategories)):
-                company_cells = ''.join(f"<td>{html.escape(insight_map[name].get(subcat, '-'))}</td>" for name in company_names)
-                rows_html += f"<tr><td>{html.escape(subcat)}</td>{company_cells}</tr>"
+            rows_html = "".join(f"<tr><td>{html.escape(subcat)}</td>{''.join(f'<td>{html.escape(insight_map[name].get(subcat, '-'))}</td>' for name in company_names)}</tr>" for subcat in sorted(list(all_subcategories)))
             return f"<h2>{icon}{title} Comparison</h2><table><thead><tr><th>Category</th>{header}</tr></thead><tbody>{rows_html}</tbody></table>"
         html_content = f"""<!DOCTYPE html><html><head><title>ESG Comparison</title><style>body{{font-family:sans-serif;}} .container{{max-width:1200px;margin:auto;}} h1,h2{{color:#111827;}} table{{width:100%;border-collapse:collapse;margin:25px 0;}} th,td{{border:1px solid #e5e7eb;padding:12px 15px;}}</style></head><body><div class="container"><h1>ESG Comparison Report</h1><h3>{current_date}</h3>{generate_score_comparison_table()}{generate_insight_comparison_section("Environmental", "🌍", "environmental_insights")}{generate_insight_comparison_section("Social", "🏢", "social_insights")}{generate_insight_comparison_section("Governance", "🏛️", "governance_insights")}</div></body></html>"""
         return html_content.encode('utf-8'), "ESG_Comparison_Report.html"
@@ -2525,69 +2537,60 @@ def esg_analyzer_app():
     with tab1:
         st.subheader("Generate New ESG Dashboard")
         st.info("Upload a company's sustainability or ESG report to generate a comprehensive dashboard.")
-        company_dash = st.text_input("🏢 Enter Company Name", key="esg_company_dash")
+        company_dash = st.text_input("🏢 Enter Company Name", "Vedanta", key="esg_company_dash")
         file_dash = st.file_uploader("📄 Upload ESG Disclosure PDF", type="pdf", key="esg_file_dash")
-        # --- NEW UI for Custom Prompt ---
         st.markdown("---")
         st.subheader("Advanced: Customize Analysis Prompt")
         st.warning("The ESG Dashboard requires a specific JSON output. Your custom prompt must request this structure or the dashboard generation will fail.")
-        st.text_area(
-            "Enter your custom prompt for ESG analysis:",
-            placeholder="Enter your full custom prompt here. It must ask for a JSON object with keys like 'overall_score', 'kpis', etc.",
-            height=250,
-            key="esg_custom_prompt_dash"
-        )
-        # --- END NEW UI ---
+        st.text_area("Enter your custom prompt for ESG analysis:", placeholder="Enter your full custom prompt here...", height=250, key="esg_custom_prompt_dash")
+        
         if st.button("🚀 Generate Dashboard", key="esg_generate_dash", type="primary"):
-            if not all([company_dash, file_dash]): st.error("Please provide a company name and a PDF file.")
+            if not all([company_dash, file_dash]): 
+                st.error("Please provide a company name and a PDF file.")
             else:
-                with st.spinner("Analyzing disclosures and building graphical dashboard..."):
-                    text = extract_text_from_pdf_esg(file_dash)
-                    if text:
-                        response_text = analyze_esg_with_structured_output(text)
-                        esg_data = parse_structured_esg_data(response_text)
-                        if "error" in esg_data: st.error(f"Analysis failed: {esg_data['error']}")
-                        else:
-                            st.success("Dashboard generated successfully!")
-                            report_content, report_filename = generate_esg_dashboard_html(esg_data, company_dash)
-                            st.download_button("📥 Download HTML Dashboard", report_content, report_filename, "text/html", use_container_width=True)
-                            st.markdown("### Dashboard Preview:")
-                            st.components.v1.html(report_content.decode('utf-8'), height=800, scrolling=True)
+                text = extract_text_from_pdf_esg(file_dash)
+                if text:
+                    esg_data = analyze_esg_in_stages(text)
+                    if "error" in esg_data: 
+                        st.error(f"Analysis failed: {esg_data['error']}")
+                    else:
+                        st.success("Dashboard generated successfully!")
+                        report_content, report_filename = generate_esg_dashboard_html(esg_data, company_dash)
+                        st.download_button("📥 Download HTML Dashboard", report_content, report_filename, "text/html", use_container_width=True)
+                        st.markdown("### Dashboard Preview:")
+                        st.components.v1.html(report_content.decode('utf-8'), height=800, scrolling=True)
+
     with tab2:
         st.subheader("1. Generate Classic ESG Report")
         company_classic = st.text_input("🏢 Enter Company Name", key="esg_company_classic")
         file_classic = st.file_uploader("📄 Upload ESG Disclosure PDF", type="pdf", key="esg_file_classic")
-        # --- NEW UI for Custom Prompt ---
         st.markdown("---")
         st.subheader("Advanced: Customize Analysis Prompt")
         st.warning("The ESG Report requires a specific JSON output. Your custom prompt must request this structure or the report generation will fail.")
-        st.text_area(
-            "Enter your custom prompt for ESG analysis:",
-            placeholder="Enter your full custom prompt here. It must ask for a JSON object with keys like 'overall_score', 'environmental_insights', etc.",
-            height=250,
-            key="esg_custom_prompt_classic"
-        )
-        # --- END NEW UI ---
+        st.text_area("Enter your custom prompt for ESG analysis:", placeholder="Enter your full custom prompt here...", height=250, key="esg_custom_prompt_classic")
+        
         if st.button("🚀 Generate & Download Report", key="esg_generate_classic"):
-            if not all([company_classic, file_classic]): st.error("Please provide a company name and a PDF file.")
+            if not all([company_classic, file_classic]): 
+                st.error("Please provide a company name and a PDF file.")
             else:
-                with st.spinner("Analyzing ESG disclosures..."):
-                    text = extract_text_from_pdf_esg(file_classic)
-                    if text:
-                        response_text = analyze_esg_with_structured_output(text)
-                        esg_data = parse_structured_esg_data(response_text)
-                        if "error" in esg_data: st.error(f"Analysis failed: {esg_data['error']}")
-                        else:
-                            st.success("Analysis complete!")
-                            report_content, report_filename = generate_html_report_esg(esg_data, company_classic)
-                            st.download_button("📥 Download HTML Report", report_content, report_filename, "text/html", use_container_width=True)
-                            st.markdown("### Report Preview:")
-                            st.components.v1.html(report_content.decode('utf-8'), height=600, scrolling=True)
+                text = extract_text_from_pdf_esg(file_classic)
+                if text:
+                    esg_data = analyze_esg_in_stages(text) # Use the same robust function
+                    if "error" in esg_data: 
+                        st.error(f"Analysis failed: {esg_data['error']}")
+                    else:
+                        st.success("Analysis complete!")
+                        report_content, report_filename = generate_html_report_esg(esg_data, company_classic)
+                        st.download_button("📥 Download HTML Report", report_content, report_filename, "text/html", use_container_width=True)
+                        st.markdown("### Report Preview:")
+                        st.components.v1.html(report_content.decode('utf-8'), height=600, scrolling=True)
+        
         st.markdown("---")
         st.subheader("2. Compare Existing Classic Reports")
         uploaded_html_files = st.file_uploader("📂 Upload 2 to 5 Classic ESG HTML Reports", type="html", accept_multiple_files=True, key="esg_compare_files")
         if st.button("🔍 Compare & Download", key="esg_compare"):
-            if not 2 <= len(uploaded_html_files) <= 5: st.warning("Please upload between 2 and 5 HTML files to compare.")
+            if not 2 <= len(uploaded_html_files) <= 5: 
+                st.warning("Please upload between 2 and 5 HTML files to compare.")
             else:
                 comparison_data = []
                 with st.spinner("Parsing reports for comparison..."):
@@ -2596,7 +2599,8 @@ def esg_analyzer_app():
                             soup = BeautifulSoup(f.read().decode('utf-8', errors='ignore'), 'html.parser')
                             report_data = extract_data_from_html_for_comparison(soup, f.name)
                             comparison_data.append(report_data)
-                        except Exception as e: st.error(f"Error parsing file {f.name}: {e}")
+                        except Exception as e: 
+                            st.error(f"Error parsing file {f.name}: {e}")
                 if comparison_data:
                     compare_content, compare_filename = generate_comparison_html_esg(comparison_data)
                     st.success("Comparison complete!")
