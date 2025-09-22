@@ -6195,88 +6195,61 @@ def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
 def main():
     """
     Main function to run the Streamlit app with authentication and routing.
+    This version includes dynamic agent visibility for both the sidebar and the welcome page cards.
     """
     
     if not authentication_ui():
-        st.stop()  # Stop the app if the user is not logged in
+        st.stop()
     
-
-    # --- START: NEW SESSION VALIDATION STEP ---
     if not validate_session():
         st.warning("Your session has expired or another session has been started with your credentials.")
         st.info("Please log in again.")
-        # Clear potentially stale session state
         for key in ['logged_in', 'username', 'session_token']:
             if key in st.session_state:
                 del st.session_state[key]
-        st.button("Reload") # Gives user a button to click to refresh to login
-        st.stop() # Halt execution for this invalid session
-    # --- END: NEW SESSION VALIDATION STEP ---
+        st.button("Reload")
+        st.stop()
 
-
-    # --- START: Initialize Supabase connection in session state ---
-    # Check if the connection is already in session state to avoid re-creation
     if 'st_supabase_connection' not in st.session_state:
         try:
-            # Use the correct nested keys from your secrets.toml
             supabase_url = st.secrets["connections"]["supabase"]["SUPABASE_URL"]
             supabase_key = st.secrets["connections"]["supabase"]["SUPABASE_KEY"]
-
-            # Instantiate the class directly with the required 'connection_name'
             st.session_state.st_supabase_connection = SupabaseConnection('supabase', supabase_url=supabase_url, supabase_key=supabase_key)
         except Exception as e:
             st.error(f"Error initializing Supabase connection: {e}")
             st.stop()
 
+    # --- DYNAMIC AGENT VISIBILITY LOGIC ---
+    permissions = st.secrets.get("user_permissions", {})
+    current_user = st.session_state.get("username")
+    visible_agents = permissions.get("__DEFAULT__", ["🏠 Welcome"]) 
+    if current_user in permissions:
+        visible_agents = permissions[current_user]
 
-    # --- Sidebar Definition ---
+    # --- SIDEBAR DEFINITION ---
     with st.sidebar:
         st.title("ARANC'AI'")
-        # Display the user's email, which is stored in 'username' of session_state
         st.write(f"Welcome, **{st.session_state.username}**")
         st.markdown("---")
-
         app_mode = st.radio(
             "Choose a tool:",
-            [
-                "🏠 Welcome",
-                "Agent IdeaGen",
-                "Agent PE",
-                "Model Integrity Agent",
-                "Agent Credit",
-                "Agent Pre-IPO",
-                "DCF Ginny",
-                "Agent Special Situations",
-                "ESG Analyzer",
-                "Agent Portfolio",
-                "Agent Sentinel",
-                "Tariff Impact Tracker",
-                "Real-Time Sentinel"
-            ],
+            options=visible_agents,
             key="app_tool_choice"
         )
         st.markdown("---")
-
-        
-
         if st.button("Logout"):
-            # Clear all session state on logout
             conn.client.table("users").update({"active_session_token": None}).eq("email", st.session_state['username']).execute()
             for key in st.session_state.keys():
                 del st.session_state[key]
             st.rerun()
-
         st.info("App powered by Aranca.")
 
     st.markdown("---")
 
-    # --- Router Logic ---
+    # --- ROUTER LOGIC ---
     if app_mode == "Real-Time Sentinel":
-        real_time_sentinel_app(user_id=st.session_state.username, client=openai_client) # Pass client and user ID
+        real_time_sentinel_app(user_id=st.session_state.username, client=openai_client)
     elif app_mode == "Agent IdeaGen": 
-        # This is the correct way to call your newly combined function.
-        # Ensure you remove 'Multi-Agent Alpha Generation' from the sidebar list
-        # to avoid redundancy.
         investment_pipeline_agent()
     elif app_mode == "Agent Credit":
         agent_credit_app_azure()
@@ -6285,51 +6258,70 @@ def main():
     elif app_mode == "Agent Sentinel":
         agent_sentinel_app()
     elif app_mode == "Agent PE":
-        # This now calls your self-contained Azure function
         pe_agent_app_azure()
-        
     elif app_mode == "Agent Pre-IPO":
         investment_memo_app()
-        
     elif app_mode == "DCF Ginny":
         dcf_agent_app(client=openai_client, FMP_API_KEY=FMP_API_KEY)
-        
     elif app_mode == "Agent Special Situations":
         special_situations_app()
-        
     elif app_mode == "ESG Analyzer":
         esg_analyzer_app()
-        
     elif app_mode == "Agent Portfolio":
-        # Pass the logged-in user's email as the unique ID for the agent
         portfolio_agent_app(user_id=st.session_state.username)
-        
     elif app_mode == "Tariff Impact Tracker":
-        # The logo_base64 variable is defined globally, so this works
         tariff_impact_tracker_app(DEEPSEEK_API_KEY=DEEPSEEK_API_KEY, FMP_API_KEY=FMP_API_KEY, logo_base64_string=logo_base64)
-        
-    else: # Welcome Page
+    else: # This is the "🏠 Welcome" page
         st.markdown('<p class="welcome-subtitle">A unified platform for advanced financial analysis.</p>', unsafe_allow_html=True)
         st.info("👈 **Select an agent from the sidebar to begin.**")
         st.subheader("Available Agents")
 
-        # --- THIS IS THE MISSING CSS BLOCK ---
+        # Define all possible agent cards in a master list
+        ALL_AGENT_DETAILS = [
+            {"name": "Agent IdeaGen", "title": "💡 Agent IdeaGen", "description": "Discover new investment ideas by screening the market based on a specific theme or set of custom criteria."},
+            {"name": "Agent PE", "title": "🔒 Agent PE", "description": "Analyze confidential IMs and teasers with enterprise-grade secured environment."},
+            {"name": "DCF Ginny", "title": "📈 DCF Ginny", "description": "Generate a document-driven Discounted Cash Flow (DCF) analysis using public data or your own financials."},
+            {"name": "ESG Analyzer", "title": "🌍 ESG Analyzer", "description": "Extract and compare key ESG metrics from sustainability reports to benchmark corporate performance."},
+            {"name": "Agent Pre-IPO", "title": "📝 Agent Pre-IPO", "description": "Upload a DRHP/IPO PDF to automatically generate a detailed investment memo and perform Q&A."},
+            {"name": "Agent Credit", "title": "🔒 Agent Credit", "description": "Analyze confidential credit agreements, indentures, and loan documents in a secure environment."},
+            {"name": "Agent Portfolio", "title": "🗂️ Agent Portfolio", "description": "Index company-specific documents (10-Ks, earnings calls) and perform Q&A across your entire portfolio."},
+            {"name": "Tariff Impact Tracker", "title": "📈 Tariff Impact Tracker", "description": "Analyze earnings calls or filings to extract mentions of tariffs and their financial impact."},
+            {"name": "Agent Special Situations", "title": "📊 Agent Special Situations", "description": "Analyze events like M&A, spin-offs, and activist campaigns by uploading relevant documents to generate a summary memo."},
+            {"name": "Agent Sentinel", "title": "📡 Agent Sentinel", "description": "Proactively monitor portfolio companies for key news, filings, and events."},
+            {"name": "Model Integrity Agent", "title": "🛡️ Model Integrity Agent", "description": "Audit Excel financial models for errors, hard-codes, and inconsistencies."},
+            {"name": "Real-Time Sentinel", "title": "🚨 Real-Time Sentinel", "description": "Provides a real-time warning system for compliance issues and tail risks."}
+        ]
+
+        # Filter the cards based on the user's permissions
+        visible_agent_details = [agent for agent in ALL_AGENT_DETAILS if agent["name"] in visible_agents]
+
+        # Generate the HTML for the visible cards
+        card_html_list = []
+        for agent in visible_agent_details:
+            card_html_list.append(f"""
+            <div class="agent-card" title="{agent['description']}">
+                <div class="agent-title">{agent['title']}</div>
+                <div class="agent-description">{agent['description']}</div>
+            </div>
+            """)
+
+        # This is the original, static CSS block for the cards - it's correct
         st.markdown("""
         <style>
         .agent-grid {
             display: grid;
-            grid-template-columns: repeat(3, 1fr); /* Creates 3 equal-width columns */
-            grid-auto-rows: 1fr; /* This is the key: makes all rows equal height */
+            grid-template-columns: repeat(3, 1fr);
+            grid-auto-rows: 1fr;
             gap: 20px;
         }
         .agent-card {
-            display: flex; /* Aligns content inside the card */
+            display: flex;
             flex-direction: column;
             background-color: #f8f9fa;
             border: 1px solid #e0e0e0;
             border-radius: 8px;
             padding: 20px;
-            height: 100%; /* Ensures card fills the entire grid cell */
+            height: 100%;
             transition: box-shadow 0.2s ease-in-out;
         }
         .agent-card:hover {
@@ -6349,57 +6341,10 @@ def main():
         </style>
         """, unsafe_allow_html=True)
 
-        # --- THIS IS THE HTML BLOCK FOR THE AGENT CARDS ---
-        st.markdown("""
+        # This renders the dynamically generated list of cards
+        st.markdown(f"""
         <div class="agent-grid">
-            <div class="agent-card" title="Acts as a sophisticated, AI-powered screener to find new investment opportunities.">
-                <div class="agent-title">💡 Agent IdeaGen</div>
-                <div class="agent-description">Discover new investment ideas by screening the market based on a specific theme or set of custom criteria.</div>
-            </div>
-            <div class="agent-card" title="Ensures data residency and privacy by processing documents within a secure environment.">
-                <div class="agent-title">🔒 Agent PE</div>
-                <div class="agent-description">Analyze confidential IMs and teasers with enterprise-grade secured environment.</div>
-            </div>
-            <div class="agent-card" title="Combines quantitative data with qualitative insights from documents.">
-                <div class="agent-title">📈 DCF Ginny</div>
-                <div class="agent-description">Generate a document-driven Discounted Cash Flow (DCF) analysis using public data or your own financials.</div>
-            </div>
-            <div class="agent-card" title="Provides a quick overview of Environmental, Social, and Governance factors.">
-                <div class="agent-title">🌍 ESG Analyzer</div>
-                <div class="agent-description">Extract and compare key ESG metrics from sustainability reports to benchmark corporate performance.</div>
-            </div>
-            <div class="agent-card" title="Uses LLMs to parse and structure information from prospectus documents.">
-                <div class="agent-title">📝 Agent Pre-IPO</div>
-                <div class="agent-description">Upload a DRHP/IPO PDF to automatically generate a detailed investment memo and perform Q&A.</div>
-            </div>
-            <div class="agent-card" title="Ideal for private credit, distressed debt, and fixed-income workflows.">
-                <div class="agent-title">🔒 Agent Credit</div>
-                <div class="agent-description">Analyze confidential credit agreements, indentures, and loan documents in a secure environment.</div>
-            </div>
-            <div class="agent-card" title="A persistent knowledge base for your covered companies.">
-                <div class="agent-title">🗂️ Agent Portfolio</div>
-                <div class="agent-description">Index company-specific documents (10-Ks, earnings calls) and perform Q&A across your entire portfolio.</div>
-            </div>
-            <div class="agent-card" title="Quickly gauge a company's exposure and sentiment towards trade duties.">
-                <div class="agent-title">📈 Tariff Impact Tracker</div>
-                <div class="agent-description">Analyze earnings calls or filings to extract mentions of tariffs and their financial impact.</div>
-            </div>
-            <div class="agent-card" title="Ideal for event-driven investment strategies.">
-                <div class="agent-title">📊 Agent Special Situations</div>
-                <div class="agent-description">Analyze events like M&A, spin-offs, and activist campaigns by uploading relevant documents to generate a summary memo.</div>
-            </div>
-            <div class="agent-card" title="Proactively monitor portfolio companies for key news, filings, and events.">
-                <div class="agent-title">📡 Agent Sentinel</div>
-                <div class="agent-description">Proactively monitor portfolio companies for key news, filings, and events.</div>
-            </div>
-            <div class="agent-card" title="Audit Excel financial models for errors, hard-codes, and inconsistencies.">
-                <div class="agent-title">🛡️ Model Integrity Agent</div>
-                <div class="agent-description">Audit Excel financial models for errors, hard-codes, and inconsistencies.</div>
-            </div>
-            <div class="agent-card" title="A continuous system for real-time compliance checks and risk monitoring.">
-                <div class="agent-title">🚨 Real-Time Sentinel</div>
-                <div class="agent-description">Provides a real-time warning system for compliance issues and tail risks.</div>
-            </div>
+            {''.join(card_html_list)}
         </div>
         """, unsafe_allow_html=True)
 
