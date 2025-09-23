@@ -5205,20 +5205,22 @@ def agent_credit_app_azure():
                 with st.spinner("Stage 3/3: Synthesizing final report from summaries..."):
                     analysis_results = {}
                     for choice in analysis_choices_tab1:
+                        st.write(f"Synthesizing: **{choice}**")
                         req_keys = REQUIRED_CONTEXT.get(choice, [])
                         
-                        # --- MODIFIED: Build the synthesis prompt using SUMMARIES ---
-                        synthesis_context_for_prompt = {k: summarized_context.get(k, "Not Available") for k in req_keys}
-                        context_as_string = json.dumps(synthesis_context_for_prompt, indent=2)
-                        synthesis_task_prompt = SYNTHESIS_PROMPTS[choice]
-                        final_synthesis_prompt = f"{synthesis_task_prompt}\n\nUse ONLY the following summarized facts as your context:\n{context_as_string[:120000]}"
-
-                        # The context for the final call is the prompt itself
-                        synthesis_hash = hash(final_synthesis_prompt)
-                        st.session_state.context_cache[synthesis_hash] = (final_synthesis_prompt, None)
+                        # 1. Build the CONTEXT from the summaries
+                        synthesis_context_str = json.dumps({k: summarized_context.get(k, "Not Available") for k in req_keys}, indent=2)
                         
-                        # The task is now simple, as the full instruction is in the context
-                        analysis_results[choice] = analyze_with_azure_openai(synthesis_hash, "Generate the report based on the context provided.")
+                        # 2. Get the specific TASK for this analysis choice
+                        synthesis_task = SYNTHESIS_PROMPTS[choice]
+
+                        # 3. Put only the context into the cache for the analysis function
+                        context_hash = hash(synthesis_context_str)
+                        if 'context_cache' not in st.session_state: st.session_state.context_cache = {}
+                        st.session_state.context_cache[context_hash] = (synthesis_context_str, None)
+                        
+                        # 4. Call the analysis function with the specific task
+                        analysis_results[choice] = analyze_with_azure_openai(context_hash, synthesis_task)
                 
                 st.session_state.agent_credit_analysis_results = analysis_results
                 st.session_state.last_analyzed_deal = deal_name_input # Store deal name for display
