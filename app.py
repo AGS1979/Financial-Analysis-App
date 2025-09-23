@@ -4693,9 +4693,8 @@ def agent_credit_app_azure():
         st.error(f"Configuration or Connection error: {e}. Please check your secrets.toml file.")
         st.stop()
 
-    # --- HELPER FUNCTIONS ---
-
-    # (This section with TOPIC_SYNONYMS, _normalize_text, etc. is unchanged)
+    # --- START OF ORIGINAL HELPER FUNCTIONS ---
+    # (This section is restored to its original state)
     TOPIC_SYNONYMS = {
         "negative_covenants": {
             "headings": [
@@ -4835,7 +4834,7 @@ def agent_credit_app_azure():
 
     REQUIRED_CONTEXT = {
         "Key Terms Sheet": ["capital_structure", "repayment_terms", "pricing_interest", "guarantees_security", "financial_covenant"],
-        "Capital Structure Summary": ["capital_structure", "repayment_terms", "guarantees_security", "pricing_interest"],
+        "Capital Structure Summary": ["capital_structure", "repayment_terms", "guarantees_security"],
         "Covenant Analysis": ["financial_covenant", "negative_covenants", "positive_covenants", "key_definitions", "events_of_default"],
         "Debt Maturity Profile": ["repayment_terms", "capital_structure"],
         "Credit Risk Factors": ["financial_covenant", "negative_covenants", "events_of_default", "capital_structure"]
@@ -4854,15 +4853,60 @@ def agent_credit_app_azure():
     }
 
     SYNTHESIS_PROMPTS = {
-        "Key Terms Sheet": ("You are a top-tier credit analyst. Using the provided context, generate a **markdown table** summarizing the key terms. Populate the table with the most critical information found in the extracted clauses. If a specific piece of information is not found, state 'Not Specified'.\n\n| Term | Details |\n| :--- | :--- |\n| Borrower | (Identify the main borrowing entity) |\n| Facilities | (List the names and amounts of each facility, e.g., '$500M Revolver', '$1.2B Term Loan B') |\n| Maturity | (List the maturity date for each facility) |\n| Interest & Fees | (Summarize the interest rate for each facility, e.g., 'SOFR + 3.50% with a 0.50% floor') |\n| Guarantees | (Summarize the guarantee structure, e.g., 'Guaranteed by ParentCo and all material domestic subs.') |\n| Security | (Summarize the collateral, e.g., 'First-priority lien on substantially all assets') |\n| Financial Covenants | (State the primary financial covenant, e.g., 'Maximum First Lien Net Leverage Ratio of 4.50x') |\n"),
-        "Capital Structure Summary": ("You are a top-tier credit analyst preparing a detailed memorandum. Using the following **summarized clauses**, generate a comprehensive summary of the company's capital structure. **CRITICAL RULE: Your entire response must be in clean, narrative MARKDOWN format. Write in full sentences and detailed paragraphs. Do not simply list facts; explain their implications for creditors.**\n\n## Debt Overview\n(Provide a high-level narrative.)\n\n## Detailed Debt Instrument Analysis\n(Create a **markdown table** with columns: 'Facility/Tranche', 'Principal Amount', 'Maturity Date', 'Interest Rate / Margin', and 'Key Amortization Terms'.)\n\n## Guarantees & Security\n(Write a detailed paragraph describing the support package.)"),
-        "Covenant Analysis": ("You are a senior credit analyst. RULES: (1) Markdown only; (2) ≥600 words; (3) be precise and quantitative, avoid generalities.\n\n## Financial Covenants\n(Analyze the financial covenant and key definitions. Create a markdown table for the covenant, then write a detailed paragraph below.)\n\n## Negative Covenants\n(Analyze the negative covenants. For each sub-heading below, write a paragraph explaining the core prohibition and then describe the most significant exceptions and **quantitative baskets** in detail.)\n### Limitation on Liens\n### Limitation on Indebtedness\n### Limitation on Mergers and Asset Sales\n\n## Positive (Affirmative) Covenants\n(Analyze the positive covenants, focusing on financial reporting deadlines.)"),
-        "Credit Risk Factors": ("You are a credit risk officer writing an internal memorandum. **CRITICAL RULE: Your response must be a detailed, text-heavy narrative report in clean MARKDOWN format, based exclusively on the provided summarized clauses.**\n\n## Key Strengths for Creditors\n(Identify and summarize protective features.)\n\n## Key Risks & Mitigants\n(Analyze the agreement's structure for potential weaknesses and any mitigating factors.)")
+        "Key Terms Sheet": (
+            "You are a top-tier credit analyst. Using the provided context, generate a **markdown table** summarizing the key terms. Populate the table with the most critical information found in the extracted clauses. If a specific piece of information is not found, state 'Not Specified'.\n\n"
+            "| Term                  | Details                                                                                             |\n"
+            "| :-------------------- | :-------------------------------------------------------------------------------------------------- |\n"
+            "| Borrower              | (Identify the main borrowing entity)                                                                |\n"
+            "| Facilities            | (List the names and amounts of each facility, e.g., '$500M Revolver', '$1.2B Term Loan B')           |\n"
+            "| Maturity              | (List the maturity date for each facility)                                                          |\n"
+            "| Interest & Fees       | (Summarize the interest rate for each facility, e.g., 'SOFR + 3.50% with a 0.50% floor')              |\n"
+            "| Guarantees            | (Summarize the guarantee structure, e.g., 'Guaranteed by ParentCo and all material domestic subs.') |\n"
+            "| Security              | (Summarize the collateral, e.g., 'First-priority lien on substantially all assets')                  |\n"
+            "| Financial Covenants   | (State the primary financial covenant, e.g., 'Maximum First Lien Net Leverage Ratio of 4.50x')      |\n"
+        ),
+        "Capital Structure Summary": (
+            "You are a top-tier credit analyst preparing a detailed memorandum. Using the following **extracted clauses**, generate a comprehensive summary of the company's capital structure. "
+            "**CRITICAL RULE: Your entire response must be in clean, narrative MARKDOWN format. Write in full sentences and detailed paragraphs. Do not simply list facts; explain their implications for creditors.**\n\n"
+            "## Debt Overview\n(Provide a high-level narrative. Use the 'capital_structure' context to describe the main layers of debt, total facility size, and its purpose, for instance, 'The company entered into a $6,000,000,000 Term Loan Credit Agreement to finance the Allergan Acquisition.')\n\n"
+            "## Detailed Debt Instrument Analysis\n(Using the 'capital_structure', 'pricing_interest' and 'repayment_terms' context, create a **markdown table** with the following columns: 'Facility/Tranche', 'Principal Amount', 'Maturity Date', 'Interest Rate / Margin', and 'Key Amortization Terms'. Fill this table for **each** debt instrument identified.)\n\n"
+            "## Guarantees & Security\n(Using the 'guarantees_security' context, write a detailed paragraph describing the support package. Specify which entities are guarantors. Detail the security package or, if the debt is explicitly stated as unsecured, state that clearly and explain what that implies for creditors.)"
+        ),
+        "Covenant Analysis": (
+            "You are a senior credit analyst. RULES: "
+            "(1) Markdown only; (2) ≥600 words; (3) include at least 3 blockquotes of verbatim language; "
+            "(4) when possible, attribute quotes using the 'heading' field from the facts; "
+            "(5) be precise and quantitative, avoid generalities.\n\n"
+            "## Financial Covenants\n(Analyze the 'financial_covenant' and 'key_definitions' context. First, create a **markdown table** with columns: 'Covenant Name', 'Requirement', and 'Key Step-Downs'. Then, in a detailed paragraph below the table, describe the covenant, its definition (especially 'Consolidated EBITDA'), and any special conditions like an 'acquisition holiday'.)\n\n"
+            "## Negative Covenants\n(Analyze the 'negative_covenants' context. For each sub-heading below, write a paragraph explaining the core prohibition and then describe the most significant exceptions and **quantitative baskets** in detail, quoting specific dollar amounts or percentages. For each topic present in facts.negatives, write: core rule, list of key baskets with values and bases, and insert a short blockquote of the operative sentence. If 'greater_of' is true, spell out both components.)\n"
+            "### Limitation on Liens\n"
+            "### Limitation on Indebtedness\n"
+            "### Limitation on Mergers and Asset Sales\n\n"
+            "## Positive (Affirmative) Covenants\n(Analyze the 'positive_covenants' context. Write a paragraph summarizing key obligations, focusing especially on the **specific financial reporting deadlines** you can find (e.g., 'within 50 days after the end of each of the first three quarters').)"
+        ),
+        "Credit Risk Factors": (
+            "You are a credit risk officer writing an internal memorandum. **CRITICAL RULE: Your response must be a detailed, text-heavy narrative report in clean MARKDOWN format, based exclusively on the provided extracted clauses. You must reference specific contractual terms.**\n\n"
+            "## Key Strengths for Creditors\n(Identify and summarize protective features from the document, such as a strong security package, tight covenants, or mandatory prepayments from asset sales.)\n\n"
+            "## Key Risks & Mitigants\n(Analyze the agreement's structure using the 'negative_covenants' and 'events_of_default' context. Comment on potential weaknesses, such as loose covenants, large exception baskets, or long grace periods for default. For each risk, describe any mitigating factors present in the agreement.)"
+        ),
     }
-    
-    # --- HELPER FUNCTIONS ---
+
     def parse_markdown_to_html(analysis_results: dict, title: str) -> tuple[str, str]:
-        styles = """<style> .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9fafb; margin: 20px; } h1, h2, h3, p, ul, li, table { font-family: 'Poppins', sans-serif !important; } .analysis-container h1 { font-size: 1.8em; font-weight: 700; color: #00416A; margin-top: 0; padding-bottom: 15px; border-bottom: 3px solid #00416A; } .analysis-container h2 { font-size: 1.5em; font-weight: 600; color: #00416A; border-bottom: 2px solid #e6f1f6; padding-bottom: 10px; margin-top: 30px; margin-bottom: 20px; } .analysis-container table { width: 100%; border-collapse: collapse; margin: 20px 0; } .analysis-container th, .analysis-container td { border: 1px solid #ddd; padding: 12px 15px; text-align: left; } .analysis-container th { background-color: #e6f1f6; font-weight: 600; } </style>"""
+        styles = """
+        <style>
+            .analysis-container { font-family: 'Poppins', sans-serif; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px; background-color: #f9fafb; margin: 20px; }
+            .analysis-container h1 { font-size: 1.8em; font-weight: 700; color: #00416A; margin-top: 0; padding-bottom: 15px; border-bottom: 3px solid #00416A; }
+            .analysis-container h2 { font-size: 1.5em; font-weight: 600; color: #00416A; border-bottom: 2px solid #e6f1f6; padding-bottom: 10px; margin-top: 30px; margin-bottom: 20px; }
+            .analysis-container h3 { font-size: 1.2em; font-weight: 600; color: #1e1e1e; margin-top: 25px; margin-bottom: 10px; }
+            .analysis-container p { margin-bottom: 1em; line-height: 1.6; color: #333; }
+            .analysis-container ul, .analysis-container ol { list-style-position: outside; padding-left: 20px; margin-top: 1em; margin-bottom: 1em; }
+            .analysis-container li { margin-bottom: 0.75em; line-height: 1.6; }
+            .analysis-container table { width: 100%; border-collapse: collapse; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+            .analysis-container th, .analysis-container td { border: 1px solid #ddd; padding: 12px 15px; text-align: left; }
+            .analysis-container th { background-color: #e6f1f6; font-weight: 600; }
+            .analysis-container tr:nth-of-type(even) { background-color: #fdfdfd; }
+        </style>
+        """
         html_body = f"<h1>{html.escape(title)}</h1>"
         for section_title, md_content in analysis_results.items():
             html_body += f"<h2>{html.escape(section_title)}</h2>" + markdown.markdown(md_content, extensions=['tables'])
@@ -4876,7 +4920,13 @@ def agent_credit_app_azure():
             client = DocumentIntelligenceClient(endpoint=di_endpoint, credential=AzureKeyCredential(di_key))
             md_parts, step = [], 30
             for start in range(1, n_pages + 1, step):
-                poller = client.begin_analyze_document("prebuilt-layout", io.BytesIO(file_bytes), content_type="application/pdf", pages=f"{start}-{min(start + step - 1, n_pages)}", output_content_format=ContentFormat.MARKDOWN)
+                poller = client.begin_analyze_document(
+                    "prebuilt-layout", 
+                    io.BytesIO(file_bytes), 
+                    content_type="application/pdf", 
+                    pages=f"{start}-{min(start + step - 1, n_pages)}", 
+                    output_content_format=ContentFormat.MARKDOWN
+                )
                 md_parts.append(poller.result().content or "")
             return "\n\n".join(md_parts), []
         except Exception as e:
@@ -4893,9 +4943,11 @@ def agent_credit_app_azure():
             markdown_texts = []
             for sheet_name in xls.sheet_names:
                 df = pd.read_excel(xls, sheet_name=sheet_name)
-                df.dropna(how='all', axis=0, inplace=True); df.dropna(how='all', axis=1, inplace=True)
+                df.dropna(how='all', axis=0, inplace=True)
+                df.dropna(how='all', axis=1, inplace=True)
                 if not df.empty:
-                    markdown_texts.append(f"## Data from Sheet: {sheet_name}\n\n{df.to_markdown(index=False)}")
+                    markdown_texts.append(f"## Data from Sheet: {sheet_name}\n\n")
+                    markdown_texts.append(df.to_markdown(index=False))
             return "\n\n".join(markdown_texts)
         except Exception as e:
             st.warning(f"Could not process Excel file {file_name}: {e}")
@@ -4923,7 +4975,10 @@ def agent_credit_app_azure():
         """
         try:
             client = AzureOpenAI(api_key=openai_key, api_version="2024-02-01", azure_endpoint=openai_endpoint)
-            response = client.chat.completions.create(model=openai_deployment_name, messages=[{"role": "user", "content": prompt}])
+            response = client.chat.completions.create(
+                model=openai_deployment_name,
+                messages=[{"role": "user", "content": prompt}]
+            )
             return response.choices[0].message.content
         except Exception as e:
             st.warning(f"Could not summarize '{topic_name}': {e}")
@@ -4968,6 +5023,7 @@ def agent_credit_app_azure():
 
         except Exception as e:
             return {"error": str(e)} if as_json else f"## Error\n**OpenAI Error:** {e}"
+    # --- END: NEW AND MODIFIED HELPER FUNCTIONS ---
             
     @st.cache_data(ttl=600)
     def get_deal_list():
@@ -5165,6 +5221,7 @@ def agent_credit_app_azure():
                         analysis_results[choice] = analyze_with_azure_openai(synthesis_hash, "Generate the report based on the context provided.")
                 
                 st.session_state.agent_credit_analysis_results = analysis_results
+                st.session_state.last_analyzed_deal = deal_name_input # Store deal name for display
                 
                 with st.spinner("Saving deal to portfolio database..."):
                     try:
@@ -5182,10 +5239,11 @@ def agent_credit_app_azure():
 
         if "agent_credit_analysis_results" in st.session_state:
             st.markdown("---")
-            styles, content = parse_markdown_to_html(st.session_state.agent_credit_analysis_results, f"Analysis for {deal_name_input or 'the Deal'}")
+            styles, content = parse_markdown_to_html(st.session_state.agent_credit_analysis_results, f"Analysis for {st.session_state.get('last_analyzed_deal', 'the Deal')}")
             st.markdown(styles, unsafe_allow_html=True)
             st.markdown(content, unsafe_allow_html=True)
     
+    # --- TAB 2: PORTFOLIO MONITORING ---
     with tab2:
         st.subheader("Portfolio Covenant Monitoring")
         deal_list = get_deal_list()
@@ -5204,6 +5262,7 @@ def agent_credit_app_azure():
                 else:
                     st.warning("Please select a deal and upload a financials document.")
                     
+    # --- TAB 3: DEAL COMPARISON ---
     with tab3:
         st.subheader("Side-by-Side Deal Comparison")
         deal_list = get_deal_list()
@@ -5223,22 +5282,35 @@ def agent_credit_app_azure():
                         deal_a_data = conn.client.table("credit_deals").select("deal_name, structured_terms").eq("id", deal_a_id).single().execute().data
                         deal_b_data = conn.client.table("credit_deals").select("deal_name, structured_terms").eq("id", deal_b_id).single().execute().data
                         
-                        comparison_context = f"""DEAL A NAME: {deal_a_data['deal_name']}\nDEAL A TERMS: {json.dumps(deal_a_data['structured_terms'])}\n\nDEAL B NAME: {deal_b_data['deal_name']}\nDEAL B TERMS: {json.dumps(deal_b_data['structured_terms'])}"""
-                        comparison_prompt = f"""You are a credit analyst. Compare the two sets of structured credit terms provided in the context. Generate a markdown table with three columns: 'Term', '{deal_a_data['deal_name']}', and '{deal_b_data['deal_name']}'. In the table, summarize the key terms for: Pricing & Fees, Maturity, Financial Covenants, and Security Package. After the table, provide a short paragraph highlighting the most significant differences."""
-                        
-                        context_hash = hash(comparison_context)
+                        comparison_context = f"""
+                        DEAL A NAME: {deal_a_data['deal_name']}
+                        DEAL A TERMS: {json.dumps(deal_a_data['structured_terms'])}
+
+                        DEAL B NAME: {deal_b_data['deal_name']}
+                        DEAL B TERMS: {json.dumps(deal_b_data['structured_terms'])}
+                        """
+
+                        comparison_prompt = f"""
+                        You are a credit analyst. Compare the two sets of structured credit terms provided in the context.
+                        Generate a markdown table with three columns: 'Term', '{deal_a_data['deal_name']}', and '{deal_b_data['deal_name']}'.
+                        In the table, summarize the key terms for: Pricing & Fees, Maturity, Financial Covenants, and Security Package.
+                        After the table, provide a short paragraph highlighting the most significant differences between the two deals.
+                        """
                         if 'context_cache' not in st.session_state: st.session_state.context_cache = {}
+                        context_hash = hash(comparison_context)
                         st.session_state.context_cache[context_hash] = (comparison_context, None)
                         
                         comparison_md = analyze_with_azure_openai(context_hash, comparison_prompt)
                         st.markdown(comparison_md)
 
+    # --- TAB 4: FINANCIAL SPREADING ---
     with tab4:
         st.subheader("Automated Financial Statement Spreading")
         uploaded_fs_pdf = st.file_uploader("Upload Financial Statement PDF", type="pdf", key="fs_spreader")
         if st.button("Spread Financials", key="spread_button", disabled=not uploaded_fs_pdf, use_container_width=True):
             spread_financial_statements(uploaded_fs_pdf.getvalue())
 
+    # --- TAB 5: DILIGENCE Q&A ---
     with tab5:
         st.subheader("Interactive Diligence Q&A")
         deal_list = get_deal_list()
