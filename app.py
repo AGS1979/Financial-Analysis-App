@@ -4363,9 +4363,7 @@ def pe_agent_app_azure():
                     all_texts = []
                     for doc in uploaded_files_t1:
                         file_bytes = doc.getvalue()
-                        if len(file_bytes) > 45 * 1024 * 1024:
-                            st.error(f"File '{doc.name}' is too large. Max size is 45MB.")
-                            continue
+                        
                         st.write(f"Processing '{doc.name}'...")
                         file_ext = os.path.splitext(doc.name)[1].lower()
                         doc_content = ""
