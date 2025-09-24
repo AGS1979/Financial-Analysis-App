@@ -5084,7 +5084,7 @@ def agent_credit_app_azure():
         analysis_choices_tab1 = st.multiselect(
             "Choose analyses to perform:",
             options=list(SYNTHESIS_PROMPTS.keys()),
-            default=["Key Terms Sheet", "Capital Structure Summary", "Covenant Analysis"],
+            default=list(SYNTHESIS_PROMPTS.keys()),
             key="analysis_choices_tab1"
         )
 
