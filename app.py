@@ -4648,7 +4648,7 @@ def agent_credit_app_azure():
         st.error(f"Configuration or Connection error: {e}. Please check your secrets.toml file.")
         st.stop()
 
-    # --- HELPER FUNCTIONS (WITH FINAL CORRECTIONS) ---
+    # --- HELPER FUNCTIONS (ALIGNED WITH TEST FUNCTION) ---
     TOPIC_SYNONYMS = {
         "negative_covenants": {
             "headings": [
@@ -4674,17 +4674,17 @@ def agent_credit_app_azure():
         },
         "financial_covenant": {
             "headings": [
-                "financial performance covenant", "financial covenant", "maintenance covenant", "leverage ratio",
+                "financial covenant", "maintenance covenant", "leverage ratio",
                 "interest coverage", "secured leverage", "first lien leverage", "net leverage"
             ],
-            "keywords": ["financial performance covenant", "first lien net leverage ratio", "covenant", "ratio", "not to exceed", "at least", "step-down", "holiday"]
+            "keywords": ["covenant", "ratio", "not to exceed", "at least", "step-down", "holiday"]
         },
         "repayment_terms": {
-            "headings": ["repayment", "amortization", "maturity", "term maturity date", "revolving maturity date"],
+            "headings": ["repayment", "amortization", "maturity"],
             "keywords": ["scheduled amortization", "repay", "maturity date", "principal payment"]
         },
         "pricing_interest": {
-            "headings": ["interest", "interest rate determination", "applicable margin", "fees", "applicable rate"],
+            "headings": ["interest", "interest rate determination", "applicable margin", "fees"],
             "keywords": [
                 "sofr", "libor", "base rate", "benchmark", "margin", "floor",
                 "commitment fee", "utilization fee", "pricing grid"
@@ -4703,7 +4703,7 @@ def agent_credit_app_azure():
             "keywords": ["acceleration", "grace period", "cross default", "payment default"]
         },
         "capital_structure": {
-            "headings": ["capitalization", "credit agreement", "description of notes", "description of debt", "commitments"],
+            "headings": ["capitalization", "credit agreement", "description of notes", "description of debt"],
             "keywords": ["term loan", "revolving", "bridge", "senior notes", "issuance", "facility"]
         },
     }
@@ -4791,13 +4791,13 @@ def agent_credit_app_azure():
             "You are a top-tier credit analyst. Using the provided context, generate a **markdown table** summarizing the key terms. Populate the table with the most critical information found in the extracted clauses. If a specific piece of information is not found, state 'Not Specified'.\n\n"
             "| Term                  | Details                                                                                             |\n"
             "| :-------------------- | :-------------------------------------------------------------------------------------------------- |\n"
-            "| Borrower              | (Identify ALL borrowing entities listed in the document)                                            |\n"
-            "| Facilities            | (List the names and amounts of EACH facility, e.g., '$500M Revolver', '$1.2B Term Loan B')           |\n"
-            "| Maturity              | (List the SPECIFIC maturity date for each facility, e.g., 'July 27, 2028')                           |\n"
-            "| Interest & Fees       | (Summarize the SPECIFIC interest rate for each facility, e.g., 'Term Benchmark + 3.75% with a 0.50% floor') |\n"
+            "| Borrower              | (Identify all borrowing entities listed in the document)                                            |\n"
+            "| Facilities            | (List the names and amounts of each facility, e.g., '$500M Revolver', '$1.2B Term Loan B')           |\n"
+            "| Maturity              | (List the specific maturity date for each facility, e.g., 'July 27, 2028')                           |\n"
+            "| Interest & Fees       | (Summarize the specific interest rate for each facility, e.g., 'Term Benchmark + 3.75% with a 0.50% floor') |\n"
             "| Guarantees            | (Summarize the guarantee structure, e.g., 'Guaranteed by Holdings, the Company, and Subsidiary Guarantors.') |\n"
             "| Security              | (Summarize the collateral, e.g., 'First-priority lien on substantially all assets of Loan Parties')   |\n"
-            "| Financial Covenants   | (State the primary Financial *Performance* Covenant precisely, e.g., 'First Lien Net Leverage Ratio not to exceed 8.70:1.00'. Do NOT cite temporary covenants like 'Certain Funds Covenant' unless it's the only one present.) |\n"
+            "| Financial Covenants   | (State the primary financial covenant precisely, e.g., 'First Lien Net Leverage Ratio not to exceed 8.70:1.00') |\n"
         ),
         "Capital Structure Summary": (
             "You are a top-tier credit analyst preparing a detailed memorandum. Using the following **extracted clauses**, generate a comprehensive summary of the company's capital structure. "
@@ -4896,10 +4896,6 @@ def agent_credit_app_azure():
             return ""
 
     def build_synthesis_context(extracted_data: dict, required_topics: list) -> str:
-        """
-        Programmatically builds a richer, more descriptive context by including raw quotes
-        alongside key extracted data to improve the final synthesis accuracy.
-        """
         context_parts = []
         for topic in required_topics:
             topic_data_list = extracted_data.get(topic)
@@ -5075,7 +5071,7 @@ def agent_credit_app_azure():
     tab_titles = ["New Deal Analysis", "Portfolio Monitoring", "Deal Comparison", "Financial Spreading", "Diligence Q&A"]
     tab1, tab2, tab3, tab4, tab5 = st.tabs(tab_titles)
 
-    # --- TAB 1: NEW DEAL ANALYSIS (CORRECTED WORKFLOW) ---
+    # --- TAB 1: NEW DEAL ANALYSIS ---
     with tab1:
         st.subheader("1. Upload Confidential Documents")
         deal_name_input = st.text_input("Enter a unique name for this deal:", key="deal_name_input")
@@ -5140,7 +5136,6 @@ def agent_credit_app_azure():
                         req_keys = REQUIRED_CONTEXT.get(choice, [])
                         
                         synthesis_context_str = build_synthesis_context(extracted_context, req_keys)
-                        
                         synthesis_task = SYNTHESIS_PROMPTS[choice]
 
                         context_hash = hash(synthesis_context_str)
