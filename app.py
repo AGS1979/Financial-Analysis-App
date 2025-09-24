@@ -4953,36 +4953,44 @@ def agent_credit_app_azure():
             st.warning(f"Could not process Excel file {file_name}: {e}")
             return ""
 
-    # --- START: NEW AND MODIFIED HELPER FUNCTIONS ---
-    @st.cache_data(ttl=3600)
-    def summarize_extracted_clause(_clause_hash, topic_name: str):
-        _clause_data, _ = st.session_state.get('context_cache', {}).get(_clause_hash, (None, None))
-        if not _clause_data:
-            return f"Error: No text found for {topic_name} to summarize."
-        
-        context_str = json.dumps(_clause_data, indent=2)
-        prompt = f"""
-        You are a senior credit analyst. Summarize the following extracted JSON data for the topic '{topic_name}'.
-        Your summary must be a concise but dense, fact-based paragraph.
-        **Crucially, you MUST retain ALL key quantitative details** (dollar amounts, percentages, ratios, dates, basis points) and important legal terms (e.g., specific covenant names, basket types).
+    # --- START: MODIFIED & NEW HELPER FUNCTIONS ---
 
-        EXTRACTED DATA:
-        ---
-        {context_str[:25000]}
-        ---
-
-        CONCISE SUMMARY:
+    def build_synthesis_context(extracted_data: dict, required_topics: list) -> str:
         """
-        try:
-            client = AzureOpenAI(api_key=openai_key, api_version="2024-02-01", azure_endpoint=openai_endpoint)
-            response = client.chat.completions.create(
-                model=openai_deployment_name,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            st.warning(f"Could not summarize '{topic_name}': {e}")
-            return context_str[:2000]
+        Programmatically builds a compact, fact-rich context string for the synthesis stage
+        by cherry-picking key fields from the structured JSON extraction results.
+        """
+        context_parts = []
+        for topic in required_topics:
+            topic_data_list = extracted_data.get(topic)
+            if not topic_data_list or not isinstance(topic_data_list, list):
+                continue
+            
+            # The data is nested one level deeper, e.g., [{'instruments': [...]}]
+            topic_data = topic_data_list[0]
+            context_parts.append(f"--- Topic: {topic.replace('_', ' ').title()} ---")
+
+            if topic == "capital_structure" and 'instruments' in topic_data:
+                for item in topic_data['instruments']:
+                    context_parts.append(f"Instrument: {item.get('name')}, Principal: {item.get('currency')} {item.get('principal')}")
+            elif topic == "repayment_terms" and 'schedules' in topic_data:
+                for item in topic_data['schedules']:
+                    context_parts.append(f"Repayment for {item.get('instrument_name')}: Maturity at {item.get('maturity_date')}")
+            elif topic == "pricing_interest" and 'pricing' in topic_data:
+                for item in topic_data['pricing']:
+                    context_parts.append(f"Pricing for {item.get('instrument_name')}: {item.get('benchmark')} + {item.get('margin')}, Floor: {item.get('floor')}")
+            elif topic == "guarantees_security" and 'security' in topic_data:
+                sec = topic_data['security']
+                context_parts.append(f"Security: Collateral is '{sec.get('collateral_description')}', Guarantors: {', '.join(sec.get('guarantors', []))}")
+            elif topic == "financial_covenant" and 'covenant' in topic_data:
+                cov = topic_data['covenant']
+                context_parts.append(f"Financial Covenant: {cov.get('name')} of {cov.get('threshold')} {cov.get('comparator')}")
+            else:
+                # For other topics, a simple JSON string is sufficient and better than a flawed summary
+                context_parts.append(json.dumps({k: v for k, v in topic_data.items() if v}, indent=2))
+
+        return "\n".join(context_parts)
+
 
     @st.cache_data(ttl=3600)
     def analyze_with_azure_openai(_context_hash, _prompt: str, as_json: bool = False):
@@ -4997,10 +5005,13 @@ def agent_credit_app_azure():
             max_retries = 3
             for attempt in range(max_retries):
                 try:
+                    # Construct the final prompt for the API call
+                    final_prompt_content = f"CONTEXT EXCERPT:\n---\n{_context}\n---\nTASK:\n{_prompt}"
+
                     response = client.chat.completions.create(
                         model=openai_deployment_name,
                         messages=[{"role": "system", "content": "You are a precise credit-document extractor. If JSON is requested, return ONLY strict JSON."},
-                                  {"role": "user", "content": f"CONTEXT EXCERPT:\n---\n{_context}\n---\nTASK:\n{_prompt}"}],
+                                  {"role": "user", "content": final_prompt_content}],
                         **kwargs)
                     
                     txt = response.choices[0].message.content
@@ -5008,8 +5019,9 @@ def agent_credit_app_azure():
                         try:
                             return json.loads(txt)
                         except json.JSONDecodeError:
-                            txt = re.sub(r"^```json|```$", "", txt.strip(), flags=re.MULTILINE)
-                            return json.loads(txt)
+                            # Attempt to clean up markdown code fences if they exist
+                            txt_cleaned = re.sub(r"^```json|```$", "", txt.strip(), flags=re.MULTILINE)
+                            return json.loads(txt_cleaned)
                     return txt
                 
                 except RateLimitError as e:
@@ -5023,7 +5035,8 @@ def agent_credit_app_azure():
 
         except Exception as e:
             return {"error": str(e)} if as_json else f"## Error\n**OpenAI Error:** {e}"
-    # --- END: NEW AND MODIFIED HELPER FUNCTIONS ---
+    
+    # --- END: MODIFIED & NEW HELPER FUNCTIONS ---
             
     @st.cache_data(ttl=600)
     def get_deal_list():
@@ -5158,7 +5171,7 @@ def agent_credit_app_azure():
                             all_texts.append(parse_excel_to_markdown(file_bytes, doc.name))
                     full_text = "\n\n".join(all_texts)
                 
-                with st.spinner("Stage 1/3: Extracting key clauses..."):
+                with st.spinner("Stage 1/2: Extracting key clauses..."):
                     extracted_context = {}
                     needed_keys = set(k for choice in analysis_choices_tab1 for k in REQUIRED_CONTEXT.get(choice, []))
                     
@@ -5186,44 +5199,25 @@ def agent_credit_app_azure():
                             extracted_context[key] = []
                             st.error(f"Failed to extract '{key}': {res['error']}")
                 
-                # --- START: NEW INTERMEDIATE SUMMARIZATION STAGE ---
-                with st.spinner("Stage 2/3: Summarizing extracted clauses to manage token limits..."):
-                    summarized_context = {}
-                    for key, data in extracted_context.items():
-                        st.write(f"Summarizing: **{key.replace('_', ' ').title()}**")
-                        if not data:
-                            summarized_context[key] = "No data was extracted for this section."
-                            continue
-                        
-                        data_hash = hash(json.dumps(data))
-                        st.session_state.context_cache[data_hash] = (data, None)
-                        
-                        summary = summarize_extracted_clause(data_hash, key)
-                        summarized_context[key] = summary
-                # --- END: NEW INTERMEDIATE SUMMARIZATION STAGE ---
-
-                with st.spinner("Stage 3/3: Synthesizing final report from summaries..."):
+                with st.spinner("Stage 2/2: Synthesizing final report..."):
                     analysis_results = {}
                     for choice in analysis_choices_tab1:
                         st.write(f"Synthesizing: **{choice}**")
                         req_keys = REQUIRED_CONTEXT.get(choice, [])
                         
-                        # 1. Build the CONTEXT from the summaries
-                        synthesis_context_str = json.dumps({k: summarized_context.get(k, "Not Available") for k in req_keys}, indent=2)
+                        # Use the new context builder instead of summarization
+                        synthesis_context_str = build_synthesis_context(extracted_context, req_keys)
                         
-                        # 2. Get the specific TASK for this analysis choice
                         synthesis_task = SYNTHESIS_PROMPTS[choice]
 
-                        # 3. Put only the context into the cache for the analysis function
                         context_hash = hash(synthesis_context_str)
                         if 'context_cache' not in st.session_state: st.session_state.context_cache = {}
                         st.session_state.context_cache[context_hash] = (synthesis_context_str, None)
                         
-                        # 4. Call the analysis function with the specific task
                         analysis_results[choice] = analyze_with_azure_openai(context_hash, synthesis_task)
                 
                 st.session_state.agent_credit_analysis_results = analysis_results
-                st.session_state.last_analyzed_deal = deal_name_input # Store deal name for display
+                st.session_state.last_analyzed_deal = deal_name_input
                 
                 with st.spinner("Saving deal to portfolio database..."):
                     try:
