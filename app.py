@@ -1609,7 +1609,6 @@ def special_situations_app():
     REPORT_TEMPLATES = {
         "Spin-Off or Split-Up": """
 Transaction Overview
-ParentCo and SpinCo details
 ParentCo Post-Spin Outlook
 SpinCo Investment Case
 Valuation Analysis
@@ -1617,87 +1616,42 @@ Risks and Overhangs
 """,
         "Mergers & Acquisitions": """
 Deal Summary
-Parties involved, consideration (cash/stock), premium
-Regulatory/antitrust/board approval status
 Target Company Analysis
-Valuation vs. offer
-Control premium vs. peers
 Buyer’s Rationale and Financing
-Strategic fit
-Synergies and pro forma financials
-Deal financing (debt, equity)
 Shareholder Vote & Antitrust Risk
-Key holders' stance
-Timing and likelihood of deal closure
 Spread Analysis and Arbitrage Opportunity
-Deal spread
-IRR scenarios based on timing/riskfv
 """,
         "Bankruptcy / Distressed / Restructuring": """
 Situation Summary
-Cause of distress
-Filing date, jurisdiction, DIP terms
 Capital Structure Analysis
-Pre- and post-reorg structure
-Seniority waterfall
-Creditor classes and recovery potential
 Valuation and Recovery Scenarios
-Estimated Enterprise Value
-Recovery per instrument (bonds, equity, unsecured)
 Reorganization Plan and Exit Timeline
-Conversion to equity, rights offering, warrants
-Exit multiples
 Catalysts and Legal Risks
-Judge approval, creditor objections, asset sales
 """,
         "Activist Campaign": """
 Activist Background
-Fund profile, history, prior campaigns
 Campaign Details
-Demands (board seat, spin, buyback, etc.)
-Timeline of engagement
 Company's Response and Governance Profile
-Management alignment, shareholder defense
 Scenario Analysis
-Status quo vs. activist success
-Proxy fight implications
 Valuation Impact
-NPV of potential changes (e.g., spin-off value, ROIC uplift)
 """,
         "Regulatory or Legal Catalyst": """
 Legal/Regulatory Background
-Case/issue summary
-Historical legal proceedings
 Outcome Scenarios
-Win, loss, settlement
-Timeline
 Financial and Strategic Implications
-Fines, product approval, license loss
-Revenue/EBITDA impact
-Market Reaction History (if any)
-Past similar cases
+Market Reaction History
 """,
         "Asset Sales or Carve-Outs": """
 Transaction Overview
-Buyer, price, structure
-Valuation vs. book and peers
 Strategic Impact
-Focus shift, deleveraging, margin profile
 Use of Proceeds
-Debt repayment, dividends, buybacks, capex
 Re-rating Potential
-EBITDA margin uplift, return metrics
 """,
         "Capital Raising or Buyback Catalyst": """
 Transaction Mechanics
-Size, dilution, instrument type
 Capital Structure Post-Deal
-Leverage ratios, interest burden
 Shareholder Implications
-Accretion/dilution
-EPS impact
-Buyback Analysis (if applicable)
-Repurchase pace, valuation support
+Buyback Analysis
 """
     }
 
@@ -1954,7 +1908,6 @@ Repurchase pace, valuation support
                     parent_multiple = process_peers(parent_peers) or 8.0 # Fallback
                     spinco_multiple = process_peers(spinco_peers) or 8.0 # Fallback
                     
-                    # For manual mode, we assume user wants an EV/EBITDA or EV/EBIT like multiple
                     multiples['parent_co'] = {"type": "EV/EBIT", "range": [parent_multiple, parent_multiple], "metric": sotp_data.get('parent_co',{}).get('ebit')}
                     multiples['spin_co'] = {"type": "EV/EBIT", "range": [spinco_multiple, spinco_multiple], "metric": sotp_data.get('spin_co',{}).get('ebit')}
                 else: # Default to Automated SOTP
@@ -1997,15 +1950,17 @@ Repurchase pace, valuation support
                 valuation_section = ("## Valuation Analysis\n"
                                      "[AI, please generate a qualitative discussion on the potential valuation based on the documents.]")
 
-        # 4) Assemble the main prompt
+        # 4) Assemble the corrected main prompt
         prompt = f"""You are an institutional investment analyst writing a professional memo on {company_name}'s {situation_type}.
         CONTEXT DOCUMENTS: \"\"\"{truncate_safely(combined_text)}\"\"\"
         VALUATION DATA (If available): {valuation_section}
         CRITICAL INSTRUCTIONS:
-        1. Generate a detailed, well-written memo with comprehensive paragraphs.
+        1. Generate a detailed, well-written memo with comprehensive paragraphs for each section.
         2. Write in a narrative style. Each section should have at least 2-3 detailed paragraphs.
-        3. You MUST use the exact section titles from the structure below as markdown headings.
+        3. You MUST use the exact section titles from the 'STRUCTURE' list below as level 2 markdown headings (e.g., `## Deal Summary`).
         4. If quantitative 'Valuation Analysis' data is provided, you MUST use it as the foundation for that section's narrative.
+        5. **ABSOLUTELY NO** conversational introductions or conclusions (e.g., "Of course, here is..."). The response must start directly with the first markdown heading.
+
         STRUCTURE:
         {structure}"""
 
@@ -4717,7 +4672,6 @@ def agent_credit_app_azure():
             ],
             "keywords": ["financial statements", "reporting", "certificate", "compliance certificate"]
         },
-        # --- FIX: Made covenant search terms more specific ---
         "financial_covenant": {
             "headings": [
                 "financial performance covenant", "financial covenant", "maintenance covenant", "leverage ratio",
@@ -4832,7 +4786,6 @@ def agent_credit_app_azure():
         "pricing_interest": {"instruction": ("Extract interest and fee terms by tranche.\nReturn JSON: pricing:[{instrument_name, benchmark, margin, floor, stepups, commitment_fee, utilization_fee, rate_grid_basis, heading, raw_quote}].\nIf values are in a grid/table, summarize in plain fields; unknown as null.")}
     }
 
-    # --- FIX: Made prompts more specific and demanding ---
     SYNTHESIS_PROMPTS = {
         "Key Terms Sheet": (
             "You are a top-tier credit analyst. Using the provided context, generate a **markdown table** summarizing the key terms. Populate the table with the most critical information found in the extracted clauses. If a specific piece of information is not found, state 'Not Specified'.\n\n"
@@ -4880,7 +4833,6 @@ def agent_credit_app_azure():
         "Credit Risk Factors": ["financial_covenant", "negative_covenants", "events_of_default", "capital_structure", "guarantees_security"]
     }
 
-    # --- FIX: Added robust regex to strip markdown code fences ---
     def parse_markdown_to_html(analysis_results: dict, title: str) -> tuple[str, str]:
         styles = """
         <style>
@@ -4898,7 +4850,7 @@ def agent_credit_app_azure():
         """
         html_body = f"<h1>{html.escape(title)}</h1>"
         for section_title, md_content in analysis_results.items():
-            # Clean the markdown content before rendering
+            # --- FIX: Clean the markdown content before rendering to remove code fences ---
             cleaned_md = re.sub(r'^```(markdown)?\s*|\s*```$', '', md_content.strip(), flags=re.MULTILINE)
             html_body += f"<h2>{html.escape(section_title)}</h2>" + markdown.markdown(cleaned_md, extensions=['tables'])
         content_div = f"<div class='analysis-container'>{html_body}</div>"
@@ -4944,7 +4896,7 @@ def agent_credit_app_azure():
             st.warning(f"Could not process Excel file {file_name}: {e}")
             return ""
 
-    # --- FIX: Enhanced context builder to include raw quotes ---
+    # --- FIX: Enhanced context builder to include raw quotes for better accuracy ---
     def build_synthesis_context(extracted_data: dict, required_topics: list) -> str:
         """
         Programmatically builds a richer, more descriptive context by including raw quotes
