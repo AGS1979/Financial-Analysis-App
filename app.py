@@ -4693,8 +4693,7 @@ def agent_credit_app_azure():
         st.error(f"Configuration or Connection error: {e}. Please check your secrets.toml file.")
         st.stop()
 
-    # --- START OF ORIGINAL HELPER FUNCTIONS ---
-    # (This section is restored to its original state)
+    # --- HELPER FUNCTIONS (WITH FINAL CORRECTIONS) ---
     TOPIC_SYNONYMS = {
         "negative_covenants": {
             "headings": [
@@ -4718,19 +4717,20 @@ def agent_credit_app_azure():
             ],
             "keywords": ["financial statements", "reporting", "certificate", "compliance certificate"]
         },
+        # --- FIX: Made covenant search terms more specific ---
         "financial_covenant": {
             "headings": [
-                "financial covenant", "maintenance covenant", "leverage ratio",
+                "financial performance covenant", "financial covenant", "maintenance covenant", "leverage ratio",
                 "interest coverage", "secured leverage", "first lien leverage", "net leverage"
             ],
-            "keywords": ["covenant", "ratio", "not to exceed", "at least", "step-down", "holiday"]
+            "keywords": ["financial performance covenant", "first lien net leverage ratio", "covenant", "ratio", "not to exceed", "at least", "step-down", "holiday"]
         },
         "repayment_terms": {
-            "headings": ["repayment", "amortization", "maturity"],
+            "headings": ["repayment", "amortization", "maturity", "term maturity date", "revolving maturity date"],
             "keywords": ["scheduled amortization", "repay", "maturity date", "principal payment"]
         },
         "pricing_interest": {
-            "headings": ["interest", "interest rate determination", "applicable margin", "fees"],
+            "headings": ["interest", "interest rate determination", "applicable margin", "fees", "applicable rate"],
             "keywords": [
                 "sofr", "libor", "base rate", "benchmark", "margin", "floor",
                 "commitment fee", "utilization fee", "pricing grid"
@@ -4749,7 +4749,7 @@ def agent_credit_app_azure():
             "keywords": ["acceleration", "grace period", "cross default", "payment default"]
         },
         "capital_structure": {
-            "headings": ["capitalization", "credit agreement", "description of notes", "description of debt"],
+            "headings": ["capitalization", "credit agreement", "description of notes", "description of debt", "commitments"],
             "keywords": ["term loan", "revolving", "bridge", "senior notes", "issuance", "facility"]
         },
     }
@@ -4820,26 +4820,6 @@ def agent_credit_app_azure():
             blocks = candidates_by_keywords(md_text, topic_key)
         return blocks or [md_text[:20000]]
 
-    EXTRACTION_PROMPTS = {
-        "capital_structure": "Find all sections describing the debt facilities, tranches, notes, or other instruments. Include details on amounts, arrangers, and purpose. Quote these sections verbatim.",
-        "pricing_interest": "Find all sections describing interest rates, applicable margins, LIBOR/SOFR floors, and commitment fees for each debt tranche. Quote these sections verbatim.",
-        "repayment_terms": "Find the section(s) detailing the repayment of advances, maturity dates, and any scheduled amortization for all debt tranches (e.g., Section 2.06). Quote these sections verbatim.",
-        "guarantees_security": "Find all clauses describing guarantees, guarantors, and security or collateral for the debt (e.g., Section 5.01(n)). If the debt is explicitly stated as unsecured, find that statement. Quote these sections verbatim.",
-        "financial_covenant": "Find the specific clause detailing the main financial covenant, often a leverage ratio (e.g., 'Section 5.03. Financial Covenant. Total Debt to EBITDA.'). Quote the entire clause, including any step-downs or special conditions, verbatim.",
-        "negative_covenants": "Find the entire 'Negative Covenants' section (e.g., Section 5.02) and quote it verbatim, including all sub-clauses for liens, indebtedness, mergers, and asset sales.",
-        "positive_covenants": "Find the entire 'Affirmative Covenants' or 'Positive Covenants' section (e.g., Section 5.01) and quote it verbatim, including reporting requirements.",
-        "key_definitions": "From the 'Definitions' section (usually Article 1), find and quote the exact, full definitions for 'Consolidated EBITDA', 'Consolidated Total Debt', and any other key terms relevant to the financial covenant verbatim.",
-        "events_of_default": "Find the 'Events of Default' section (e.g., Article 6) and quote the key clauses related to payment default, cross-default, and breach of covenants verbatim."
-    }
-
-    REQUIRED_CONTEXT = {
-        "Key Terms Sheet": ["capital_structure", "repayment_terms", "pricing_interest", "guarantees_security", "financial_covenant"],
-        "Capital Structure Summary": ["capital_structure", "repayment_terms", "guarantees_security"],
-        "Covenant Analysis": ["financial_covenant", "negative_covenants", "positive_covenants", "key_definitions", "events_of_default"],
-        "Debt Maturity Profile": ["repayment_terms", "capital_structure"],
-        "Credit Risk Factors": ["financial_covenant", "negative_covenants", "events_of_default", "capital_structure"]
-    }
-
     JSON_SCHEMAS = {
         "capital_structure": {"instruction": ("From the supplied excerpt(s), extract a structured list of instruments.\nReturn JSON with fields: instruments:[{name, type, currency, principal, rate_or_margin, benchmark, maturity_date, amortization, purpose, arrangers, doc_section, page, raw_quote}]. Numbers as plain strings if unknown. Use 'page' and 'doc_section' if visible from the excerpt.")},
         "repayment_terms": {"instruction": ("Extract repayment schedules for each tranche. Return JSON: schedules:[{instrument_name, amortization_pattern, periodic_percent, frequency, start_date, maturity_date, bullet, doc_section, page, raw_quote}]")},
@@ -4852,18 +4832,19 @@ def agent_credit_app_azure():
         "pricing_interest": {"instruction": ("Extract interest and fee terms by tranche.\nReturn JSON: pricing:[{instrument_name, benchmark, margin, floor, stepups, commitment_fee, utilization_fee, rate_grid_basis, heading, raw_quote}].\nIf values are in a grid/table, summarize in plain fields; unknown as null.")}
     }
 
+    # --- FIX: Made prompts more specific and demanding ---
     SYNTHESIS_PROMPTS = {
         "Key Terms Sheet": (
             "You are a top-tier credit analyst. Using the provided context, generate a **markdown table** summarizing the key terms. Populate the table with the most critical information found in the extracted clauses. If a specific piece of information is not found, state 'Not Specified'.\n\n"
             "| Term                  | Details                                                                                             |\n"
             "| :-------------------- | :-------------------------------------------------------------------------------------------------- |\n"
-            "| Borrower              | (Identify the main borrowing entity)                                                                |\n"
-            "| Facilities            | (List the names and amounts of each facility, e.g., '$500M Revolver', '$1.2B Term Loan B')           |\n"
-            "| Maturity              | (List the maturity date for each facility)                                                          |\n"
-            "| Interest & Fees       | (Summarize the interest rate for each facility, e.g., 'SOFR + 3.50% with a 0.50% floor')              |\n"
-            "| Guarantees            | (Summarize the guarantee structure, e.g., 'Guaranteed by ParentCo and all material domestic subs.') |\n"
-            "| Security              | (Summarize the collateral, e.g., 'First-priority lien on substantially all assets')                  |\n"
-            "| Financial Covenants   | (State the primary financial covenant, e.g., 'Maximum First Lien Net Leverage Ratio of 4.50x')      |\n"
+            "| Borrower              | (Identify ALL borrowing entities listed in the document)                                            |\n"
+            "| Facilities            | (List the names and amounts of EACH facility, e.g., '$500M Revolver', '$1.2B Term Loan B')           |\n"
+            "| Maturity              | (List the SPECIFIC maturity date for each facility, e.g., 'July 27, 2028')                           |\n"
+            "| Interest & Fees       | (Summarize the SPECIFIC interest rate for each facility, e.g., 'Term Benchmark + 3.75% with a 0.50% floor') |\n"
+            "| Guarantees            | (Summarize the guarantee structure, e.g., 'Guaranteed by Holdings, the Company, and Subsidiary Guarantors.') |\n"
+            "| Security              | (Summarize the collateral, e.g., 'First-priority lien on substantially all assets of Loan Parties')   |\n"
+            "| Financial Covenants   | (State the primary Financial *Performance* Covenant precisely, e.g., 'First Lien Net Leverage Ratio not to exceed 8.70:1.00'. Do NOT cite temporary covenants like 'Certain Funds Covenant' unless it's the only one present.) |\n"
         ),
         "Capital Structure Summary": (
             "You are a top-tier credit analyst preparing a detailed memorandum. Using the following **extracted clauses**, generate a comprehensive summary of the company's capital structure. "
@@ -4891,6 +4872,15 @@ def agent_credit_app_azure():
         ),
     }
 
+    REQUIRED_CONTEXT = {
+        "Key Terms Sheet": ["capital_structure", "repayment_terms", "pricing_interest", "guarantees_security", "financial_covenant"],
+        "Capital Structure Summary": ["capital_structure", "repayment_terms", "guarantees_security", "pricing_interest"],
+        "Covenant Analysis": ["financial_covenant", "negative_covenants", "positive_covenants", "key_definitions", "events_of_default"],
+        "Debt Maturity Profile": ["repayment_terms", "capital_structure"],
+        "Credit Risk Factors": ["financial_covenant", "negative_covenants", "events_of_default", "capital_structure", "guarantees_security"]
+    }
+
+    # --- FIX: Added robust regex to strip markdown code fences ---
     def parse_markdown_to_html(analysis_results: dict, title: str) -> tuple[str, str]:
         styles = """
         <style>
@@ -4898,18 +4888,19 @@ def agent_credit_app_azure():
             .analysis-container h1 { font-size: 1.8em; font-weight: 700; color: #00416A; margin-top: 0; padding-bottom: 15px; border-bottom: 3px solid #00416A; }
             .analysis-container h2 { font-size: 1.5em; font-weight: 600; color: #00416A; border-bottom: 2px solid #e6f1f6; padding-bottom: 10px; margin-top: 30px; margin-bottom: 20px; }
             .analysis-container h3 { font-size: 1.2em; font-weight: 600; color: #1e1e1e; margin-top: 25px; margin-bottom: 10px; }
-            .analysis-container p { margin-bottom: 1em; line-height: 1.6; color: #333; }
-            .analysis-container ul, .analysis-container ol { list-style-position: outside; padding-left: 20px; margin-top: 1em; margin-bottom: 1em; }
-            .analysis-container li { margin-bottom: 0.75em; line-height: 1.6; }
+            .analysis-container p, .analysis-container li { margin-bottom: 1em; line-height: 1.6; color: #333; }
             .analysis-container table { width: 100%; border-collapse: collapse; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-            .analysis-container th, .analysis-container td { border: 1px solid #ddd; padding: 12px 15px; text-align: left; }
+            .analysis-container th, .analysis-container td { border: 1px solid #ddd; padding: 12px 15px; text-align: left; vertical-align: top; }
             .analysis-container th { background-color: #e6f1f6; font-weight: 600; }
             .analysis-container tr:nth-of-type(even) { background-color: #fdfdfd; }
+            .analysis-container code { white-space: pre-wrap !important; }
         </style>
         """
         html_body = f"<h1>{html.escape(title)}</h1>"
         for section_title, md_content in analysis_results.items():
-            html_body += f"<h2>{html.escape(section_title)}</h2>" + markdown.markdown(md_content, extensions=['tables'])
+            # Clean the markdown content before rendering
+            cleaned_md = re.sub(r'^```(markdown)?\s*|\s*```$', '', md_content.strip(), flags=re.MULTILINE)
+            html_body += f"<h2>{html.escape(section_title)}</h2>" + markdown.markdown(cleaned_md, extensions=['tables'])
         content_div = f"<div class='analysis-container'>{html_body}</div>"
         return styles, content_div
 
@@ -4953,12 +4944,11 @@ def agent_credit_app_azure():
             st.warning(f"Could not process Excel file {file_name}: {e}")
             return ""
 
-    # --- START: MODIFIED & NEW HELPER FUNCTIONS ---
-
+    # --- FIX: Enhanced context builder to include raw quotes ---
     def build_synthesis_context(extracted_data: dict, required_topics: list) -> str:
         """
-        Programmatically builds a compact, fact-rich context string for the synthesis stage
-        by cherry-picking key fields from the structured JSON extraction results.
+        Programmatically builds a richer, more descriptive context by including raw quotes
+        alongside key extracted data to improve the final synthesis accuracy.
         """
         context_parts = []
         for topic in required_topics:
@@ -4966,31 +4956,31 @@ def agent_credit_app_azure():
             if not topic_data_list or not isinstance(topic_data_list, list):
                 continue
             
-            # The data is nested one level deeper, e.g., [{'instruments': [...]}]
             topic_data = topic_data_list[0]
             context_parts.append(f"--- Topic: {topic.replace('_', ' ').title()} ---")
-
+            
+            summary_parts = []
             if topic == "capital_structure" and 'instruments' in topic_data:
-                for item in topic_data['instruments']:
-                    context_parts.append(f"Instrument: {item.get('name')}, Principal: {item.get('currency')} {item.get('principal')}")
+                for item in topic_data.get('instruments', []):
+                    summary_parts.append(f"Instrument: {item.get('name')}, Principal: {item.get('currency')} {item.get('principal')}, Maturity: {item.get('maturity_date')}. Raw Quote: '{item.get('raw_quote')}'")
             elif topic == "repayment_terms" and 'schedules' in topic_data:
-                for item in topic_data['schedules']:
-                    context_parts.append(f"Repayment for {item.get('instrument_name')}: Maturity at {item.get('maturity_date')}")
+                for item in topic_data.get('schedules', []):
+                    summary_parts.append(f"Repayment for {item.get('instrument_name')}: Maturity at {item.get('maturity_date')}. Raw Quote: '{item.get('raw_quote')}'")
             elif topic == "pricing_interest" and 'pricing' in topic_data:
-                for item in topic_data['pricing']:
-                    context_parts.append(f"Pricing for {item.get('instrument_name')}: {item.get('benchmark')} + {item.get('margin')}, Floor: {item.get('floor')}")
+                for item in topic_data.get('pricing', []):
+                    summary_parts.append(f"Pricing for {item.get('instrument_name')}: {item.get('benchmark')} + {item.get('margin')}, Floor: {item.get('floor')}. Raw Quote: '{item.get('raw_quote')}'")
             elif topic == "guarantees_security" and 'security' in topic_data:
-                sec = topic_data['security']
-                context_parts.append(f"Security: Collateral is '{sec.get('collateral_description')}', Guarantors: {', '.join(sec.get('guarantors', []))}")
+                sec = topic_data.get('security', {})
+                summary_parts.append(f"Security Details: Collateral is '{sec.get('collateral_description')}', Guarantors: {', '.join(sec.get('guarantors', []))}. Raw Quote: '{sec.get('raw_quote')}'")
             elif topic == "financial_covenant" and 'covenant' in topic_data:
-                cov = topic_data['covenant']
-                context_parts.append(f"Financial Covenant: {cov.get('name')} of {cov.get('threshold')} {cov.get('comparator')}")
+                cov = topic_data.get('covenant', {})
+                summary_parts.append(f"Financial Covenant: Name is '{cov.get('name')}', Threshold is '{cov.get('threshold')} {cov.get('comparator')}'. Raw Quote: '{cov.get('raw_quote')}'")
             else:
-                # For other topics, a simple JSON string is sufficient and better than a flawed summary
-                context_parts.append(json.dumps({k: v for k, v in topic_data.items() if v}, indent=2))
+                summary_parts.append(json.dumps({k: v for k, v in topic_data.items() if v}, indent=2))
+            
+            context_parts.append("\n".join(summary_parts))
 
         return "\n".join(context_parts)
-
 
     @st.cache_data(ttl=3600)
     def analyze_with_azure_openai(_context_hash, _prompt: str, as_json: bool = False):
@@ -5005,13 +4995,10 @@ def agent_credit_app_azure():
             max_retries = 3
             for attempt in range(max_retries):
                 try:
-                    # Construct the final prompt for the API call
-                    final_prompt_content = f"CONTEXT EXCERPT:\n---\n{_context}\n---\nTASK:\n{_prompt}"
-
                     response = client.chat.completions.create(
                         model=openai_deployment_name,
                         messages=[{"role": "system", "content": "You are a precise credit-document extractor. If JSON is requested, return ONLY strict JSON."},
-                                  {"role": "user", "content": final_prompt_content}],
+                                  {"role": "user", "content": f"CONTEXT EXCERPT:\n---\n{_context}\n---\nTASK:\n{_prompt}"}],
                         **kwargs)
                     
                     txt = response.choices[0].message.content
@@ -5019,9 +5006,8 @@ def agent_credit_app_azure():
                         try:
                             return json.loads(txt)
                         except json.JSONDecodeError:
-                            # Attempt to clean up markdown code fences if they exist
-                            txt_cleaned = re.sub(r"^```json|```$", "", txt.strip(), flags=re.MULTILINE)
-                            return json.loads(txt_cleaned)
+                            txt = re.sub(r"^```json|```$", "", txt.strip(), flags=re.MULTILINE)
+                            return json.loads(txt)
                     return txt
                 
                 except RateLimitError as e:
@@ -5035,8 +5021,6 @@ def agent_credit_app_azure():
 
         except Exception as e:
             return {"error": str(e)} if as_json else f"## Error\n**OpenAI Error:** {e}"
-    
-    # --- END: MODIFIED & NEW HELPER FUNCTIONS ---
             
     @st.cache_data(ttl=600)
     def get_deal_list():
@@ -5141,7 +5125,7 @@ def agent_credit_app_azure():
     tab_titles = ["New Deal Analysis", "Portfolio Monitoring", "Deal Comparison", "Financial Spreading", "Diligence Q&A"]
     tab1, tab2, tab3, tab4, tab5 = st.tabs(tab_titles)
 
-    # --- TAB 1: NEW DEAL ANALYSIS (MODIFIED WORKFLOW) ---
+    # --- TAB 1: NEW DEAL ANALYSIS (CORRECTED WORKFLOW) ---
     with tab1:
         st.subheader("1. Upload Confidential Documents")
         deal_name_input = st.text_input("Enter a unique name for this deal:", key="deal_name_input")
@@ -5205,7 +5189,6 @@ def agent_credit_app_azure():
                         st.write(f"Synthesizing: **{choice}**")
                         req_keys = REQUIRED_CONTEXT.get(choice, [])
                         
-                        # Use the new context builder instead of summarization
                         synthesis_context_str = build_synthesis_context(extracted_context, req_keys)
                         
                         synthesis_task = SYNTHESIS_PROMPTS[choice]
