@@ -4862,9 +4862,11 @@ def agent_credit_app_azure():
             client = DocumentIntelligenceClient(endpoint=di_endpoint, credential=AzureKeyCredential(di_key))
             md_parts, step = [], 30
             for start in range(1, n_pages + 1, step):
+                # We need to pass a fresh BytesIO object for each API call
+                stream = io.BytesIO(file_bytes)
                 poller = client.begin_analyze_document(
                     "prebuilt-layout", 
-                    io.BytesIO(file_bytes), 
+                    stream, 
                     content_type="application/pdf", 
                     pages=f"{start}-{min(start + step - 1, n_pages)}", 
                     output_content_format=ContentFormat.MARKDOWN
@@ -4928,12 +4930,14 @@ def agent_credit_app_azure():
 
         return "\n".join(context_parts)
 
+    # CORRECTED CACHING AND ANALYSIS FUNCTION
     @st.cache_data(ttl=3600)
-    def analyze_with_azure_openai(_context_hash, _prompt: str, as_json: bool = False):
+    def analyze_with_azure_openai(context_hash: int, prompt_hash: int, as_json: bool = False):
         try:
-            _context, _ = st.session_state.get('context_cache', {}).get(_context_hash, (None, None))
-            if not _context:
-                return {"error": "Context not found in cache"}
+            context_text = st.session_state.get('context_cache', {}).get(context_hash)
+            prompt_text = st.session_state.get('prompt_cache', {}).get(prompt_hash)
+            if not context_text or not prompt_text:
+                return {"error": "Context or prompt not found in cache"}
 
             client = AzureOpenAI(api_key=openai_key, api_version="2024-02-01", azure_endpoint=openai_endpoint)
             kwargs = {"response_format": {"type": "json_object"}} if as_json else {}
@@ -4943,30 +4947,37 @@ def agent_credit_app_azure():
                 try:
                     response = client.chat.completions.create(
                         model=openai_deployment_name,
-                        messages=[{"role": "system", "content": "You are a precise credit-document extractor. If JSON is requested, return ONLY strict JSON."},
-                                  {"role": "user", "content": f"CONTEXT EXCERPT:\n---\n{_context}\n---\nTASK:\n{_prompt}"}],
-                        **kwargs)
+                        temperature=0,
+                        top_p=0,
+                        extra_body={"seed": 1234}, # For reproducibility
+                        messages=[
+                            {"role": "system", "content": "You are a precise credit-document extractor. If JSON is requested, return ONLY strict JSON."},
+                            {"role": "user", "content": f"CONTEXT EXCERPT:\n---\n{context_text}\n---\nTASK:\n{prompt_text}"}
+                        ],
+                        **kwargs
+                    )
                     
                     txt = response.choices[0].message.content
                     if as_json:
                         try:
-                            return json.loads(txt)
+                            # Clean up potential markdown code fences around the JSON
+                            cleaned_txt = re.sub(r"^```json|```$", "", txt.strip(), flags=re.MULTILINE)
+                            return json.loads(cleaned_txt)
                         except json.JSONDecodeError:
-                            txt = re.sub(r"^```json|```$", "", txt.strip(), flags=re.MULTILINE)
-                            return json.loads(txt)
+                             return {"error": "Failed to decode JSON from AI response."}
                     return txt
                 
                 except RateLimitError as e:
                     wait_time = e.retry_after if hasattr(e, 'retry_after') and e.retry_after is not None else 15 * (attempt + 1)
-                    st.warning(f"Rate limit exceeded. Waiting for {wait_time} seconds before retrying... (Attempt {attempt + 1}/{max_retries})")
+                    st.warning(f"Rate limit exceeded. Waiting for {wait_time}s... (Attempt {attempt + 1}/{max_retries})")
                     time.sleep(wait_time)
                 except Exception as e:
-                     return {"error": f"An unexpected API error occurred: {str(e)}"} if as_json else f"## Error\n**OpenAI Error:** {e}"
+                    return {"error": f"An unexpected API error occurred: {str(e)}"} if as_json else f"## Error\n**OpenAI Error:** {e}"
             
             return {"error": "Rate limit still exceeded after multiple retries."} if as_json else "## Error\n**Rate limit still exceeded after multiple retries.**"
 
         except Exception as e:
-            return {"error": str(e)} if as_json else f"## Error\n**OpenAI Error:** {e}"
+            return {"error": str(e)} if as_json else f"## Error\n**General Error:** {e}"
             
     @st.cache_data(ttl=600)
     def get_deal_list():
@@ -4997,12 +5008,14 @@ def agent_credit_app_azure():
                 st.error("Could not parse the uploaded financial document.")
                 return
 
-            if 'context_cache' not in st.session_state: st.session_state.context_cache = {}
+            # Caching setup for this specific analysis
             context_hash = hash(new_financials_text)
-            st.session_state.context_cache[context_hash] = (new_financials_text, None)
-
+            st.session_state.setdefault('context_cache', {})[context_hash] = new_financials_text
             extraction_prompt = 'From the financial text, extract values for the most recent period. Return JSON with "consolidated_ebitda" and "consolidated_total_debt".'
-            extracted_metrics = analyze_with_azure_openai(context_hash, extraction_prompt, as_json=True)
+            prompt_hash = hash(extraction_prompt)
+            st.session_state.setdefault('prompt_cache', {})[prompt_hash] = extraction_prompt
+            
+            extracted_metrics = analyze_with_azure_openai(context_hash, prompt_hash, as_json=True)
             
             ebitda = extracted_metrics.get("consolidated_ebitda")
             debt = extracted_metrics.get("consolidated_total_debt")
@@ -5042,10 +5055,8 @@ def agent_credit_app_azure():
                 st.error("Failed to extract any text from the PDF.")
                 return
 
-            if 'context_cache' not in st.session_state: st.session_state.context_cache = {}
             context_hash = hash(markdown_text)
-            st.session_state.context_cache[context_hash] = (markdown_text, None)
-
+            st.session_state.setdefault('context_cache', {})[context_hash] = markdown_text
             spreading_prompt = """
             From the markdown text containing financial statements, identify the Income Statement, Balance Sheet, and Cash Flow Statement.
             For each statement, extract the line items and values for the most recent two periods.
@@ -5053,7 +5064,10 @@ def agent_credit_app_azure():
             Each key should hold a list of objects, where each object is a row with "line_item", "period_1_value", and "period_2_value".
             Standardize common line items (e.g., 'Net Sales' -> 'Revenue').
             """
-            spread_data = analyze_with_azure_openai(context_hash, spreading_prompt, as_json=True)
+            prompt_hash = hash(spreading_prompt)
+            st.session_state.setdefault('prompt_cache', {})[prompt_hash] = spreading_prompt
+
+            spread_data = analyze_with_azure_openai(context_hash, prompt_hash, as_json=True)
 
             if spread_data and "error" not in spread_data:
                 for statement, data in spread_data.items():
@@ -5071,7 +5085,7 @@ def agent_credit_app_azure():
     tab_titles = ["New Deal Analysis", "Portfolio Monitoring", "Deal Comparison", "Financial Spreading", "Diligence Q&A"]
     tab1, tab2, tab3, tab4, tab5 = st.tabs(tab_titles)
 
-    # --- TAB 1: NEW DEAL ANALYSIS ---
+    # --- TAB 1: NEW DEAL ANALYSIS (CORRECTED WORKFLOW) ---
     with tab1:
         st.subheader("1. Upload Confidential Documents")
         deal_name_input = st.text_input("Enter a unique name for this deal:", key="deal_name_input")
@@ -5101,11 +5115,13 @@ def agent_credit_app_azure():
                             all_texts.append(parse_excel_to_markdown(file_bytes, doc.name))
                     full_text = "\n\n".join(all_texts)
                 
+                # Initialize caches
+                st.session_state.context_cache = {}
+                st.session_state.prompt_cache = {}
+
                 with st.spinner("Stage 1/2: Extracting key clauses..."):
                     extracted_context = {}
                     needed_keys = set(k for choice in analysis_choices_tab1 for k in REQUIRED_CONTEXT.get(choice, []))
-                    
-                    if 'context_cache' not in st.session_state: st.session_state.context_cache = {}
                     
                     for key in needed_keys:
                         st.write(f"Extracting clauses for: **{key.replace('_', ' ').title()}**")
@@ -5118,10 +5134,14 @@ def agent_credit_app_azure():
                         combined_context = "\n\n---\n\n".join(candidate_snips)
                         safe_combined_context = combined_context[:150000]
                         
-                        snip_hash = hash(safe_combined_context)
-                        st.session_state.context_cache[snip_hash] = (safe_combined_context, None)
+                        # Cache context and prompt
+                        context_hash = hash(safe_combined_context)
+                        st.session_state.context_cache[context_hash] = safe_combined_context
+                        prompt_text = JSON_SCHEMAS[key]["instruction"]
+                        prompt_hash = hash(prompt_text)
+                        st.session_state.prompt_cache[prompt_hash] = prompt_text
 
-                        res = analyze_with_azure_openai(snip_hash, JSON_SCHEMAS[key]["instruction"], as_json=True)
+                        res = analyze_with_azure_openai(context_hash, prompt_hash, as_json=True)
                         
                         if "error" not in res:
                             extracted_context[key] = [res]
@@ -5138,11 +5158,13 @@ def agent_credit_app_azure():
                         synthesis_context_str = build_synthesis_context(extracted_context, req_keys)
                         synthesis_task = SYNTHESIS_PROMPTS[choice]
 
+                        # Cache context and prompt for synthesis
                         context_hash = hash(synthesis_context_str)
-                        if 'context_cache' not in st.session_state: st.session_state.context_cache = {}
-                        st.session_state.context_cache[context_hash] = (synthesis_context_str, None)
+                        st.session_state.context_cache[context_hash] = synthesis_context_str
+                        prompt_hash = hash(synthesis_task)
+                        st.session_state.prompt_cache[prompt_hash] = synthesis_task
                         
-                        analysis_results[choice] = analyze_with_azure_openai(context_hash, synthesis_task)
+                        analysis_results[choice] = analyze_with_azure_openai(context_hash, prompt_hash)
                 
                 st.session_state.agent_credit_analysis_results = analysis_results
                 st.session_state.last_analyzed_deal = deal_name_input
@@ -5220,11 +5242,13 @@ def agent_credit_app_azure():
                         In the table, summarize the key terms for: Pricing & Fees, Maturity, Financial Covenants, and Security Package.
                         After the table, provide a short paragraph highlighting the most significant differences between the two deals.
                         """
-                        if 'context_cache' not in st.session_state: st.session_state.context_cache = {}
+                        # Caching setup for comparison
                         context_hash = hash(comparison_context)
-                        st.session_state.context_cache[context_hash] = (comparison_context, None)
+                        st.session_state.setdefault('context_cache', {})[context_hash] = comparison_context
+                        prompt_hash = hash(comparison_prompt)
+                        st.session_state.setdefault('prompt_cache', {})[prompt_hash] = comparison_prompt
                         
-                        comparison_md = analyze_with_azure_openai(context_hash, comparison_prompt)
+                        comparison_md = analyze_with_azure_openai(context_hash, prompt_hash)
                         st.markdown(comparison_md)
 
     # --- TAB 4: FINANCIAL SPREADING ---
@@ -5253,12 +5277,14 @@ def agent_credit_app_azure():
                     if not context:
                         st.error("Could not retrieve document text for this deal.")
                     else:
-                        if 'context_cache' not in st.session_state: st.session_state.context_cache = {}
+                        # Caching setup for Q&A
                         context_hash = hash(context)
-                        st.session_state.context_cache[context_hash] = (context, None)
-
+                        st.session_state.setdefault('context_cache', {})[context_hash] = context
                         qa_prompt = f"Based ONLY on the provided document context, answer the following question. Quote the relevant text if possible.\n\nQuestion: {user_question}"
-                        answer = analyze_with_azure_openai(context_hash, qa_prompt)
+                        prompt_hash = hash(qa_prompt)
+                        st.session_state.setdefault('prompt_cache', {})[prompt_hash] = qa_prompt
+                        
+                        answer = analyze_with_azure_openai(context_hash, prompt_hash)
                         st.markdown(answer)
 
 
