@@ -4850,7 +4850,6 @@ def agent_credit_app_azure():
         """
         html_body = f"<h1>{html.escape(title)}</h1>"
         for section_title, md_content in analysis_results.items():
-            # --- FIX: Clean the markdown content before rendering to remove code fences ---
             cleaned_md = re.sub(r'^```(markdown)?\s*|\s*```$', '', md_content.strip(), flags=re.MULTILINE)
             html_body += f"<h2>{html.escape(section_title)}</h2>" + markdown.markdown(cleaned_md, extensions=['tables'])
         content_div = f"<div class='analysis-container'>{html_body}</div>"
@@ -4896,7 +4895,6 @@ def agent_credit_app_azure():
             st.warning(f"Could not process Excel file {file_name}: {e}")
             return ""
 
-    # --- FIX: Enhanced context builder to include raw quotes for better accuracy ---
     def build_synthesis_context(extracted_data: dict, required_topics: list) -> str:
         """
         Programmatically builds a richer, more descriptive context by including raw quotes
