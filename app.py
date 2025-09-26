@@ -5022,7 +5022,7 @@ def agent_credit_app_azure():
 
             if not ebitda or not debt:
                 st.error("Could not automatically extract EBITDA or Total Debt from the new financial document.")
-                st.write("LLM Response:", extracted_metrics)
+                st.write("Agent Response:", extracted_metrics)
                 return
 
             try:
@@ -5079,7 +5079,7 @@ def agent_credit_app_azure():
                         st.download_button(f"Download {statement}.csv", csv, f"{statement}.csv", "text/csv", key=f"download_{statement}")
             else:
                 st.error("Failed to spread financial statements.")
-                st.write("LLM Response:", spread_data)
+                st.write("Agent Response:", spread_data)
     
     # --- UI & WORKFLOW ---
     tab_titles = ["New Deal Analysis", "Portfolio Monitoring", "Deal Comparison", "Financial Spreading", "Diligence Q&A"]
@@ -5702,17 +5702,19 @@ def investment_pipeline_agent():
     def get_company_ideas(theme: str, sectors: list, country: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
         st.info(f"**(LIVE) Step 1B: AI is brainstorming companies for '{theme}'...**")
         
-        # --- FIX: Add the selected country to the prompt to constrain the AI's brainstorming ---
+        # --- FIX: Add the selected country and stronger relevance instructions to the prompt ---
         prompt = f"""
-        For the theme "{theme}" within sectors '{', '.join(sectors)}', brainstorm up to 20 public companies that are primarily listed in the country: {country}.
-        
-        Return ONLY a comma-separated list of their most common ticker symbols on their primary exchange. 
-        For example, for Germany, use tickers from the XETRA exchange where possible (e.g., SAP, DTE).
+        For the investment theme "{theme}" within the sectors '{', '.join(sectors)}', brainstorm up to 20 public companies primarily listed in **{country}** whose **core business is directly related to this theme.**
+
+        CRITICAL: Do not include companies that are merely consumers or beneficiaries of the theme; focus on the enablers and providers.
+
+        Return ONLY a comma-separated list of their most common ticker symbols on their primary exchange.
+        For example, for Germany, use tickers from the XETRA exchange where possible (e.g., SAP.DE, DTE.DE).
         """
         try:
             response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], temperature=0.1)
             tickers = [t.strip() for t in response.choices[0].message.content.split(',') if t.strip()]
-            st.info(f"LLM suggested tickers: {tickers}")
+            st.info(f"Agent suggested tickers: {tickers}")
             return tickers
         except Exception: return []
 
@@ -5732,7 +5734,7 @@ def investment_pipeline_agent():
         except Exception:
             return None
 
-    def validate_company_with_reason(instrument: dict, filters: dict, api_key: str, mkt_cap_filter_local: float) -> (str, dict):
+    def validate_company_with_reason(instrument: dict, filters: dict, api_key: str, mkt_cap_filter_local: float, theme_sectors: list) -> (str, dict):
         ticker, exchange = instrument['Code'], instrument['Exchange']
         try:
             url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker}.{exchange}?api_token={api_key}"
@@ -5742,6 +5744,13 @@ def investment_pipeline_agent():
             data = response.json()
             general = data.get('General', {}); highlights = data.get('Highlights', {})
             name = general.get('Name', ticker)
+            
+            # --- CHANGE 2: ADD THIS NEW VALIDATION BLOCK ---
+            sector = general.get('Sector')
+            if sector not in theme_sectors:
+                return "FAIL_SECTOR", {"name": name, "value": sector}
+            # --- END OF NEW BLOCK ---
+
             market_cap_local = highlights.get('MarketCapitalization')
 
             if not all([name, market_cap_local is not None]):
@@ -5855,7 +5864,6 @@ def investment_pipeline_agent():
         # Handle the case where the rate might be 0 to avoid division errors
         market_cap_usd = market_cap_local / rate_usd_to_local if rate_usd_to_local else 0
         
-        quant_md = f"""| Metric | Value |\n|---|---|\n| Market Cap (USD) | ${market_cap_usd / 1e9:,.1f}B |\n| Dividend Yield | {quant_data.get('dividend_yield', 0):.2%} |"""
 
         def format_ai_analysis_to_markdown(data):
             if not isinstance(data, dict): return str(data)
@@ -5944,7 +5952,7 @@ def investment_pipeline_agent():
                     failure_reasons.append(("NOT_FOUND", {"name": ticker}))
                 else:
                     # Pass the pre-calculated local filter to the validation function
-                    status, result = validate_company_with_reason(instrument, user_filters, eodhd_api_key, mkt_cap_filter_local)
+                    status, result = validate_company_with_reason(instrument, user_filters, eodhd_api_key, mkt_cap_filter_local, theme_sectors)
                     if status == 'PASS': validated_companies.append(result)
                     else: failure_reasons.append((status, result))
                 progress.progress((i + 1) / len(company_tickers))
@@ -5957,6 +5965,7 @@ def investment_pipeline_agent():
                 summary_md += f"| Did not meet dividend yield | {failure_counts.get('FAIL_DIVIDEND', 0)} |\n"
                 summary_md += f"| Did not meet market cap | {failure_counts.get('FAIL_MCAP', 0)} |\n"
                 summary_md += f"| Sector did not match | {failure_counts.get('FAIL_SECTOR', 0)} |\n"
+                summary_md += f"| Sector did not match theme | {failure_counts.get('FAIL_SECTOR', 0)} |\n"
                 summary_md += f"| Ticker not found or incomplete data | {failure_counts.get('NOT_FOUND', 0) + failure_counts.get('INCOMPLETE_DATA', 0) + failure_counts.get('ERROR', 0)} |\n"
                 st.markdown(summary_md)
 
