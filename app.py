@@ -5788,7 +5788,7 @@ def investment_pipeline_agent():
 
         # To convert from a currency (e.g., INR) to USD, we need the value of 1 USD in INR.
         # The standard FOREX pair for this is USDINR.
-        pair = f"{to_currency.upper()}{from_currency.upper()}"
+        pair = f"{from_currency.upper()}{to_currency.upper()}"
         
         if pair in cache:
             return cache[pair]
