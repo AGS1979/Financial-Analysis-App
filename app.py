@@ -5859,26 +5859,30 @@ def investment_pipeline_agent():
     def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str, rate_usd_to_local: float) -> dict:
         st.info(f"**(LIVE) Synthesizing Dossier for {quant_data.get('name', 'N/A')}...")
 
-        # --- FINAL FIX: Convert local market cap to USD for reporting ---
+        # --- THIS IS THE CORRECT AND ONLY CALCULATION NEEDED ---
         market_cap_local = quant_data.get('market_capitalization_local', 0)
         # Handle the case where the rate might be 0 to avoid division errors
         market_cap_usd = market_cap_local / rate_usd_to_local if rate_usd_to_local else 0
         
+        quant_md = f"""| Metric | Value |\n|---|---|\n| Market Cap (USD) | ${market_cap_usd / 1e9:,.1f}B |\n| Dividend Yield | {quant_data.get('dividend_yield', 0):.2%} |"""
 
         def format_ai_analysis_to_markdown(data):
             if not isinstance(data, dict): return str(data)
             parts = [v for k, v in data.items() if isinstance(v, str)]; return "\n".join(parts) if parts else "No analysis available."
+        
         def format_risks(data):
             risks = data.get('top_risks', []) if isinstance(data, dict) else [];
             if not risks: return "No specific risks identified."
             return "\n".join(f"* **{r.get('risk', 'N/A')}**: {r.get('description', 'N/A')}" for r in risks)
-        quant_md = f"""| Metric | Value |\n|---|---|\n| Market Cap (USD) | ${quant_data.get('market_capitalization', 0) / 1e9:,.1f}B |\n| Dividend Yield | {quant_data.get('dividend_yield', 0):.2%} |"""
+        
+        # The incorrect line that was here has been removed.
+        
         return {
-                "dossier_title": f"{quant_data.get('name', 'N/A')} ({quant_data.get('code', 'N/A')}.{quant_data.get('exchange', '')})",
-                "Quantitative Snapshot": quant_md,
-                "Thematic Alignment & Justification": format_ai_analysis_to_markdown(qual_analysis.get('theme_analysis')),
-                "Competitive Moat & Pricing Power": format_ai_analysis_to_markdown(qual_analysis.get('moat_analysis')),
-                "Key Risks Identified": format_risks(qual_analysis.get('risk_analysis'))
+            "dossier_title": f"{quant_data.get('name', 'N/A')} ({quant_data.get('code', 'N/A')}.{quant_data.get('exchange', '')})",
+            "Quantitative Snapshot": quant_md,
+            "Thematic Alignment & Justification": format_ai_analysis_to_markdown(qual_analysis.get('theme_analysis')),
+            "Competitive Moat & Pricing Power": format_ai_analysis_to_markdown(qual_analysis.get('moat_analysis')),
+            "Key Risks Identified": format_risks(qual_analysis.get('risk_analysis'))
         }
     def generate_final_html_report(dossier_list: list, theme: str) -> str:
         safe_theme = html.escape(theme or "...")
