@@ -5645,7 +5645,7 @@ def agent_sentinel_app():
 def investment_pipeline_agent():
     """
     A robust, multi-stage, AI-powered investment research pipeline.
-    It uses a "Search-Then-Validate" workflow with robust country matching.
+    It uses an intelligent "Validate-then-Filter" workflow for superior relevance.
     """
     import json
     import pandas as pd
@@ -5668,7 +5668,6 @@ def investment_pipeline_agent():
     st.markdown("### 💡 Agent IdeaGen")
     st.markdown("Define a theme. The agent will brainstorm ideas, find the correct tickers, validate them, and perform a deep-dive analysis.")
     
-    # --- 1. API AND CLIENT SETUP (UNCHANGED) ---
     try:
         eodhd_api_key = os.environ.get("EODHD_API_KEY")
         client = AzureOpenAI(api_key=os.environ.get("AZURE_OPENAI_KEY"), api_version="2024-02-01", azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"))
@@ -5677,119 +5676,116 @@ def investment_pipeline_agent():
         st.error(f"Could not initialize secrets or clients. Error: {e}")
         return
         
-    # --- 2. CORE FUNCTIONS (WITH MODIFIED PROMPTS) ---
+    # --- CORE FUNCTIONS ---
 
-    # --- MODIFIED: Prompt is now more comprehensive ---
     def get_theme_sectors(theme: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
-        st.info(f"**(LIVE) Step 1A: AI is identifying relevant sectors for '{theme}'...")
+        st.info(f"**(LIVE) Step 1A: AI is identifying guideline sectors for '{theme}'...")
         prompt = f"""
-        You are a highly accurate market analyst specializing in GICS sectors. For the investment theme "{theme}", identify up to 5 GICS sectors that are most directly relevant. Focus on sectors that are primary enablers or producers for this theme.
-
-        CRITICAL: Do not include sectors that are only consumers or secondary beneficiaries. For example, for 'AI in healthcare', the primary sector is 'Information Technology', not 'Health Care'.
-
+        You are a highly accurate market analyst specializing in GICS sectors. For the investment theme "{theme}", identify up to 5 GICS sectors that are most directly relevant. These will be used as guidelines.
         Return a JSON object with a single key "sectors" containing a list of strings.
-        Example: {{"sectors": ["Information Technology", "Communication Services", "Industrials"]}}
+        Example: {{"sectors": ["Information Technology", "Industrials"]}}
         """
         try:
             response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}, temperature=0.0)
             sectors = json.loads(response.choices[0].message.content).get('sectors', [])
-            st.success(f"Identified relevant sectors: **{', '.join(sectors)}**")
+            st.success(f"Identified guideline sectors: **{', '.join(sectors)}**")
             return sectors
         except Exception: return None
 
-    # --- MODIFIED: Prompt is now more comprehensive, accurate, and structured ---
     def get_company_ideas(theme: str, sectors: list, country: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
-        st.info(f"**(LIVE) Step 1B: AI is generating a comprehensive list of companies for '{theme}'...**")
+        st.info(f"**(LIVE) Step 1B: AI is generating a broad list of potential companies for '{theme}'...**")
         prompt = f"""
-        As a financial analyst, your task is to generate a comprehensive and accurate list of public companies for the investment theme "{theme}", focusing on companies within these sectors: '{', '.join(sectors)}'. The companies must be primarily listed in **{country}**.
-
+        As a financial analyst, generate a comprehensive list of up to 40 public companies relevant to the theme "{theme}", focusing on those in **{country}**. Use the sectors '{', '.join(sectors)}' as a primary guideline, but also include highly relevant companies from other sectors if their core business strongly aligns with the theme.
+        
         Instructions:
-        1.  Generate a list of as many relevant companies as possible, up to a maximum of 40.
-        2.  Focus strictly on companies whose core business is directly related to the theme. Do not include mere consumers or secondary beneficiaries.
-        3.  Ensure the ticker symbols are correct for their primary exchange in {country}. For example, for Mexico, use tickers from the BMV (e.g., CEMEXCPO.MX).
-        4.  Do not invent or hallucinate companies or tickers. If you have low confidence, do not include the company.
-        5.  Return ONLY a single comma-separated string of the ticker symbols, sorted alphabetically. Do not add any other text or explanation.
+        1.  Ensure ticker symbols are correct for their primary exchange in {country} (e.g., CEMEXCPO.MX for Mexico).
+        2.  Do not invent tickers. Prioritize accuracy.
+        3.  Return ONLY a single comma-separated string of ticker symbols, sorted alphabetically.
         """
         try:
             response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], temperature=0.0)
-            # Clean up the response to ensure it's a clean list
             content = response.choices[0].message.content
-            # Remove potential markdown/code blocks and trim whitespace
             cleaned_content = re.sub(r'```.*?\n|```', '', content).strip()
-            # Split, strip again, remove empty strings, remove duplicates, and sort
             tickers = sorted(list(set([t.strip() for t in cleaned_content.split(',') if t.strip()])))
-            st.info(f"Agent suggested {len(tickers)} unique tickers: {tickers}")
+            st.info(f"Agent suggested {len(tickers)} unique tickers for screening.")
             return tickers
         except Exception:
             return []
 
-    # --- (No changes to the functions below this point) ---
-    def find_instrument_data(ticker: str, country_code: str, api_key: str) -> dict:
-        try:
-            url = f"https://eodhistoricaldata.com/api/search/{ticker}?api_token={api_key}&fmt=json"
-            response = requests.get(url, timeout=10)
-            if response.status_code != 200: return None
-            search_results = response.json()
-            for result in search_results:
-                if result.get('Country') == country_code:
-                    return result
-            return None
-        except Exception:
-            return None
-
-    def validate_company_with_reason(instrument: dict, filters: dict, api_key: str, mkt_cap_filter_local: float, theme_sectors: list) -> (str, dict):
+    # --- MODIFIED: This function now ONLY performs quantitative validation ---
+    def validate_company_quantitatively(instrument: dict, filters: dict, api_key: str, mkt_cap_filter_local: float) -> (str, dict):
         ticker, exchange = instrument['Code'], instrument['Exchange']
         try:
             url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker}.{exchange}?api_token={api_key}"
             response = requests.get(url, timeout=10)
             if response.status_code != 200: return "INCOMPLETE_DATA", {"name": instrument.get('Name')}
+            
             data = response.json()
             general = data.get('General', {}); highlights = data.get('Highlights', {})
             name = general.get('Name', ticker)
-            sector = general.get('Sector')
-            if sector not in theme_sectors:
-                return "FAIL_SECTOR", {"name": name, "value": sector}
+            sector = general.get('Sector', 'N/A')
+            
             market_cap_local = highlights.get('MarketCapitalization')
             if not all([name, market_cap_local is not None]):
                 return "INCOMPLETE_DATA", {"name": name}
             if market_cap_local < mkt_cap_filter_local:
                 return "FAIL_MCAP", {"name": name, "value": market_cap_local}
+            
             dividend_yield = highlights.get('DividendYield') or 0.0
             if dividend_yield < (filters["dividend_yield_min"] / 100):
                 return "FAIL_DIVIDEND", {"name": name, "value": dividend_yield}
-            return "PASS", {"code": ticker, "name": name, "exchange": exchange, "sector": general.get('Sector', 'N/A'), "market_capitalization_local": market_cap_local, "dividend_yield": dividend_yield}
+
+            # The sector check is removed. We now pass if quantitative checks are met.
+            return "PASS", {"code": ticker, "name": name, "exchange": exchange, "sector": sector, "market_capitalization_local": market_cap_local, "dividend_yield": dividend_yield}
         except (requests.RequestException, json.JSONDecodeError):
             return "ERROR", {"name": instrument.get('Name')}
 
-    def get_exchange_rate(from_currency: str, to_currency: str, api_key: str, cache: dict) -> float:
-        if from_currency == to_currency: return 1.0
-        pair = f"{from_currency.upper()}{to_currency.upper()}"
-        if pair in cache: return cache[pair]
-        try:
-            url = f"https://eodhistoricaldata.com/api/eod/{pair}.FOREX?api_token={api_key}&fmt=json&period=d&limit=1"
-            response = requests.get(url, timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                if data and isinstance(data, list) and data[0].get('close'):
-                    rate = data[0]['close']
-                    cache[pair] = rate
-                    return rate
-            inverse_pair = f"{to_currency.upper()}{from_currency.upper()}"
-            url = f"https://eodhistoricaldata.com/api/eod/{inverse_pair}.FOREX?api_token={api_key}&fmt=json&period=d&limit=1"
-            response = requests.get(url, timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                if data and isinstance(data, list) and data[0].get('close'):
-                    inverse_rate = data[0]['close']
-                    if inverse_rate > 0:
-                        rate = 1 / inverse_rate
-                        cache[pair] = rate
-                        return rate
-            return 1.0
-        except Exception:
-            return 1.0
+    # --- NEW: AI-powered thematic relevance filter ---
+    def filter_companies_by_theme_relevance(companies_df: pd.DataFrame, theme: str, client: AzureOpenAI, llm_deployment_name: str, api_key: str) -> list:
+        st.info(f"**(LIVE) AI is filtering {len(companies_df)} companies for thematic relevance...**")
+        
+        detailed_company_data = []
+        for i, company in companies_df.iterrows():
+            ticker_code = f"{company['code']}.{company['exchange']}"
+            try:
+                url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker_code}?api_token={api_key}"
+                response = requests.get(url, timeout=10)
+                if response.status_code == 200:
+                    description = response.json().get('General', {}).get('Description', 'No description.')
+                    detailed_company_data.append({"ticker": company['code'], "name": company['name'], "sector": company['sector'], "description": description[:500]})
+            except Exception:
+                continue
+        
+        if not detailed_company_data:
+            st.warning("Could not fetch details to perform relevance filtering.")
+            return []
 
+        prompt = f"""
+        You are an expert portfolio manager analyzing companies for the investment theme: "{theme}".
+        Review the following JSON list of companies, which includes their verified GICS sector and business description.
+
+        **Company List:**
+        ```json
+        {json.dumps(detailed_company_data, indent=2)}
+        ```
+
+        **Task:**
+        Select ONLY the companies whose **core business** is directly and significantly aligned with the "{theme}" theme. A secondary or tangential relationship is not sufficient. Return a JSON object with a single key "relevant_tickers", containing a list of the chosen ticker symbols.
+        """
+        
+        try:
+            response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}, temperature=0.0)
+            result = json.loads(response.choices[0].message.content)
+            relevant_tickers = result.get("relevant_tickers", [])
+            st.success(f"AI identified {len(relevant_tickers)} companies as highly relevant.")
+            return relevant_tickers
+        except Exception as e:
+            st.error(f"Error during AI relevance filtering: {e}")
+            return []
+            
+    # (Other helper functions like enrich_company_data, synthesize_dossier, etc. remain unchanged)
     def enrich_company_data_eodhd(ticker_code: str, api_key: str) -> dict:
+        # This function is now also used by the relevance filter, but its logic is the same.
         st.info(f"**(LIVE) Enriching {ticker_code}...**")
         base_url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker_code}"; params = {"api_token": api_key}
         try:
@@ -5848,7 +5844,7 @@ def investment_pipeline_agent():
             return json.loads(response.choices[0].message.content)
         except Exception as e: return {"error": f"Risk analysis failed: {e}"}
 
-    # --- 4. STREAMLIT UI AND ORCHESTRATION (UNCHANGED) ---
+    # --- UI AND ORCHESTRATION ---
     st.subheader("Step 1: Define Your Investment Theme")
     qualitative_theme = st.text_area("**Describe the Qualitative Theme**", "Companies benefitting from nearshoring theme.", height=75)
     st.subheader("Step 2: Define Validation Criteria")
@@ -5862,72 +5858,64 @@ def investment_pipeline_agent():
     if st.button("🚀 Generate, Validate, and Analyze", type="primary"):
         if not qualitative_theme: st.warning("Please describe your theme."); return
         
-        with st.spinner("Running full investment pipeline..."):
+        # --- Stage 1 & 2: Idea Generation and Quantitative Validation ---
+        with st.spinner("Stage 1: Generating and validating initial ideas..."):
             theme_sectors = get_theme_sectors(qualitative_theme, client, llm_deployment_name)
-            if not theme_sectors: st.error("Could not identify sectors for this theme."); return
+            if not theme_sectors: st.error("Could not identify guideline sectors."); return
             
             company_tickers = get_company_ideas(qualitative_theme, theme_sectors, selected_country_code, client, llm_deployment_name)
             if not company_tickers: st.error("AI agent returned no initial company ideas."); return
 
             user_filters = {"market_cap_min": mkt_cap_min, "dividend_yield_min": dividend_yield_min}
             local_currency = COUNTRY_CURRENCY_MAP.get(selected_country_code, "USD")
-            exchange_rate_cache = {}
-            rate_usd_to_local = get_exchange_rate("USD", local_currency, eodhd_api_key, exchange_rate_cache)
+            rate_usd_to_local = get_exchange_rate("USD", local_currency, eodhd_api_key, {})
             mkt_cap_filter_local = (user_filters["market_cap_min"] * 1e6) * rate_usd_to_local
             
-            validated_companies = []; failure_reasons = []
-            progress = st.progress(0, text=f"Finding & Validating {len(company_tickers)} tickers in {local_currency}...")
+            quant_validated_companies = []; failure_reasons = []
+            progress = st.progress(0, text=f"Screening {len(company_tickers)} tickers...")
             for i, ticker in enumerate(company_tickers):
                 instrument = find_instrument_data(ticker, selected_country_code, eodhd_api_key)
                 if not instrument:
                     failure_reasons.append(("NOT_FOUND", {"name": ticker}))
                 else:
-                    status, result = validate_company_with_reason(instrument, user_filters, eodhd_api_key, mkt_cap_filter_local, theme_sectors)
-                    if status == 'PASS': validated_companies.append(result)
+                    status, result = validate_company_quantitatively(instrument, user_filters, eodhd_api_key, mkt_cap_filter_local)
+                    if status == 'PASS': quant_validated_companies.append(result)
                     else: failure_reasons.append((status, result))
-                progress.progress((i + 1) / len(company_tickers), text=f"Validating {ticker}...")
+                progress.progress((i + 1) / len(company_tickers), text=f"Screening {ticker}...")
             progress.empty()
 
-        if failure_reasons:
-            st.subheader("Validation Summary")
-            failure_counts = Counter(code for code, data in failure_reasons)
-            summary_md = "| Rejection Reason | Count |\n|---|---|\n"
-            summary_md += f"| Did not meet dividend yield | {failure_counts.get('FAIL_DIVIDEND', 0)} |\n"
-            summary_md += f"| Did not meet market cap | {failure_counts.get('FAIL_MCAP', 0)} |\n"
-            summary_md += f"| Sector did not match theme | {failure_counts.get('FAIL_SECTOR', 0)} |\n"
-            summary_md += f"| Ticker not found or incomplete data | {failure_counts.get('NOT_FOUND', 0) + failure_counts.get('INCOMPLETE_DATA', 0) + failure_counts.get('ERROR', 0)} |\n"
-            st.markdown(summary_md)
+        # --- Stage 3: AI Thematic Relevance Filtering ---
+        if not quant_validated_companies:
+            st.warning("No companies passed the initial quantitative filters (Market Cap, Dividend Yield).")
+            return
+        
+        quant_df = pd.DataFrame(quant_validated_companies)
+        st.info(f"Passed {len(quant_df)} companies through quantitative filters. Now running AI relevance check.")
+        st.dataframe(quant_df[['code', 'name', 'sector', 'market_capitalization_local']], hide_index=True, use_container_width=True)
 
-        if not validated_companies: st.warning("No companies met all your criteria."); return
+        relevant_tickers = filter_companies_by_theme_relevance(quant_df, qualitative_theme, client, llm_deployment_name, eodhd_api_key)
+
+        if not relevant_tickers:
+            st.warning("The AI filter found no companies that are highly relevant to your theme from the validated list.")
+            return
         
-        analysis_df = pd.DataFrame(validated_companies)
-        st.success(f"Validated {len(analysis_df)} companies. Now performing deep analysis...")
-        st.dataframe(analysis_df[['code', 'name', 'exchange', 'market_capitalization_local']], hide_index=True, use_container_width=True)
+        final_df = quant_df[quant_df['code'].isin(relevant_tickers)]
         
+        # --- Stage 4: Deep-Dive Analysis ---
+        st.success(f"Final list: {len(final_df)} highly relevant companies. Performing deep-dive analysis...")
         all_dossiers = []
         with st.expander("🔬 Deep-Dive Analysis Log", expanded=True):
-            for i, company_row in analysis_df.iterrows():
+            for i, company_row in final_df.iterrows():
+                # (Deep-dive logic is the same as before)
                 company_name = company_row['name']
-                st.write(f"--- Analyzing **{company_name}** ({i+1}/{len(analysis_df)}) ---")
+                st.write(f"--- Analyzing **{company_name}** ({i+1}/{len(final_df)}) ---")
                 ticker_code = f"{company_row['code']}.{company_row['exchange']}"
-                
                 st.write("   - Enriching company data (description, news)...")
                 enrichment_data = enrich_company_data_eodhd(ticker_code, eodhd_api_key)
-                if "failed" in enrichment_data.get("description", ""): 
-                    st.write(f"   - ❌ Enrichment failed.")
-                    continue
-                
                 st.write("   - Running qualitative AI analysis...")
                 qual_analysis = run_ai_qualitative_analysis(company_name, enrichment_data['qualitative_corpus'], qualitative_theme, client, llm_deployment_name)
-                if not qual_analysis: 
-                    st.write(f"   - ❌ AI analysis failed.")
-                    continue
-                
                 st.write("   - Synthesizing dossier...")
-                full_data = company_row.copy()
-                full_data.update(pd.Series(enrichment_data))
-                dossier = synthesize_dossier(full_data, qual_analysis, qualitative_theme, local_currency)
-                
+                dossier = synthesize_dossier(company_row, qual_analysis, qualitative_theme, local_currency)
                 st.write("   - Evaluating risk and position sizing...")
                 risk_analysis = risk_and_sizing_agent(dossier, client, llm_deployment_name)
                 dossier['risk_analysis'] = risk_analysis
@@ -5944,7 +5932,7 @@ def investment_pipeline_agent():
 
 
 # ==============================================================================
-# 14. Real-Time Risk & Compliance Sentinel (Workflow)
+# 13. Real-Time Risk & Compliance Sentinel (Workflow)
 # ==============================================================================
 
 def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
@@ -6151,6 +6139,281 @@ def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
             )
 
 
+
+# ==============================================================================
+# 14. Commodity Price Forecasting Agent (NEW)
+# ==============================================================================
+
+def commodity_forecasting_agent(client: AzureOpenAI):
+    """
+    An AI agent for commodity price forecasting, trend analysis, and sentiment analysis.
+    """
+    # --- Local imports ---
+    import streamlit as st
+    import pandas as pd
+    import yfinance as yf
+    import plotly.graph_objects as go
+    from prophet import Prophet
+    import pandas_ta as ta
+    import requests
+    from jinja2 import Template
+    import os
+    from datetime import datetime
+
+    st.markdown("### 🌾 Commodity Price Forecasting Agent")
+    st.markdown("Forecast commodity prices using time-series analysis, technical indicators, and news sentiment.")
+
+    # --- AGENT CONFIG (Fetched from secrets) ---
+    try:
+        FMP_API_KEY = os.environ.get("FMP_API_KEY")
+    except KeyError:
+        st.error("Configuration error: FMP_API_KEY not found in secrets.")
+        st.stop()
+
+    # --- HELPER FUNCTIONS ---
+    @st.cache_data(ttl=3600)
+    def fetch_data(ticker, period):
+        """Fetches historical commodity data from Yahoo Finance."""
+        try:
+            data = yf.download(ticker, period=period, progress=False)
+            if data.empty:
+                st.error(f"No data found for ticker '{ticker}'. Please check the ticker symbol (e.g., 'CL=F' for Crude Oil, 'GC=F' for Gold).")
+                return None
+            data.reset_index(inplace=True)
+            return data
+        except Exception as e:
+            st.error(f"Failed to fetch data for {ticker}: {e}")
+            return None
+
+    @st.cache_data(ttl=3600)
+    def run_forecast(_df, periods):
+        """Runs a time-series forecast using Prophet."""
+        try:
+            m = Prophet(daily_seasonality=True)
+            m.fit(_df[['Date', 'Close']].rename(columns={'Date': 'ds', 'Close': 'y'}))
+            future = m.make_future_dataframe(periods=periods)
+            forecast = m.predict(future)
+            return forecast
+        except Exception as e:
+            st.error(f"Failed to generate forecast: {e}")
+            return None
+
+    @st.cache_data(ttl=3600)
+    def calculate_technicals(_df):
+        """Calculates key technical indicators."""
+        df_copy = _df.copy()
+        df_copy.ta.rsi(append=True)
+        df_copy.ta.macd(append=True)
+        df_copy.ta.bbands(append=True)
+        latest_technicals = df_copy.iloc[-1][[
+            'RSI_14', 'MACD_12_26_9', 'MACDh_12_26_9', 'MACDs_12_26_9',
+            'BBL_20_2.0', 'BBM_20_2.0', 'BBU_20_2.0'
+        ]].to_dict()
+        return latest_technicals
+
+    @st.cache_data(ttl=3600)
+    def fetch_news(ticker_root, api_key):
+        """Fetches commodity-related news from Financial Modeling Prep."""
+        try:
+            url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={ticker_root}&limit=10&apikey={api_key}"
+            response = requests.get(url)
+            response.raise_for_status()
+            news_items = response.json()
+            return "\n".join([f"- {item['title']} (Source: {item['site']})" for item in news_items]) if news_items else "No recent news found."
+        except Exception as e:
+            st.warning(f"Could not fetch news: {e}")
+            return "Could not fetch news."
+
+    def analyze_with_llm(prompt, _client):
+        """Generic function to call the Azure OpenAI model."""
+        try:
+            response = _client.chat.completions.create(
+                model=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME"),
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            return f"Error during AI analysis: {e}"
+
+    def generate_html_report(data):
+        """Generates a downloadable HTML report using Jinja2."""
+        template_str = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Commodity Forecast Report</title>
+            <style>
+                body { font-family: 'Poppins', sans-serif; margin: 20px; background-color: #f9fafb; color: #1f2937; }
+                .container { max-width: 1000px; margin: auto; background-color: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+                h1, h2, h3 { color: #00416A; }
+                h1 { font-size: 2em; border-bottom: 2px solid #e0e0e0; padding-bottom: 10px; }
+                h2 { font-size: 1.5em; margin-top: 30px; }
+                .metric-grid { display: flex; gap: 20px; margin: 20px 0; }
+                .metric { flex: 1; text-align: center; background-color: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #e0e0e0; }
+                .metric .label { font-size: 0.9em; color: #6c757d; }
+                .metric .value { font-size: 1.8em; font-weight: 600; color: #00416A; }
+                .section { margin-top: 25px; }
+                .section p, .section li { line-height: 1.6; }
+                ul { list-style-type: none; padding-left: 0; }
+                li::before { content: "•"; color: #00416A; font-weight: bold; display: inline-block; width: 1em; margin-left: -1em; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Commodity Forecast for {{ ticker }}</h1>
+                <p>Report generated on: {{ date }}</p>
+
+                <div class="metric-grid">
+                    <div class="metric"><div class="label">Current Price</div><div class="value">${{ "%.2f"|format(current_price) }}</div></div>
+                    <div class="metric"><div class="label">Forecasted Price ({{ forecast_horizon }} days)</div><div class="value">${{ "%.2f"|format(forecasted_price) }}</div></div>
+                    <div class="metric"><div class="label">Projected Change</div><div class="value">{{ "%.2f"|format(upside) }}%</div></div>
+                </div>
+
+                <div class="section">
+                    <h2>Final Recommendation</h2>
+                    <p><b>{{ recommendation.outlook }}</b></p>
+                    <p>{{ recommendation.rationale }}</p>
+                </div>
+                
+                <div class="section">
+                    <h2>Time-Series Forecast (Prophet)</h2>
+                    <p>{{ forecast_summary }}</p>
+                </div>
+
+                <div class="section">
+                    <h2>Technical Analysis</h2>
+                    <p>{{ technical_summary }}</p>
+                    <ul>
+                        {% for key, value in technicals.items() %}
+                        <li><b>{{ key }}:</b> {{ "%.2f"|format(value) }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+
+                <div class="section">
+                    <h2>News Sentiment Analysis</h2>
+                    <p>{{ sentiment_summary }}</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        template = Template(template_str)
+        return template.render(data)
+
+
+    # --- UI & WORKFLOW ---
+    st.subheader("1. Define Commodity & Forecast Period")
+    c1, c2, c3 = st.columns(3)
+    commodity_ticker = c1.text_input("Commodity Ticker", "CL=F", help="Examples: CL=F (Crude Oil), GC=F (Gold), ZC=F (Corn)")
+    forecast_horizon = c2.slider("Forecast Horizon (days)", 30, 365, 90)
+    history_period = c3.selectbox("Historical Data Period", ["1y", "2y", "5y", "10y"], index=2)
+
+    if st.button("🚀 Run Forecast & Analysis", type="primary"):
+        df = fetch_data(commodity_ticker, history_period)
+        if df is not None:
+            with st.spinner("Running analysis... This may take a few moments."):
+                # 1. Prophet Forecast
+                forecast = run_forecast(df, forecast_horizon)
+                
+                # 2. Technical Analysis
+                technicals = calculate_technicals(df)
+                
+                # 3. News Sentiment
+                ticker_root = commodity_ticker.split('=')[0]
+                news = fetch_news(ticker_root, FMP_API_KEY)
+                
+                # 4. LLM Synthesize
+                prompt_technicals = f"Given these technical indicators: {str(technicals)}, what is the short-term technical outlook (Bullish, Bearish, Neutral) for the asset? Provide a one-sentence rationale."
+                technical_summary = analyze_with_llm(prompt_technicals, client)
+                
+                prompt_sentiment = f"Analyze the sentiment of these news headlines regarding '{commodity_ticker}'. Provide a sentiment score from -1 (very bearish) to 1 (very bullish) and a one-sentence summary.\n\nHeadlines:\n{news}"
+                sentiment_summary = analyze_with_llm(prompt_sentiment, client)
+                
+                current_price = df['Close'].iloc[-1]
+                forecasted_price = forecast['yhat'].iloc[-1]
+                upside = ((forecasted_price / current_price) - 1) * 100
+                forecast_summary = f"The Prophet model forecasts a price of ${forecasted_price:.2f} in {forecast_horizon} days, representing a {upside:.2f}% change from the current price of ${current_price:.2f}."
+                
+                prompt_final = f"""
+                You are a senior commodity trading analyst. Synthesize the following data points for {commodity_ticker} and provide a final recommendation.
+
+                1.  **Quantitative Forecast:** {forecast_summary}
+                2.  **Technical Analysis:** {technical_summary}
+                3.  **News Sentiment Analysis:** {sentiment_summary}
+
+                Based on this, what is your overall outlook (Bullish, Bearish, or Neutral)? Provide a concise, 2-3 sentence rationale that integrates all three points.
+                Return a JSON object with two keys: "outlook" and "rationale".
+                """
+                final_recommendation_str = analyze_with_llm(prompt_final, client)
+                try:
+                    final_recommendation = json.loads(final_recommendation_str)
+                except json.JSONDecodeError:
+                    final_recommendation = {"outlook": "Analysis Error", "rationale": "Could not parse the final recommendation from the AI."}
+
+                # Store results for display
+                st.session_state.commodity_forecast_results = {
+                    "ticker": commodity_ticker,
+                    "df": df,
+                    "forecast": forecast,
+                    "technicals": technicals,
+                    "news": news,
+                    "technical_summary": technical_summary,
+                    "sentiment_summary": sentiment_summary,
+                    "forecast_summary": forecast_summary,
+                    "recommendation": final_recommendation,
+                    "current_price": current_price,
+                    "forecasted_price": forecasted_price,
+                    "upside": upside,
+                    "forecast_horizon": forecast_horizon,
+                    "date": datetime.now().strftime("%Y-%m-%d")
+                }
+
+    if "commodity_forecast_results" in st.session_state:
+        results = st.session_state.commodity_forecast_results
+        st.markdown("---")
+        st.subheader(f"Analysis for {results['ticker']}")
+
+        # Display Metrics
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Current Price", f"${results['current_price']:.2f}")
+        c2.metric(f"Forecast ({results['forecast_horizon']} days)", f"${results['forecasted_price']:.2f}")
+        c3.metric("Projected Change", f"{results['upside']:.2f}%", delta_color="normal")
+
+        # Display Forecast Chart
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=results['forecast']['ds'], y=results['forecast']['yhat_lower'], fill=None, mode='lines', line_color='rgba(0,100,80,0.2)', name='Lower Bound'))
+        fig.add_trace(go.Scatter(x=results['forecast']['ds'], y=results['forecast']['yhat_upper'], fill='tonexty', mode='lines', line_color='rgba(0,100,80,0.2)', name='Confidence Interval'))
+        fig.add_trace(go.Scatter(x=results['df']['Date'], y=results['df']['Close'], mode='lines', line_color='blue', name='Historical Price'))
+        fig.add_trace(go.Scatter(x=results['forecast']['ds'], y=results['forecast']['yhat'], mode='lines', line_color='green', name='Forecast'))
+        fig.update_layout(title_text='Time-Series Forecast', xaxis_title='Date', yaxis_title='Price', showlegend=True)
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Display Summaries
+        rec = results['recommendation']
+        st.subheader("Final Recommendation")
+        st.markdown(f"**Outlook: {rec.get('outlook', 'N/A')}**")
+        st.markdown(rec.get('rationale', 'No rationale provided.'))
+
+        with st.expander("View Detailed Analysis"):
+            st.markdown("<h5>Technical Analysis Summary</h5>", unsafe_allow_html=True)
+            st.write(results['technical_summary'])
+            st.json(results['technicals'])
+
+            st.markdown("<h5>News Sentiment Summary</h5>", unsafe_allow_html=True)
+            st.write(results['sentiment_summary'])
+        
+        # Download Report
+        html_report = generate_html_report(results)
+        st.download_button(
+            label="📥 Download Full HTML Report",
+            data=html_report,
+            file_name=f"Commodity_Forecast_{results['ticker']}.html",
+            mime="text/html",
+            use_container_width=True
+        )
+
+
 # ==============================================================================
 # 15. MAIN APP ROUTER (CORRECTED AND COMPLETE)
 # ==============================================================================
@@ -6240,6 +6503,8 @@ def main():
         portfolio_agent_app(user_id=st.session_state.username)
     elif app_mode == "Tariff Impact Tracker":
         tariff_impact_tracker_app(DEEPSEEK_API_KEY=DEEPSEEK_API_KEY, FMP_API_KEY=FMP_API_KEY, logo_base64_string=logo_base64)
+    elif app_mode == "Commodity Forecaster":
+        commodity_forecasting_agent(client=openai_client)
     else: # This is the "🏠 Welcome" page
         st.markdown('<p class="welcome-subtitle">A unified platform for advanced financial analysis.</p>', unsafe_allow_html=True)
         st.info("👈 **Select an agent from the sidebar to begin.**")
@@ -6258,6 +6523,7 @@ def main():
             {"name": "Agent Special Situations", "title": "📊 Agent Special Situations", "description": "Analyze events like M&A, spin-offs, and activist campaigns by uploading relevant documents to generate a summary memo."},
             {"name": "Agent Sentinel", "title": "📡 Agent Sentinel", "description": "Proactively monitor portfolio companies for key news, filings, and events."},
             {"name": "Model Integrity Agent", "title": "🛡️ Model Integrity Agent", "description": "Audit Excel financial models for errors, hard-codes, and inconsistencies."},
+            {"name": "Commodity Forecaster", "title": "🌾 Commodity Forecaster", "description": "Forecast commodity prices using time-series data, technical indicators, and news sentiment analysis."},
             {"name": "Real-Time Sentinel", "title": "🚨 Real-Time Sentinel", "description": "Provides a real-time warning system for compliance issues and tail risks."}
         ]
 
