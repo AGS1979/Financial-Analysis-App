@@ -5658,7 +5658,6 @@ def investment_pipeline_agent():
     import streamlit as st
     import os
 
-    # --- DICTIONARY REMAINS UNCHANGED ---
     COUNTRY_CURRENCY_MAP = {
         "USA": "USD", "India": "INR", "Germany": "EUR", "France": "EUR", 
         "Italy": "EUR", "Spain": "EUR", "UK": "GBP", "China": "CNY", 
@@ -5670,7 +5669,6 @@ def investment_pipeline_agent():
     st.markdown("Define a theme. The agent will brainstorm ideas, find the correct tickers, validate them, and perform a deep-dive analysis.")
     
     # --- 1. API AND CLIENT SETUP (UNCHANGED) ---
-    MAX_COMPANIES_TO_ANALYZE = 50
     try:
         eodhd_api_key = os.environ.get("EODHD_API_KEY")
         client = AzureOpenAI(api_key=os.environ.get("AZURE_OPENAI_KEY"), api_version="2024-02-01", azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"))
@@ -5679,14 +5677,18 @@ def investment_pipeline_agent():
         st.error(f"Could not initialize secrets or clients. Error: {e}")
         return
         
-    # --- 2. CORE FUNCTIONS (UNCHANGED, EXCEPT SYNTHESIZE_DOSSIER) ---
+    # --- 2. CORE FUNCTIONS (WITH MODIFIED PROMPTS) ---
 
+    # --- MODIFIED: Prompt is now more comprehensive ---
     def get_theme_sectors(theme: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
         st.info(f"**(LIVE) Step 1A: AI is identifying relevant sectors for '{theme}'...")
         prompt = f"""
-        You are a market analyst specializing in GICS sectors. For the investment theme "{theme}", identify the 1-3 GICS sectors that companies who PRIMARILY DEVELOP AND SELL these solutions belong to. 
-        Do NOT include sectors that only USE the technology. For example., for 'AI in healthcare', the correct sector is 'Information Technology', not 'Health Care'.
-        Return a JSON list of strings. Example: {{"sectors": ["Information Technology", "Communication Services"]}}
+        You are a highly accurate market analyst specializing in GICS sectors. For the investment theme "{theme}", identify up to 5 GICS sectors that are most directly relevant. Focus on sectors that are primary enablers or producers for this theme.
+
+        CRITICAL: Do not include sectors that are only consumers or secondary beneficiaries. For example, for 'AI in healthcare', the primary sector is 'Information Technology', not 'Health Care'.
+
+        Return a JSON object with a single key "sectors" containing a list of strings.
+        Example: {{"sectors": ["Information Technology", "Communication Services", "Industrials"]}}
         """
         try:
             response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}, temperature=0.0)
@@ -5695,22 +5697,33 @@ def investment_pipeline_agent():
             return sectors
         except Exception: return None
 
+    # --- MODIFIED: Prompt is now more comprehensive, accurate, and structured ---
     def get_company_ideas(theme: str, sectors: list, country: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
-        st.info(f"**(LIVE) Step 1B: AI is brainstorming companies for '{theme}'...**")
+        st.info(f"**(LIVE) Step 1B: AI is generating a comprehensive list of companies for '{theme}'...**")
         prompt = f"""
-        For the investment theme "{theme}" within the sectors '{', '.join(sectors)}', brainstorm up to 20 public companies primarily listed in **{country}** whose **core business is directly related to this theme.**
-        CRITICAL: Do not include companies that are merely consumers or beneficiaries of the theme; focus on the enablers and providers.
-        Return ONLY a comma-separated list of their most common ticker symbols on their primary exchange.
-        For example, for Germany, use tickers from the XETRA exchange where possible (e.g., SAP.DE, DTE.DE).
+        As a financial analyst, your task is to generate a comprehensive and accurate list of public companies for the investment theme "{theme}", focusing on companies within these sectors: '{', '.join(sectors)}'. The companies must be primarily listed in **{country}**.
+
+        Instructions:
+        1.  Generate a list of as many relevant companies as possible, up to a maximum of 40.
+        2.  Focus strictly on companies whose core business is directly related to the theme. Do not include mere consumers or secondary beneficiaries.
+        3.  Ensure the ticker symbols are correct for their primary exchange in {country}. For example, for Mexico, use tickers from the BMV (e.g., CEMEXCPO.MX).
+        4.  Do not invent or hallucinate companies or tickers. If you have low confidence, do not include the company.
+        5.  Return ONLY a single comma-separated string of the ticker symbols, sorted alphabetically. Do not add any other text or explanation.
         """
         try:
             response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], temperature=0.0)
-            tickers = [t.strip() for t in response.choices[0].message.content.split(',') if t.strip()]
-            st.info(f"Agent suggested tickers: {tickers}")
+            # Clean up the response to ensure it's a clean list
+            content = response.choices[0].message.content
+            # Remove potential markdown/code blocks and trim whitespace
+            cleaned_content = re.sub(r'```.*?\n|```', '', content).strip()
+            # Split, strip again, remove empty strings, remove duplicates, and sort
+            tickers = sorted(list(set([t.strip() for t in cleaned_content.split(',') if t.strip()])))
+            st.info(f"Agent suggested {len(tickers)} unique tickers: {tickers}")
             return tickers
         except Exception:
             return []
 
+    # --- (No changes to the functions below this point) ---
     def find_instrument_data(ticker: str, country_code: str, api_key: str) -> dict:
         try:
             url = f"https://eodhistoricaldata.com/api/search/{ticker}?api_token={api_key}&fmt=json"
@@ -5757,24 +5770,25 @@ def investment_pipeline_agent():
             response = requests.get(url, timeout=5)
             if response.status_code == 200:
                 data = response.json()
-                if data and isinstance(data, list):
-                    rate = data[0].get('close')
-                    if rate and rate > 0: cache[pair] = rate; return rate
+                if data and isinstance(data, list) and data[0].get('close'):
+                    rate = data[0]['close']
+                    cache[pair] = rate
+                    return rate
             inverse_pair = f"{to_currency.upper()}{from_currency.upper()}"
             url = f"https://eodhistoricaldata.com/api/eod/{inverse_pair}.FOREX?api_token={api_key}&fmt=json&period=d&limit=1"
             response = requests.get(url, timeout=5)
             if response.status_code == 200:
                 data = response.json()
-                if data and isinstance(data, list):
-                    inverse_rate = data[0].get('close')
-                    if inverse_rate and inverse_rate > 0:
+                if data and isinstance(data, list) and data[0].get('close'):
+                    inverse_rate = data[0]['close']
+                    if inverse_rate > 0:
                         rate = 1 / inverse_rate
                         cache[pair] = rate
                         return rate
             return 1.0
         except Exception:
             return 1.0
-            
+
     def enrich_company_data_eodhd(ticker_code: str, api_key: str) -> dict:
         st.info(f"**(LIVE) Enriching {ticker_code}...**")
         base_url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker_code}"; params = {"api_token": api_key}
@@ -5797,36 +5811,23 @@ def investment_pipeline_agent():
         st.info(f"**(LIVE) Running AI Qualitative Analysis for {company_name}...**")
         prompt = f"""Analyze '{company_name}' for the theme '{theme}' using the text below. Return a JSON with keys "theme_analysis", "moat_analysis", "risk_analysis". For "risk_analysis", provide a "top_risks" list of objects, each with "risk" and "description". TEXT: --- {text_corpus[:25000]} ---"""
         try:
-            response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "system", "content": "You are an equity analyst that only outputs JSON."}, {"role": "user", "content": prompt}], response_format={"type": "json_object"})
+            response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "system", "content": "You are an equity analyst that only outputs JSON."}, {"role": "user", "content": prompt}], response_format={"type": "json_object"}, temperature=0.0)
             return json.loads(response.choices[0].message.content)
         except Exception as e: st.error(f"Error in AI Analysis: {e}"); return {}
 
-    # --- MODIFIED: This function now uses local currency for market cap reporting ---
     def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str, local_currency: str) -> dict:
         st.info(f"**(LIVE) Synthesizing Dossier for {quant_data.get('name', 'N/A')}...")
-        
         market_cap_local = quant_data.get('market_capitalization_local', 0)
-        
-        # Display market cap in billions of the local currency.
         quant_md = f"""| Metric | Value |\n|---|---|\n| Market Cap ({local_currency}) | {market_cap_local / 1e9:,.1f}B |\n| Dividend Yield | {quant_data.get('dividend_yield', 0):.2%} |"""
-
         def format_ai_analysis_to_markdown(data):
             if not isinstance(data, dict): return str(data)
             parts = [v for k, v in data.items() if isinstance(v, str)]; return "\n".join(parts) if parts else "No analysis available."
-        
         def format_risks(data):
             risks = data.get('top_risks', []) if isinstance(data, dict) else [];
             if not risks: return "No specific risks identified."
             return "\n".join(f"* **{r.get('risk', 'N/A')}**: {r.get('description', 'N/A')}" for r in risks)
-        
-        return {
-            "dossier_title": f"{quant_data.get('name', 'N/A')} ({quant_data.get('code', 'N/A')}.{quant_data.get('exchange', '')})",
-            "Quantitative Snapshot": quant_md,
-            "Thematic Alignment & Justification": format_ai_analysis_to_markdown(qual_analysis.get('theme_analysis')),
-            "Competitive Moat & Pricing Power": format_ai_analysis_to_markdown(qual_analysis.get('moat_analysis')),
-            "Key Risks Identified": format_risks(qual_analysis.get('risk_analysis'))
-        }
-        
+        return {"dossier_title": f"{quant_data.get('name', 'N/A')} ({quant_data.get('code', 'N/A')}.{quant_data.get('exchange', '')})", "Quantitative Snapshot": quant_md, "Thematic Alignment & Justification": format_ai_analysis_to_markdown(qual_analysis.get('theme_analysis')), "Competitive Moat & Pricing Power": format_ai_analysis_to_markdown(qual_analysis.get('moat_analysis')), "Key Risks Identified": format_risks(qual_analysis.get('risk_analysis'))}
+
     def generate_final_html_report(dossier_list: list, theme: str) -> str:
         safe_theme = html.escape(theme or "...")
         styles = """<style>body{font-family:sans-serif;margin:20px;background-color:#f9fafb;color:#1f2937}.container{max-width:1200px;margin:auto}.report-header h1{font-size:2.2em;color:#111827;border-bottom:2px solid #d1d5db;padding-bottom:10px}.dossier{background-color:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:30px;margin-bottom:30px;box-shadow:0 4px 6px rgba(0,0,0,0.05)}.dossier h2{font-size:1.4em;border-bottom:1px solid #e5e7eb;padding-bottom:8px;margin-top:25px}.dossier table{width:100%;border-collapse:collapse;margin-top:15px}.dossier th,td{padding:10px 12px;border:1px solid #d1d5db;text-align:left}</style>"""
@@ -5843,11 +5844,11 @@ def investment_pipeline_agent():
         st.info("**(LIVE) Agent 3/3: Risk & Position Sizing Agent is evaluating risk profile...**")
         prompt = f"""Analyze the dossier. Recommend a position size (1-10%). Return JSON with "position_size_recommendation" and "rationale". DOSSIER: {json.dumps(dossier)[:10000]}"""
         try:
-            response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"})
+            response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}, temperature=0.0)
             return json.loads(response.choices[0].message.content)
         except Exception as e: return {"error": f"Risk analysis failed: {e}"}
 
-    # --- 4. STREAMLIT UI AND ORCHESTRATION (UNCHANGED UI DEFINITION) ---
+    # --- 4. STREAMLIT UI AND ORCHESTRATION (UNCHANGED) ---
     st.subheader("Step 1: Define Your Investment Theme")
     qualitative_theme = st.text_area("**Describe the Qualitative Theme**", "Companies benefitting from nearshoring theme.", height=75)
     st.subheader("Step 2: Define Validation Criteria")
@@ -5858,7 +5859,6 @@ def investment_pipeline_agent():
     with col2: dividend_yield_min = st.slider("Min Dividend Yield (%)", 0.0, 10.0, 0.5, 0.1)
 
     st.subheader("Step 3: Generate and Analyze Ideas")
-    # --- MODIFIED: Main orchestration block with enhanced logging ---
     if st.button("🚀 Generate, Validate, and Analyze", type="primary"):
         if not qualitative_theme: st.warning("Please describe your theme."); return
         
@@ -5867,7 +5867,7 @@ def investment_pipeline_agent():
             if not theme_sectors: st.error("Could not identify sectors for this theme."); return
             
             company_tickers = get_company_ideas(qualitative_theme, theme_sectors, selected_country_code, client, llm_deployment_name)
-            if not company_tickers: st.error("AI brainstorming returned no ideas."); return
+            if not company_tickers: st.error("AI agent returned no initial company ideas."); return
 
             user_filters = {"market_cap_min": mkt_cap_min, "dividend_yield_min": dividend_yield_min}
             local_currency = COUNTRY_CURRENCY_MAP.get(selected_country_code, "USD")
@@ -5876,7 +5876,7 @@ def investment_pipeline_agent():
             mkt_cap_filter_local = (user_filters["market_cap_min"] * 1e6) * rate_usd_to_local
             
             validated_companies = []; failure_reasons = []
-            progress = st.progress(0, text=f"Finding & Validating Tickers in {local_currency}...")
+            progress = st.progress(0, text=f"Finding & Validating {len(company_tickers)} tickers in {local_currency}...")
             for i, ticker in enumerate(company_tickers):
                 instrument = find_instrument_data(ticker, selected_country_code, eodhd_api_key)
                 if not instrument:
@@ -5905,8 +5905,6 @@ def investment_pipeline_agent():
         st.dataframe(analysis_df[['code', 'name', 'exchange', 'market_capitalization_local']], hide_index=True, use_container_width=True)
         
         all_dossiers = []
-        
-        # --- NEW: Collapsible log for the deep-dive stage ---
         with st.expander("🔬 Deep-Dive Analysis Log", expanded=True):
             for i, company_row in analysis_df.iterrows():
                 company_name = company_row['name']
@@ -5928,8 +5926,6 @@ def investment_pipeline_agent():
                 st.write("   - Synthesizing dossier...")
                 full_data = company_row.copy()
                 full_data.update(pd.Series(enrichment_data))
-                
-                # Pass local_currency instead of the exchange rate for reporting
                 dossier = synthesize_dossier(full_data, qual_analysis, qualitative_theme, local_currency)
                 
                 st.write("   - Evaluating risk and position sizing...")
