@@ -6144,6 +6144,10 @@ def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
 # 14. Commodity Price Forecasting Agent (NEW)
 # ==============================================================================
 
+# ==============================================================================
+# 15. Commodity Price Forecasting Agent (CORRECTED)
+# ==============================================================================
+
 def commodity_forecasting_agent(client: AzureOpenAI):
     """
     An AI agent for commodity price forecasting, trend analysis, and sentiment analysis.
@@ -6158,6 +6162,7 @@ def commodity_forecasting_agent(client: AzureOpenAI):
     import requests
     from jinja2 import Template
     import os
+    import json
     from datetime import datetime
 
     st.markdown("### 🌾 Commodity Price Forecasting Agent")
@@ -6189,8 +6194,10 @@ def commodity_forecasting_agent(client: AzureOpenAI):
     def run_forecast(_df, periods):
         """Runs a time-series forecast using Prophet."""
         try:
+            # Prophet requires the columns to be named 'ds' and 'y'
+            df_prophet = _df[['Date', 'Close']].rename(columns={'Date': 'ds', 'Close': 'y'})
             m = Prophet(daily_seasonality=True)
-            m.fit(_df[['Date', 'Close']].rename(columns={'Date': 'ds', 'Close': 'y'}))
+            m.fit(df_prophet)
             future = m.make_future_dataframe(periods=periods)
             forecast = m.predict(future)
             return forecast
@@ -6202,9 +6209,13 @@ def commodity_forecasting_agent(client: AzureOpenAI):
     def calculate_technicals(_df):
         """Calculates key technical indicators."""
         df_copy = _df.copy()
-        df_copy.ta.rsi(append=True)
-        df_copy.ta.macd(append=True)
-        df_copy.ta.bbands(append=True)
+        # Ensure column names are lowercase for pandas_ta compatibility
+        df_copy.columns = [col.lower() for col in df_copy.columns]
+        
+        df_copy.ta.rsi(close='close', append=True)
+        df_copy.ta.macd(close='close', append=True)
+        df_copy.ta.bbands(close='close', append=True)
+        
         latest_technicals = df_copy.iloc[-1][[
             'RSI_14', 'MACD_12_26_9', 'MACDh_12_26_9', 'MACDs_12_26_9',
             'BBL_20_2.0', 'BBM_20_2.0', 'BBU_20_2.0'
@@ -6310,7 +6321,12 @@ def commodity_forecasting_agent(client: AzureOpenAI):
     history_period = c3.selectbox("Historical Data Period", ["1y", "2y", "5y", "10y"], index=2)
 
     if st.button("🚀 Run Forecast & Analysis", type="primary"):
-        df = fetch_data(commodity_ticker, history_period)
+        # --- THIS IS THE FIX ---
+        # Process only the first ticker if multiple are entered to avoid MultiIndex errors.
+        first_ticker = commodity_ticker.split(',')[0].strip()
+        
+        df = fetch_data(first_ticker, history_period)
+        
         if df is not None:
             with st.spinner("Running analysis... This may take a few moments."):
                 # 1. Prophet Forecast
@@ -6320,14 +6336,14 @@ def commodity_forecasting_agent(client: AzureOpenAI):
                 technicals = calculate_technicals(df)
                 
                 # 3. News Sentiment
-                ticker_root = commodity_ticker.split('=')[0]
+                ticker_root = first_ticker.split('=')[0]
                 news = fetch_news(ticker_root, FMP_API_KEY)
                 
                 # 4. LLM Synthesize
                 prompt_technicals = f"Given these technical indicators: {str(technicals)}, what is the short-term technical outlook (Bullish, Bearish, Neutral) for the asset? Provide a one-sentence rationale."
                 technical_summary = analyze_with_llm(prompt_technicals, client)
                 
-                prompt_sentiment = f"Analyze the sentiment of these news headlines regarding '{commodity_ticker}'. Provide a sentiment score from -1 (very bearish) to 1 (very bullish) and a one-sentence summary.\n\nHeadlines:\n{news}"
+                prompt_sentiment = f"Analyze the sentiment of these news headlines regarding '{first_ticker}'. Provide a sentiment score from -1 (very bearish) to 1 (very bullish) and a one-sentence summary.\n\nHeadlines:\n{news}"
                 sentiment_summary = analyze_with_llm(prompt_sentiment, client)
                 
                 current_price = df['Close'].iloc[-1]
@@ -6336,7 +6352,7 @@ def commodity_forecasting_agent(client: AzureOpenAI):
                 forecast_summary = f"The Prophet model forecasts a price of ${forecasted_price:.2f} in {forecast_horizon} days, representing a {upside:.2f}% change from the current price of ${current_price:.2f}."
                 
                 prompt_final = f"""
-                You are a senior commodity trading analyst. Synthesize the following data points for {commodity_ticker} and provide a final recommendation.
+                You are a senior commodity trading analyst. Synthesize the following data points for {first_ticker} and provide a final recommendation.
 
                 1.  **Quantitative Forecast:** {forecast_summary}
                 2.  **Technical Analysis:** {technical_summary}
@@ -6347,13 +6363,15 @@ def commodity_forecasting_agent(client: AzureOpenAI):
                 """
                 final_recommendation_str = analyze_with_llm(prompt_final, client)
                 try:
-                    final_recommendation = json.loads(final_recommendation_str)
+                    # Clean the string in case the LLM returns it in a markdown code block
+                    clean_str = final_recommendation_str.strip().replace("```json", "").replace("```", "")
+                    final_recommendation = json.loads(clean_str)
                 except json.JSONDecodeError:
                     final_recommendation = {"outlook": "Analysis Error", "rationale": "Could not parse the final recommendation from the AI."}
 
                 # Store results for display
                 st.session_state.commodity_forecast_results = {
-                    "ticker": commodity_ticker,
+                    "ticker": first_ticker, # Use the cleaned ticker
                     "df": df,
                     "forecast": forecast,
                     "technicals": technicals,
