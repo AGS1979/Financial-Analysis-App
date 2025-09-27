@@ -6144,6 +6144,10 @@ def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
 # 14. Commodity Price Forecasting Agent (FINAL VERSION V2)
 # ==============================================================================
 
+# ==============================================================================
+# 15. Commodity Price Forecasting Agent (STATE MANAGEMENT FIX)
+# ==============================================================================
+
 def commodity_forecasting_agent(client: AzureOpenAI):
     """
     An AI agent for commodity price forecasting using FMP data, cached in Supabase.
@@ -6158,7 +6162,7 @@ def commodity_forecasting_agent(client: AzureOpenAI):
     from jinja2 import Template
     import os
     import json
-    from datetime import datetime, timedelta # <-- FIX IS HERE
+    from datetime import datetime, timedelta
     from st_supabase_connection import SupabaseConnection
     import numpy as np
     import base64
@@ -6275,7 +6279,7 @@ def commodity_forecasting_agent(client: AzureOpenAI):
 
     def generate_html_report(data):
         template_str = """
-        <!DOCTYPE html><html><head><title>Commodity Forecast Report</title><style>body{font-family:'Poppins',sans-serif;margin:20px;background-color:#f9fafb;color:#1f2937}.container{max-width:1000px;margin:auto;background-color:#fff;padding:30px;border-radius:8px;box-shadow:0 4px 6px rgba(0,0,0,.05)}h1,h2,h3{color:#00416A}h1{font-size:2em;border-bottom:2px solid #e0e0e0;padding-bottom:10px}h2{font-size:1.5em;margin-top:30px}.metric-grid{display:flex;gap:20px;margin:20px 0}.metric{flex:1;text-align:center;background-color:#f8f9fa;padding:15px;border-radius:8px;border:1px solid #e0e0e0}.metric .label{font-size:.9em;color:#6c757d}.metric .value{font-size:1.8em;font-weight:600;color:#00416A}.section{margin-top:25px}.section p,.section li{line-height:1.6}ul{list-style-type:none;padding-left:0}li::before{content:"•";color:#00416A;font-weight:700;display:inline-block;width:1em;margin-left:-1em}img.forecast-chart{width:100%;border:1px solid #e0e0e0;border-radius:8px;margin-top:15px;}</style></head><body><div class="container"><h1>Commodity Forecast for {{ticker}}</h1><p>Report generated on: {{date}}</p><div class="metric-grid"><div class="metric"><div class="label">Current Price</div><div class="value">${{"%.2f"|format(current_price)}}</div></div><div class="metric"><div class="label">Forecasted Price ({{forecast_horizon}} days)</div><div class="value">${{"%.2f"|format(forecasted_price)}}</div></div><div class="metric"><div class="label">Projected Change</div><div class="value">{{"%.2f"|format(upside)}}%</div></div></div><div class="section"><h2>Final Recommendation</h2><p><b>{{recommendation.outlook}}</b></p><p>{{recommendation.rationale}}</p></div><div class="section"><h2>Time-Series Forecast</h2><p>{{forecast_summary}}</p><img src="data:image/png;base64,{{ chart_base64 }}" alt="Forecast Chart" class="forecast-chart"></div><div class="section"><h2>Technical Analysis</h2><p>{{technical_summary}}</p><ul>{% if technicals %}{% for key, value in technicals.items() %}<li><b>{{key}}:</b> {{"%.2f"|format(value)}}</li>{% endfor %}{% else %}<li>No technical data available.</li>{% endif %}</ul></div><div class="section"><h2>News Sentiment Analysis</h2><p>{{sentiment.summary}}</p></div></div></body></html>
+        <!DOCTYPE html><html><head><title>Commodity Forecast Report</title><style>body{font-family:'Poppins',sans-serif;margin:20px;background-color:#f9fafb;color:#1f2937}.container{max-width:1000px;margin:auto;background-color:#fff;padding:30px;border-radius:8px;box-shadow:0 4px 6px rgba(0,0,0,.05)}h1,h2,h3{color:#00416A}h1{font-size:2em;border-bottom:2px solid #e0e0e0;padding-bottom:10px}h2{font-size:1.5em;margin-top:30px}.metric-grid{display:flex;gap:20px;margin:20px 0}.metric{flex:1;text-align:center;background-color:#f8f9fa;padding:15px;border-radius:8px;border:1px solid #e0e0e0}.metric .label{font-size:.9em;color:#6c757d}.metric .value{font-size:1.8em;font-weight:600;color:#00416A}.section{margin-top:25px}.section p,.section li{line-height:1.6}ul{list-style-type:none;padding-left:0}li::before{content:"•";color:#00416A;font-weight:700;display:inline-block;width:1em;margin-left:-1em}img.forecast-chart{width:100%;border:1px solid #e0e0e0;border-radius:8px;margin-top:15px;}</style></head><body><div class="container"><h1>Commodity Forecast for {{ticker}}</h1><p>Report generated on: {{date}}</p><div class="metric-grid"><div class="metric"><div class="label">Current Price</div><div class="value">${{"%.2f"|format(current_price)}}</div></div><div class="metric"><div class="label">Forecasted Price ({{forecast_horizon}} days)</div><div class="value">${{"%.2f"|format(forecasted_price)}}</div></div><div class="metric"><div class="label">Projected Change</div><div class="value">{{"%.2f"|format(upside)}}%</div></div></div><div class="section"><h2>Final Recommendation</h2><p><b>{{recommendation.outlook}}</b></p><p>{{recommendation.rationale}}</p></div><div class="section"><h2>Time-Series Forecast</h2><p>{{forecast_summary}}</p><img src="data:image/png;base64,{{ chart_base_64 }}" alt="Forecast Chart" class="forecast-chart"></div><div class="section"><h2>Technical Analysis</h2><p>{{technical_summary}}</p><ul>{% if technicals %}{% for key, value in technicals.items() %}<li><b>{{key}}:</b> {{"%.2f"|format(value)}}</li>{% endfor %}{% else %}<li>No technical data available.</li>{% endif %}</ul></div><div class="section"><h2>News Sentiment Analysis</h2><p>{{sentiment.summary}}</p></div></div></body></html>
         """
         template = Template(template_str)
         return template.render(data)
@@ -6330,11 +6334,22 @@ def commodity_forecasting_agent(client: AzureOpenAI):
                     technical_summary = analyze_with_llm(prompt_technicals, client) if technicals else "Not enough data for technical analysis."
                     current_price = df['Close'].iloc[-1]
                     forecasted_price = forecast['yhat'].iloc[-1] if forecast is not None else current_price
-                    upside = ((forecasted_price / current_price) - 1) * 100
+                    upside = ((forecasted_price / current_price) - 1) * 100 if current_price > 0 else 0
                     forecast_summary = f"The model forecasts a price of ${forecasted_price:.2f} in {forecast_horizon} days, representing a {upside:.2f}% change." if forecast is not None else "Forecast could not be generated."
                     prompt_final = f"""Synthesize the following for {commodity_ticker} and recommend an outlook (Bullish, Bearish, Neutral) with a 2-3 sentence rationale. Return a JSON object with keys "outlook" and "rationale". 1. Forecast: {forecast_summary} 2. Technicals: {technical_summary} 3. Sentiment: {sentiment_analysis.get('summary', 'Not available.')}"""
                     final_recommendation = analyze_with_llm(prompt_final, client, is_json=True)
-                    chart_base64 = ""
+                    chart_base_64 = ""
+                    
+                    # --- DISPLAY LOGIC IS NOW MOVED INSIDE THE BUTTON PRESS ---
+                    # This prevents stale data from ever being shown.
+
+                    st.markdown("---")
+                    st.subheader(f"Analysis for {commodity_ticker}")
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Current Price", f"${current_price:.2f}")
+                    c2.metric(f"Forecast ({forecast_horizon} days)", f"${forecasted_price:.2f}")
+                    c3.metric("Projected Change", f"{upside:.2f}%", delta_color="normal")
+
                     if forecast is not None and df is not None:
                         fig = go.Figure()
                         fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], fill=None, mode='lines', line_color='rgba(0,100,80,0.2)', name='Lower Bound'))
@@ -6342,52 +6357,43 @@ def commodity_forecasting_agent(client: AzureOpenAI):
                         fig.add_trace(go.Scatter(x=df['Date'], y=df['Close'], mode='lines', line_color='blue', name='Historical Price'))
                         fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', line_color='green', name='Forecast'))
                         fig.update_layout(title_text='Time-Series Forecast', xaxis_title='Date', yaxis_title='Price', showlegend=True)
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Generate chart for report ONLY if it can be displayed
                         img_bytes = fig.to_image(format="png", width=800, height=500, scale=2)
-                        chart_base64 = base64.b64encode(img_bytes).decode()
-                    st.session_state.commodity_forecast_results = {
+                        chart_base_64 = base64.b64encode(img_bytes).decode()
+
+                    rec = final_recommendation
+                    st.subheader("Final Recommendation")
+                    st.markdown(f"**Outlook: {rec.get('outlook', 'N/A')}**")
+                    st.markdown(rec.get('rationale', 'No rationale provided.'))
+
+                    with st.expander("View Detailed Analysis"):
+                        st.markdown("<h5>Technical Analysis Summary</h5>", unsafe_allow_html=True)
+                        st.write(technical_summary)
+                        if technicals: st.json(technicals)
+                        st.markdown("<h5>News Sentiment Summary</h5>", unsafe_allow_html=True)
+                        st.write(sentiment_analysis.get('summary', 'No summary available.'))
+                    
+                    # Consolidate results for report generation
+                    report_data = {
                         "ticker": commodity_ticker, "df": df, "forecast": forecast,
                         "technicals": technicals, "news": news, "technical_summary": technical_summary,
                         "sentiment": sentiment_analysis, "forecast_summary": forecast_summary,
                         "recommendation": final_recommendation, "current_price": current_price,
                         "forecasted_price": forecasted_price, "upside": upside,
                         "forecast_horizon": forecast_horizon, "date": datetime.now().strftime("%Y-%m-%d"),
-                        "chart_base64": chart_base64
+                        "chart_base_64": chart_base_64
                     }
-
-    if "commodity_forecast_results" in st.session_state:
-        results = st.session_state.commodity_forecast_results
-        st.markdown("---")
-        st.subheader(f"Analysis for {results['ticker']}")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Current Price", f"${results['current_price']:.2f}")
-        c2.metric(f"Forecast ({results['forecast_horizon']} days)", f"${results['forecasted_price']:.2f}")
-        c3.metric("Projected Change", f"{results['upside']:.2f}%", delta_color="normal")
-        if results['forecast'] is not None and results['df'] is not None:
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=results['forecast']['ds'], y=results['forecast']['yhat_lower'], fill=None, mode='lines', line_color='rgba(0,100,80,0.2)', name='Lower Bound'))
-            fig.add_trace(go.Scatter(x=results['forecast']['ds'], y=results['forecast']['yhat_upper'], fill='tonexty', mode='lines', line_color='rgba(0,100,80,0.2)', name='Confidence Interval'))
-            fig.add_trace(go.Scatter(x=results['df']['Date'], y=results['df']['Close'], mode='lines', line_color='blue', name='Historical Price'))
-            fig.add_trace(go.Scatter(x=results['forecast']['ds'], y=results['forecast']['yhat'], mode='lines', line_color='green', name='Forecast'))
-            fig.update_layout(title_text='Time-Series Forecast', xaxis_title='Date', yaxis_title='Price', showlegend=True)
-            st.plotly_chart(fig, use_container_width=True)
-        rec = results['recommendation']
-        st.subheader("Final Recommendation")
-        st.markdown(f"**Outlook: {rec.get('outlook', 'N/A')}**")
-        st.markdown(rec.get('rationale', 'No rationale provided.'))
-        with st.expander("View Detailed Analysis"):
-            st.markdown("<h5>Technical Analysis Summary</h5>", unsafe_allow_html=True)
-            st.write(results['technical_summary'])
-            if results['technicals']: st.json(results['technicals'])
-            st.markdown("<h5>News Sentiment Summary</h5>", unsafe_allow_html=True)
-            st.write(results['sentiment'].get('summary', 'No summary available.'))
-        html_report = generate_html_report(results)
-        st.download_button(
-            label="📥 Download Full HTML Report",
-            data=html_report,
-            file_name=f"Commodity_Forecast_{results['ticker']}.html",
-            mime="text/html",
-            use_container_width=True
-        )
+                    html_report = generate_html_report(report_data)
+                    st.download_button(
+                        label="📥 Download Full HTML Report",
+                        data=html_report,
+                        file_name=f"Commodity_Forecast_{commodity_ticker}.html",
+                        mime="text/html",
+                        use_container_width=True
+                    )
+    # The old display block that was here has been removed.
 
 
 # ==============================================================================
