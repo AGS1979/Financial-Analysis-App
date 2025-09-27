@@ -6144,22 +6144,13 @@ def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
 # 14. Commodity Price Forecasting Agent (NEW)
 # ==============================================================================
 
-# ==============================================================================
-# 15. Commodity Price Forecasting Agent (CORRECTED)
-# ==============================================================================
-
-# ==============================================================================
-# 15. Commodity Price Forecasting Agent (CORRECTED V2)
-# ==============================================================================
-
 def commodity_forecasting_agent(client: AzureOpenAI):
     """
-    An AI agent for commodity price forecasting, trend analysis, and sentiment analysis.
+    An AI agent for commodity price forecasting using FMP data, cached in Supabase.
     """
     # --- Local imports ---
     import streamlit as st
     import pandas as pd
-    import yfinance as yf
     import plotly.graph_objects as go
     from prophet import Prophet
     import pandas_ta as ta
@@ -6167,7 +6158,9 @@ def commodity_forecasting_agent(client: AzureOpenAI):
     from jinja2 import Template
     import os
     import json
-    from datetime import datetime
+    from datetime import datetime, timedelta
+    from st_supabase_connection import SupabaseConnection
+    import numpy as np
 
     st.markdown("### 🌾 Commodity Price Forecasting Agent")
     st.markdown("Forecast commodity prices using time-series analysis, technical indicators, and news sentiment.")
@@ -6175,30 +6168,84 @@ def commodity_forecasting_agent(client: AzureOpenAI):
     # --- AGENT CONFIG (Fetched from secrets) ---
     try:
         FMP_API_KEY = os.environ.get("FMP_API_KEY")
-    except KeyError:
-        st.error("Configuration error: FMP_API_KEY not found in secrets.")
+        conn = st.connection("supabase", type=SupabaseConnection)
+    except Exception as e:
+        st.error(f"Configuration or Connection error: {e}. Please check secrets.")
         st.stop()
 
-    # --- HELPER FUNCTIONS ---
-    @st.cache_data(ttl=3600)
-    def fetch_data(ticker, period):
-        """Fetches historical commodity data from Yahoo Finance."""
+    # --- HELPER FUNCTIONS (REFACTORED) ---
+    @st.cache_data(ttl=86400) # Cache the list of commodities for 24 hours
+    def get_fmp_commodities(_api_key):
+        """Fetches the list of available commodities from FMP."""
         try:
-            data = yf.download(ticker, period=period, progress=False)
-            if data.empty:
-                st.error(f"No data found for ticker '{ticker}'. Please check the ticker symbol (e.g., 'CL=F' for Crude Oil, 'GC=F' for Gold).")
-                return None
-            data.reset_index(inplace=True)
-            return data
+            url = f"https://financialmodelingprep.com/api/v3/symbol/available-commodities?apikey={_api_key}"
+            response = requests.get(url)
+            response.raise_for_status()
+            data = response.json()
+            return {item['symbol']: f"{item['name']} ({item['symbol']})" for item in data}
         except Exception as e:
-            st.error(f"Failed to fetch data for {ticker}: {e}")
+            st.error(f"Failed to fetch commodity list from FMP: {e}")
+            return {}
+
+    @st.cache_data(ttl=3600) # Cache the final dataframe for 1 hour
+    def fetch_data(ticker, period_years, _conn, _api_key):
+        """
+        Fetches historical data, checking Supabase first, then FMP.
+        Updates Supabase cache after fetching from FMP.
+        """
+        # 1. Check Supabase for cached data
+        try:
+            cache_response = _conn.client.table("commodity_prices").select("date, close_price").eq("symbol", ticker).order("date", desc=True).limit(period_years * 365).execute()
+            if cache_response.data:
+                st.info(f"Loading '{ticker}' data from Supabase cache...")
+                df = pd.DataFrame(cache_response.data)
+                df = df.rename(columns={'date': 'Date', 'close_price': 'Close'})
+                df['Date'] = pd.to_datetime(df['Date'])
+                return df.sort_values(by='Date').reset_index(drop=True)
+        except Exception as e:
+            st.warning(f"Could not check Supabase cache, will fetch from API. Error: {e}")
+
+        # 2. If no cache, fetch from FMP API
+        st.info(f"Fetching new '{ticker}' data from FMP API...")
+        try:
+            url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker}?apikey={_api_key}"
+            response = requests.get(url)
+            response.raise_for_status()
+            data = response.json().get('historical', [])
+            if not data:
+                st.error(f"No historical data found for {ticker} from FMP.")
+                return None
+            
+            df = pd.DataFrame(data)[['date', 'close']].rename(columns={'date': 'Date', 'close': 'Close'})
+            df['Date'] = pd.to_datetime(df['Date'])
+            df = df.sort_values(by='Date').reset_index(drop=True)
+
+            # 3. Update Supabase cache
+            records_to_insert = [
+                {"symbol": ticker, "date": row['Date'].strftime('%Y-%m-%d'), "close_price": row['Close']}
+                for _, row in df.iterrows()
+            ]
+            
+            if records_to_insert:
+                try:
+                    # Use upsert to avoid errors on duplicate dates
+                    _conn.client.table("commodity_prices").upsert(records_to_insert, on_conflict='symbol, date').execute()
+                    st.success(f"Successfully cached {len(records_to_insert)} records for '{ticker}' in Supabase.")
+                except Exception as e:
+                    st.warning(f"Failed to cache data in Supabase: {e}")
+
+            return df
+        except Exception as e:
+            st.error(f"Failed to fetch historical data from FMP for {ticker}: {e}")
             return None
 
     @st.cache_data(ttl=3600)
     def run_forecast(_df, periods):
         """Runs a time-series forecast using Prophet."""
+        if _df is None or len(_df) < 2:
+            st.warning("Not enough data to generate a forecast.")
+            return None
         try:
-            # Prophet requires the columns to be named 'ds' and 'y'
             df_prophet = _df[['Date', 'Close']].rename(columns={'Date': 'ds', 'Close': 'y'})
             m = Prophet(daily_seasonality=True)
             m.fit(df_prophet)
@@ -6211,34 +6258,42 @@ def commodity_forecasting_agent(client: AzureOpenAI):
 
     @st.cache_data(ttl=3600)
     def calculate_technicals(_df):
-        """Calculates key technical indicators."""
+        """Calculates key technical indicators robustly."""
+        if _df is None or len(_df) < 20: # Most indicators need some data history
+            st.warning("Not enough historical data to calculate all technical indicators.")
+            return {}
+            
         df_copy = _df.copy()
-
-        # --- THIS IS THE FIX ---
-        # 1. Flatten the MultiIndex columns if yfinance returns them
-        if isinstance(df_copy.columns, pd.MultiIndex):
-            df_copy.columns = df_copy.columns.get_level_values(0)
-
-        # 2. Ensure column names are lowercase strings for pandas_ta compatibility
         df_copy.columns = [str(col).lower() for col in df_copy.columns]
-
-        # 3. Explicitly use the lowercase 'close' column for calculations
-        df_copy.ta.rsi(close='close', append=True)
-        df_copy.ta.macd(close='close', append=True)
-        df_copy.ta.bbands(close='close', append=True)
         
-        latest_technicals = df_copy.iloc[-1][[
+        # Calculate each indicator in a try-except block to prevent crashes
+        try: df_copy.ta.rsi(close='close', append=True)
+        except Exception: pass
+        try: df_copy.ta.macd(close='close', append=True)
+        except Exception: pass
+        try: df_copy.ta.bbands(close='close', append=True)
+        except Exception: pass
+
+        # Only select the columns that were successfully created
+        available_cols = [
             'RSI_14', 'MACD_12_26_9', 'MACDh_12_26_9', 'MACDs_12_26_9',
             'BBL_20_2.0', 'BBM_20_2.0', 'BBU_20_2.0'
-        ]].to_dict()
-        return latest_technicals
+        ]
+        cols_to_extract = [col for col in available_cols if col in df_copy.columns]
+        
+        if not cols_to_extract:
+            return {}
+            
+        latest_technicals = df_copy.iloc[-1][cols_to_extract].to_dict()
+        return {k: v for k, v in latest_technicals.items() if pd.notna(v)}
 
 
+    # --- (Other helper functions like fetch_news, analyze_with_llm, generate_html_report remain the same) ---
     @st.cache_data(ttl=3600)
-    def fetch_news(ticker_root, api_key):
+    def fetch_news(ticker, api_key):
         """Fetches commodity-related news from Financial Modeling Prep."""
         try:
-            url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={ticker_root}&limit=10&apikey={api_key}"
+            url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={ticker}&limit=10&apikey={api_key}"
             response = requests.get(url)
             response.raise_for_status()
             news_items = response.json()
@@ -6324,101 +6379,84 @@ def commodity_forecasting_agent(client: AzureOpenAI):
         template = Template(template_str)
         return template.render(data)
 
-
-    # --- UI & WORKFLOW ---
+    # --- UI & WORKFLOW (MODIFIED) ---
     st.subheader("1. Define Commodity & Forecast Period")
-    c1, c2, c3 = st.columns(3)
-    commodity_ticker = c1.text_input("Commodity Ticker", "CL=F", help="Examples: CL=F (Crude Oil), GC=F (Gold), ZC=F (Corn)")
-    forecast_horizon = c2.slider("Forecast Horizon (days)", 30, 365, 90)
-    history_period = c3.selectbox("Historical Data Period", ["1y", "2y", "5y", "10y"], index=2)
+    
+    commodity_options = get_fmp_commodities(FMP_API_KEY)
+    
+    if commodity_options:
+        c1, c2, c3 = st.columns(3)
+        # UI uses a dropdown now instead of free text
+        commodity_ticker = c1.selectbox("Select Commodity", options=list(commodity_options.keys()), format_func=lambda x: commodity_options[x])
+        forecast_horizon = c2.slider("Forecast Horizon (days)", 30, 365, 90)
+        history_years = c3.selectbox("Historical Data Period (Years)", [1, 2, 5, 10], index=2)
 
-    if st.button("🚀 Run Forecast & Analysis", type="primary"):
-        # Process only the first ticker if multiple are entered to avoid errors.
-        first_ticker = commodity_ticker.split(',')[0].strip()
-        
-        df = fetch_data(first_ticker, history_period)
-        
-        if df is not None:
-            with st.spinner("Running analysis... This may take a few moments."):
-                # 1. Prophet Forecast
-                forecast = run_forecast(df, forecast_horizon)
-                
-                # 2. Technical Analysis
-                technicals = calculate_technicals(df)
-                
-                # 3. News Sentiment
-                ticker_root = first_ticker.split('=')[0]
-                news = fetch_news(ticker_root, FMP_API_KEY)
-                
-                # 4. LLM Synthesize
-                prompt_technicals = f"Given these technical indicators: {str(technicals)}, what is the short-term technical outlook (Bullish, Bearish, Neutral) for the asset? Provide a one-sentence rationale."
-                technical_summary = analyze_with_llm(prompt_technicals, client)
-                
-                prompt_sentiment = f"Analyze the sentiment of these news headlines regarding '{first_ticker}'. Provide a sentiment score from -1 (very bearish) to 1 (very bullish) and a one-sentence summary.\n\nHeadlines:\n{news}"
-                sentiment_summary = analyze_with_llm(prompt_sentiment, client)
-                
-                current_price = df['Close'].iloc[-1]
-                forecasted_price = forecast['yhat'].iloc[-1]
-                upside = ((forecasted_price / current_price) - 1) * 100
-                forecast_summary = f"The Prophet model forecasts a price of ${forecasted_price:.2f} in {forecast_horizon} days, representing a {upside:.2f}% change from the current price of ${current_price:.2f}."
-                
-                prompt_final = f"""
-                You are a senior commodity trading analyst. Synthesize the following data points for {first_ticker} and provide a final recommendation.
+        if st.button("🚀 Run Forecast & Analysis", type="primary"):
+            df = fetch_data(commodity_ticker, history_years, conn, FMP_API_KEY)
+            
+            if df is not None:
+                with st.spinner("Running analysis... This may take a few moments."):
+                    # The rest of the workflow remains the same, but is more robust
+                    forecast = run_forecast(df, forecast_horizon)
+                    technicals = calculate_technicals(df)
+                    news = fetch_news(commodity_ticker, FMP_API_KEY)
+                    
+                    prompt_technicals = f"Given these technical indicators: {str(technicals)}, what is the short-term technical outlook (Bullish, Bearish, Neutral) for the asset? Provide a one-sentence rationale."
+                    technical_summary = analyze_with_llm(prompt_technicals, client) if technicals else "Not enough data for technical analysis."
+                    
+                    prompt_sentiment = f"Analyze the sentiment of these news headlines regarding '{commodity_ticker}'. Provide a sentiment score from -1 (very bearish) to 1 (very bullish) and a one-sentence summary.\n\nHeadlines:\n{news}"
+                    sentiment_summary = analyze_with_llm(prompt_sentiment, client)
+                    
+                    current_price = df['Close'].iloc[-1]
+                    forecasted_price = forecast['yhat'].iloc[-1] if forecast is not None else current_price
+                    upside = ((forecasted_price / current_price) - 1) * 100
+                    forecast_summary = f"The Prophet model forecasts a price of ${forecasted_price:.2f} in {forecast_horizon} days, representing a {upside:.2f}% change from the current price of ${current_price:.2f}." if forecast is not None else "Forecast could not be generated."
 
-                1.  **Quantitative Forecast:** {forecast_summary}
-                2.  **Technical Analysis:** {technical_summary}
-                3.  **News Sentiment Analysis:** {sentiment_summary}
+                    prompt_final = f"""
+                    You are a senior commodity trading analyst. Synthesize the following data points for {commodity_ticker} and provide a final recommendation.
 
-                Based on this, what is your overall outlook (Bullish, Bearish, or Neutral)? Provide a concise, 2-3 sentence rationale that integrates all three points.
-                Return a JSON object with two keys: "outlook" and "rationale".
-                """
-                final_recommendation_str = analyze_with_llm(prompt_final, client)
-                try:
-                    # Clean the string in case the LLM returns it in a markdown code block
-                    clean_str = final_recommendation_str.strip().replace("```json", "").replace("```", "")
-                    final_recommendation = json.loads(clean_str)
-                except json.JSONDecodeError:
-                    final_recommendation = {"outlook": "Analysis Error", "rationale": "Could not parse the final recommendation from the AI."}
+                    1.  **Quantitative Forecast:** {forecast_summary}
+                    2.  **Technical Analysis:** {technical_summary}
+                    3.  **News Sentiment Analysis:** {sentiment_summary}
 
-                # Store results for display
-                st.session_state.commodity_forecast_results = {
-                    "ticker": first_ticker, # Use the cleaned ticker
-                    "df": df,
-                    "forecast": forecast,
-                    "technicals": technicals,
-                    "news": news,
-                    "technical_summary": technical_summary,
-                    "sentiment_summary": sentiment_summary,
-                    "forecast_summary": forecast_summary,
-                    "recommendation": final_recommendation,
-                    "current_price": current_price,
-                    "forecasted_price": forecasted_price,
-                    "upside": upside,
-                    "forecast_horizon": forecast_horizon,
-                    "date": datetime.now().strftime("%Y-%m-%d")
-                }
+                    Based on this, what is your overall outlook (Bullish, Bearish, or Neutral)? Provide a concise, 2-3 sentence rationale that integrates all three points.
+                    Return a JSON object with two keys: "outlook" and "rationale".
+                    """
+                    final_recommendation_str = analyze_with_llm(prompt_final, client)
+                    try:
+                        clean_str = final_recommendation_str.strip().replace("```json", "").replace("```", "")
+                        final_recommendation = json.loads(clean_str)
+                    except json.JSONDecodeError:
+                        final_recommendation = {"outlook": "Analysis Error", "rationale": "Could not parse the final recommendation from the AI."}
+
+                    st.session_state.commodity_forecast_results = {
+                        "ticker": commodity_ticker, "df": df, "forecast": forecast,
+                        "technicals": technicals, "news": news, "technical_summary": technical_summary,
+                        "sentiment_summary": sentiment_summary, "forecast_summary": forecast_summary,
+                        "recommendation": final_recommendation, "current_price": current_price,
+                        "forecasted_price": forecasted_price, "upside": upside,
+                        "forecast_horizon": forecast_horizon, "date": datetime.now().strftime("%Y-%m-%d")
+                    }
 
     if "commodity_forecast_results" in st.session_state:
+        # The display logic from the previous version is correct and can be reused.
         results = st.session_state.commodity_forecast_results
         st.markdown("---")
         st.subheader(f"Analysis for {results['ticker']}")
-
-        # Display Metrics
         c1, c2, c3 = st.columns(3)
         c1.metric("Current Price", f"${results['current_price']:.2f}")
         c2.metric(f"Forecast ({results['forecast_horizon']} days)", f"${results['forecasted_price']:.2f}")
         c3.metric("Projected Change", f"{results['upside']:.2f}%", delta_color="normal")
 
-        # Display Forecast Chart
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=results['forecast']['ds'], y=results['forecast']['yhat_lower'], fill=None, mode='lines', line_color='rgba(0,100,80,0.2)', name='Lower Bound'))
-        fig.add_trace(go.Scatter(x=results['forecast']['ds'], y=results['forecast']['yhat_upper'], fill='tonexty', mode='lines', line_color='rgba(0,100,80,0.2)', name='Confidence Interval'))
-        fig.add_trace(go.Scatter(x=results['df']['Date'], y=results['df']['Close'], mode='lines', line_color='blue', name='Historical Price'))
-        fig.add_trace(go.Scatter(x=results['forecast']['ds'], y=results['forecast']['yhat'], mode='lines', line_color='green', name='Forecast'))
-        fig.update_layout(title_text='Time-Series Forecast', xaxis_title='Date', yaxis_title='Price', showlegend=True)
-        st.plotly_chart(fig, use_container_width=True)
+        if results['forecast'] is not None and results['df'] is not None:
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=results['forecast']['ds'], y=results['forecast']['yhat_lower'], fill=None, mode='lines', line_color='rgba(0,100,80,0.2)', name='Lower Bound'))
+            fig.add_trace(go.Scatter(x=results['forecast']['ds'], y=results['forecast']['yhat_upper'], fill='tonexty', mode='lines', line_color='rgba(0,100,80,0.2)', name='Confidence Interval'))
+            fig.add_trace(go.Scatter(x=results['df']['Date'], y=results['df']['Close'], mode='lines', line_color='blue', name='Historical Price'))
+            fig.add_trace(go.Scatter(x=results['forecast']['ds'], y=results['forecast']['yhat'], mode='lines', line_color='green', name='Forecast'))
+            fig.update_layout(title_text='Time-Series Forecast', xaxis_title='Date', yaxis_title='Price', showlegend=True)
+            st.plotly_chart(fig, use_container_width=True)
 
-        # Display Summaries
         rec = results['recommendation']
         st.subheader("Final Recommendation")
         st.markdown(f"**Outlook: {rec.get('outlook', 'N/A')}**")
@@ -6427,12 +6465,12 @@ def commodity_forecasting_agent(client: AzureOpenAI):
         with st.expander("View Detailed Analysis"):
             st.markdown("<h5>Technical Analysis Summary</h5>", unsafe_allow_html=True)
             st.write(results['technical_summary'])
-            st.json(results['technicals'])
+            if results['technicals']:
+                st.json(results['technicals'])
 
             st.markdown("<h5>News Sentiment Summary</h5>", unsafe_allow_html=True)
             st.write(results['sentiment_summary'])
         
-        # Download Report
         html_report = generate_html_report(results)
         st.download_button(
             label="📥 Download Full HTML Report",
