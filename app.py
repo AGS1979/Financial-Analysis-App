@@ -6141,7 +6141,7 @@ def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
 
 
 # ==============================================================================
-# 14. Commodity Price Forecasting Agent (FINAL VERSION)
+# 14. Commodity Price Forecasting Agent (FINAL VERSION V2)
 # ==============================================================================
 
 def commodity_forecasting_agent(client: AzureOpenAI):
@@ -6158,10 +6158,10 @@ def commodity_forecasting_agent(client: AzureOpenAI):
     from jinja2 import Template
     import os
     import json
-    from datetime import datetime
+    from datetime import datetime, timedelta # <-- FIX IS HERE
     from st_supabase_connection import SupabaseConnection
     import numpy as np
-    import base64 # <-- NEW import for chart embedding
+    import base64
 
     st.markdown("### 🌾 Commodity Price Forecasting Agent")
     st.markdown("Forecast commodity prices using time-series analysis, technical indicators, and news sentiment.")
@@ -6174,7 +6174,7 @@ def commodity_forecasting_agent(client: AzureOpenAI):
         st.error(f"Configuration or Connection error: {e}. Please check secrets.")
         st.stop()
 
-    # --- HELPER FUNCTIONS (REFACTORED) ---
+    # --- HELPER FUNCTIONS ---
     @st.cache_data(ttl=86400)
     def get_fmp_commodities(_api_key):
         """Fetches the list of available commodities from FMP."""
@@ -6183,7 +6183,6 @@ def commodity_forecasting_agent(client: AzureOpenAI):
             response = requests.get(url)
             response.raise_for_status()
             data = response.json()
-            # Create a dictionary mapping symbol to name for easier lookup
             st.session_state['commodity_name_map'] = {item['symbol']: item['name'] for item in data}
             return {item['symbol']: f"{item['name']} ({item['symbol']})" for item in data}
         except Exception as e:
@@ -6257,7 +6256,6 @@ def commodity_forecasting_agent(client: AzureOpenAI):
             return "Could not fetch news."
 
     def analyze_with_llm(prompt, _client, is_json=False):
-        """Generic function to call the Azure OpenAI model, with JSON format support."""
         try:
             kwargs = {"response_format": {"type": "json_object"}} if is_json else {}
             response = _client.chat.completions.create(
@@ -6276,7 +6274,6 @@ def commodity_forecasting_agent(client: AzureOpenAI):
             return f"Error during AI analysis: {e}" if not is_json else {"error": f"API Error: {e}"}
 
     def generate_html_report(data):
-        """Generates a downloadable HTML report using Jinja2, now with embedded chart."""
         template_str = """
         <!DOCTYPE html><html><head><title>Commodity Forecast Report</title><style>body{font-family:'Poppins',sans-serif;margin:20px;background-color:#f9fafb;color:#1f2937}.container{max-width:1000px;margin:auto;background-color:#fff;padding:30px;border-radius:8px;box-shadow:0 4px 6px rgba(0,0,0,.05)}h1,h2,h3{color:#00416A}h1{font-size:2em;border-bottom:2px solid #e0e0e0;padding-bottom:10px}h2{font-size:1.5em;margin-top:30px}.metric-grid{display:flex;gap:20px;margin:20px 0}.metric{flex:1;text-align:center;background-color:#f8f9fa;padding:15px;border-radius:8px;border:1px solid #e0e0e0}.metric .label{font-size:.9em;color:#6c757d}.metric .value{font-size:1.8em;font-weight:600;color:#00416A}.section{margin-top:25px}.section p,.section li{line-height:1.6}ul{list-style-type:none;padding-left:0}li::before{content:"•";color:#00416A;font-weight:700;display:inline-block;width:1em;margin-left:-1em}img.forecast-chart{width:100%;border:1px solid #e0e0e0;border-radius:8px;margin-top:15px;}</style></head><body><div class="container"><h1>Commodity Forecast for {{ticker}}</h1><p>Report generated on: {{date}}</p><div class="metric-grid"><div class="metric"><div class="label">Current Price</div><div class="value">${{"%.2f"|format(current_price)}}</div></div><div class="metric"><div class="label">Forecasted Price ({{forecast_horizon}} days)</div><div class="value">${{"%.2f"|format(forecasted_price)}}</div></div><div class="metric"><div class="label">Projected Change</div><div class="value">{{"%.2f"|format(upside)}}%</div></div></div><div class="section"><h2>Final Recommendation</h2><p><b>{{recommendation.outlook}}</b></p><p>{{recommendation.rationale}}</p></div><div class="section"><h2>Time-Series Forecast</h2><p>{{forecast_summary}}</p><img src="data:image/png;base64,{{ chart_base64 }}" alt="Forecast Chart" class="forecast-chart"></div><div class="section"><h2>Technical Analysis</h2><p>{{technical_summary}}</p><ul>{% if technicals %}{% for key, value in technicals.items() %}<li><b>{{key}}:</b> {{"%.2f"|format(value)}}</li>{% endfor %}{% else %}<li>No technical data available.</li>{% endif %}</ul></div><div class="section"><h2>News Sentiment Analysis</h2><p>{{sentiment.summary}}</p></div></div></body></html>
         """
@@ -6294,7 +6291,6 @@ def commodity_forecasting_agent(client: AzureOpenAI):
         history_years = c3.selectbox("Historical Data Period (Years)", [1, 2, 5, 10], index=2)
 
         if st.button("🚀 Run Forecast & Analysis", type="primary"):
-            # The data fetching logic from the previous fix is correct.
             df = None
             try:
                 end_date = datetime.now()
@@ -6327,36 +6323,17 @@ def commodity_forecasting_agent(client: AzureOpenAI):
                     forecast = run_forecast(df, forecast_horizon)
                     technicals = calculate_technicals(df)
                     news = fetch_news(commodity_ticker, FMP_API_KEY)
-                    
-                    # --- NEW, SMARTER PROMPT FOR SENTIMENT ---
                     commodity_name = st.session_state.get('commodity_name_map', {}).get(commodity_ticker, commodity_ticker)
-                    prompt_sentiment = f"""
-                    You are analyzing news for the industrial commodity '{commodity_name}' (ticker: {commodity_ticker}).
-                    CRITICAL: Ignore any news headlines that are clearly about unrelated topics like cryptocurrencies, AI tokens, or other companies.
-                    Based ONLY on the RELEVANT headlines provided below, what is the overall market sentiment?
-                    
-                    Return a JSON object with two keys: "summary" (a concise 1-2 sentence narrative) and "score" (a number from -1.0 for bearish to 1.0 for bullish).
-                    
-                    Headlines:
-                    {news}
-                    """
+                    prompt_sentiment = f"""You are analyzing news for the industrial commodity '{commodity_name}' (ticker: {commodity_ticker}). CRITICAL: Ignore any news headlines that are clearly about unrelated topics like cryptocurrencies, AI tokens, or other companies. Based ONLY on the RELEVANT headlines provided below, what is the overall market sentiment? Return a JSON object with two keys: "summary" (a concise 1-2 sentence narrative) and "score" (a number from -1.0 for bearish to 1.0 for bullish). Headlines:\n{news}"""
                     sentiment_analysis = analyze_with_llm(prompt_sentiment, client, is_json=True)
-                    
                     prompt_technicals = f"Given these technical indicators: {str(technicals)}, what is the short-term technical outlook (Bullish, Bearish, Neutral) for the asset? Provide a one-sentence rationale."
                     technical_summary = analyze_with_llm(prompt_technicals, client) if technicals else "Not enough data for technical analysis."
-                    
                     current_price = df['Close'].iloc[-1]
                     forecasted_price = forecast['yhat'].iloc[-1] if forecast is not None else current_price
                     upside = ((forecasted_price / current_price) - 1) * 100
                     forecast_summary = f"The model forecasts a price of ${forecasted_price:.2f} in {forecast_horizon} days, representing a {upside:.2f}% change." if forecast is not None else "Forecast could not be generated."
-                    
-                    prompt_final = f"""Synthesize the following for {commodity_ticker} and recommend an outlook (Bullish, Bearish, Neutral) with a 2-3 sentence rationale. Return a JSON object with keys "outlook" and "rationale".
-                    1. Forecast: {forecast_summary}
-                    2. Technicals: {technical_summary}
-                    3. Sentiment: {sentiment_analysis.get('summary', 'Not available.')}"""
+                    prompt_final = f"""Synthesize the following for {commodity_ticker} and recommend an outlook (Bullish, Bearish, Neutral) with a 2-3 sentence rationale. Return a JSON object with keys "outlook" and "rationale". 1. Forecast: {forecast_summary} 2. Technicals: {technical_summary} 3. Sentiment: {sentiment_analysis.get('summary', 'Not available.')}"""
                     final_recommendation = analyze_with_llm(prompt_final, client, is_json=True)
-                    
-                    # --- NEW: Generate chart image for report ---
                     chart_base64 = ""
                     if forecast is not None and df is not None:
                         fig = go.Figure()
@@ -6367,7 +6344,6 @@ def commodity_forecasting_agent(client: AzureOpenAI):
                         fig.update_layout(title_text='Time-Series Forecast', xaxis_title='Date', yaxis_title='Price', showlegend=True)
                         img_bytes = fig.to_image(format="png", width=800, height=500, scale=2)
                         chart_base64 = base64.b64encode(img_bytes).decode()
-
                     st.session_state.commodity_forecast_results = {
                         "ticker": commodity_ticker, "df": df, "forecast": forecast,
                         "technicals": technicals, "news": news, "technical_summary": technical_summary,
@@ -6386,7 +6362,6 @@ def commodity_forecasting_agent(client: AzureOpenAI):
         c1.metric("Current Price", f"${results['current_price']:.2f}")
         c2.metric(f"Forecast ({results['forecast_horizon']} days)", f"${results['forecasted_price']:.2f}")
         c3.metric("Projected Change", f"{results['upside']:.2f}%", delta_color="normal")
-
         if results['forecast'] is not None and results['df'] is not None:
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=results['forecast']['ds'], y=results['forecast']['yhat_lower'], fill=None, mode='lines', line_color='rgba(0,100,80,0.2)', name='Lower Bound'))
@@ -6395,20 +6370,16 @@ def commodity_forecasting_agent(client: AzureOpenAI):
             fig.add_trace(go.Scatter(x=results['forecast']['ds'], y=results['forecast']['yhat'], mode='lines', line_color='green', name='Forecast'))
             fig.update_layout(title_text='Time-Series Forecast', xaxis_title='Date', yaxis_title='Price', showlegend=True)
             st.plotly_chart(fig, use_container_width=True)
-
         rec = results['recommendation']
         st.subheader("Final Recommendation")
         st.markdown(f"**Outlook: {rec.get('outlook', 'N/A')}**")
         st.markdown(rec.get('rationale', 'No rationale provided.'))
-
         with st.expander("View Detailed Analysis"):
             st.markdown("<h5>Technical Analysis Summary</h5>", unsafe_allow_html=True)
             st.write(results['technical_summary'])
             if results['technicals']: st.json(results['technicals'])
-            
             st.markdown("<h5>News Sentiment Summary</h5>", unsafe_allow_html=True)
             st.write(results['sentiment'].get('summary', 'No summary available.'))
-        
         html_report = generate_html_report(results)
         st.download_button(
             label="📥 Download Full HTML Report",
