@@ -6148,6 +6148,10 @@ def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
 # 15. Commodity Price Forecasting Agent (CORRECTED)
 # ==============================================================================
 
+# ==============================================================================
+# 15. Commodity Price Forecasting Agent (CORRECTED V2)
+# ==============================================================================
+
 def commodity_forecasting_agent(client: AzureOpenAI):
     """
     An AI agent for commodity price forecasting, trend analysis, and sentiment analysis.
@@ -6209,9 +6213,16 @@ def commodity_forecasting_agent(client: AzureOpenAI):
     def calculate_technicals(_df):
         """Calculates key technical indicators."""
         df_copy = _df.copy()
-        # Ensure column names are lowercase for pandas_ta compatibility
-        df_copy.columns = [col.lower() for col in df_copy.columns]
-        
+
+        # --- THIS IS THE FIX ---
+        # 1. Flatten the MultiIndex columns if yfinance returns them
+        if isinstance(df_copy.columns, pd.MultiIndex):
+            df_copy.columns = df_copy.columns.get_level_values(0)
+
+        # 2. Ensure column names are lowercase strings for pandas_ta compatibility
+        df_copy.columns = [str(col).lower() for col in df_copy.columns]
+
+        # 3. Explicitly use the lowercase 'close' column for calculations
         df_copy.ta.rsi(close='close', append=True)
         df_copy.ta.macd(close='close', append=True)
         df_copy.ta.bbands(close='close', append=True)
@@ -6221,6 +6232,7 @@ def commodity_forecasting_agent(client: AzureOpenAI):
             'BBL_20_2.0', 'BBM_20_2.0', 'BBU_20_2.0'
         ]].to_dict()
         return latest_technicals
+
 
     @st.cache_data(ttl=3600)
     def fetch_news(ticker_root, api_key):
@@ -6321,8 +6333,7 @@ def commodity_forecasting_agent(client: AzureOpenAI):
     history_period = c3.selectbox("Historical Data Period", ["1y", "2y", "5y", "10y"], index=2)
 
     if st.button("🚀 Run Forecast & Analysis", type="primary"):
-        # --- THIS IS THE FIX ---
-        # Process only the first ticker if multiple are entered to avoid MultiIndex errors.
+        # Process only the first ticker if multiple are entered to avoid errors.
         first_ticker = commodity_ticker.split(',')[0].strip()
         
         df = fetch_data(first_ticker, history_period)
