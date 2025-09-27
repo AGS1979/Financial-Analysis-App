@@ -8,9 +8,8 @@
 # User permissions for specific email addresses.
 # All users below have access to the complete set of agents.
 
-"avi104@yahoo.co.in" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel"]
+"avi104@yahoo.co.in" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel", "Commodity Forecaster"]
 "avinashg.singh@aranca.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel"]
-"ujjal.roy@aranca.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel"]
 "user1@example.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel"]
 "user2@example.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel"]
 "user3@example.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel"]
@@ -511,3 +510,5 @@
 "user498@example.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel"]
 "user499@example.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel"]
 "user500@example.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel"]
+"user501@example.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel"]
+"user502@example.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel"]

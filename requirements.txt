@@ -40,3 +40,8 @@ python-Levenshtein
 
 openpyxl
 toml
+
+# New for Commodity Forecaster
+prophet
+pandas-ta
+plotly
