@@ -1,18 +1,18 @@
 # Step 1: Start with an official Python 3.13 "slim" operating system.
-# This is a lightweight version of Linux with Python pre-installed.
 FROM python:3.13-slim
 
 # Set environment variables to make sure installations run smoothly
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
-# Step 2: Install Google Chrome. This is the fix for the Kaleido error.
-# These commands run as the administrator (root) inside the build environment.
-RUN apt-get update && apt-get install -y wget gnupg \
-    && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list \
+# Step 2: Install Google Chrome using the modern, secure method without apt-key
+RUN apt-get update && apt-get install -y curl gnupg \
+    && curl -sS https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome-keyring.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
     && apt-get update \
-    && apt-get install -y google-chrome-stable
+    && apt-get install -y google-chrome-stable \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # Step 3: Set up a working directory for our app inside the environment.
 WORKDIR /app
@@ -25,5 +25,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Step 6: Define the final command to run when the server starts.
-# This tells Render how to launch your Streamlit app.
 CMD ["streamlit", "run", "app.py", "--server.headless", "true"]
