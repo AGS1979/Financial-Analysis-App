@@ -5656,7 +5656,7 @@ def investment_pipeline_agent():
     from collections import Counter
     from openai import AzureOpenAI
     import streamlit as st
-    
+    import os # Added for environment variable access
 
     # --- ADD THIS DICTIONARY ---
     COUNTRY_CURRENCY_MAP = {
@@ -5682,9 +5682,8 @@ def investment_pipeline_agent():
     # --- 2. CORE FUNCTIONS (WITH CORRECTED SEARCH LOGIC) ---
 
     def get_theme_sectors(theme: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
+        # This function already has good UI prints, so it's left as is.
         st.info(f"**(LIVE) Step 1A: AI is identifying relevant sectors for '{theme}'...")
-        
-        # --- FIX: Make the prompt more specific to constrain the AI's choices ---
         prompt = f"""
         You are a market analyst specializing in GICS sectors. For the investment theme "{theme}", identify the 1-3 GICS sectors that companies who PRIMARILY DEVELOP AND SELL these solutions belong to. 
         
@@ -5700,8 +5699,8 @@ def investment_pipeline_agent():
         except Exception: return None
 
     def get_company_ideas(theme: str, sectors: list, country: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
+        # This function already has good UI prints, so it's left as is.
         st.info(f"**(LIVE) Step 1B: AI is brainstorming companies for '{theme}'...**")
-        
         prompt = f"""
         For the investment theme "{theme}" within the sectors '{', '.join(sectors)}', brainstorm up to 20 public companies primarily listed in **{country}** whose **core business is directly related to this theme.**
 
@@ -5711,7 +5710,6 @@ def investment_pipeline_agent():
         For example, for Germany, use tickers from the XETRA exchange where possible (e.g., SAP.DE, DTE.DE).
         """
         try:
-            # --- FIX: Set temperature to 0.0 for deterministic results ---
             response = client.chat.completions.create(
                 model=llm_deployment_name,
                 messages=[{"role": "user", "content": prompt}],
@@ -5732,7 +5730,6 @@ def investment_pipeline_agent():
             
             search_results = response.json()
             for result in search_results:
-                # --- FIX 3: The comparison now correctly checks "USA" against the API's "USA". ---
                 if result.get('Country') == country_code:
                     return result
             return None
@@ -5750,18 +5747,15 @@ def investment_pipeline_agent():
             general = data.get('General', {}); highlights = data.get('Highlights', {})
             name = general.get('Name', ticker)
             
-            # --- CHANGE 2: ADD THIS NEW VALIDATION BLOCK ---
             sector = general.get('Sector')
             if sector not in theme_sectors:
                 return "FAIL_SECTOR", {"name": name, "value": sector}
-            # --- END OF NEW BLOCK ---
 
             market_cap_local = highlights.get('MarketCapitalization')
 
             if not all([name, market_cap_local is not None]):
                 return "INCOMPLETE_DATA", {"name": name}
 
-            # --- FINAL FIX: Compare local market cap with the pre-calculated local filter ---
             if market_cap_local < mkt_cap_filter_local:
                 return "FAIL_MCAP", {"name": name, "value": market_cap_local}
             
@@ -5774,7 +5768,6 @@ def investment_pipeline_agent():
                 "name": name, 
                 "exchange": exchange,
                 "sector": general.get('Sector', 'N/A'),
-                # Return the local market cap for later conversion during reporting
                 "market_capitalization_local": market_cap_local, 
                 "dividend_yield": dividend_yield 
             }
@@ -5783,10 +5776,6 @@ def investment_pipeline_agent():
 
 
     def get_exchange_rate(from_currency: str, to_currency: str, api_key: str, cache: dict) -> float:
-        """
-        Fetches the exchange rate to convert from_currency to to_currency,
-        using a cache to avoid redundant API calls.
-        """
         if from_currency == to_currency:
             return 1.0
 
@@ -5807,8 +5796,6 @@ def investment_pipeline_agent():
                         cache[pair] = rate
                         return rate
             
-            # --- FIX: The inverse pair logic was incorrect. This now correctly flips the currencies. ---
-            # The original code had the same variable as the first 'pair'.
             inverse_pair = f"{to_currency.upper()}{from_currency.upper()}" 
             url = f"https://eodhistoricaldata.com/api/eod/{inverse_pair}.FOREX?api_token={api_key}&fmt=json&period=d&limit=1"
             response = requests.get(url, timeout=5)
@@ -5819,15 +5806,12 @@ def investment_pipeline_agent():
                     inverse_rate = data[0].get('close')
                     if inverse_rate and inverse_rate > 0:
                         rate = 1 / inverse_rate
-                        cache[pair] = rate # Cache the correct, calculated rate
+                        cache[pair] = rate
                         return rate
 
-            return 1.0 # Fallback if both attempts fail
+            return 1.0
         except Exception:
-            return 1.0 # Fallback on any error
-
-
-
+            return 1.0
 
     # --- (All other analysis, enrichment, and reporting functions are unchanged) ---
     def enrich_company_data_eodhd(ticker_code: str, api_key: str) -> dict: # ... unchanged
@@ -5858,10 +5842,7 @@ def investment_pipeline_agent():
 
     def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str, rate_usd_to_local: float) -> dict:
         st.info(f"**(LIVE) Synthesizing Dossier for {quant_data.get('name', 'N/A')}...")
-
-        # --- THIS IS THE CORRECT AND ONLY CALCULATION NEEDED ---
         market_cap_local = quant_data.get('market_capitalization_local', 0)
-        # Handle the case where the rate might be 0 to avoid division errors
         market_cap_usd = market_cap_local / rate_usd_to_local if rate_usd_to_local else 0
         
         quant_md = f"""| Metric | Value |\n|---|---|\n| Market Cap (USD) | ${market_cap_usd / 1e9:,.1f}B |\n| Dividend Yield | {quant_data.get('dividend_yield', 0):.2%} |"""
@@ -5874,8 +5855,6 @@ def investment_pipeline_agent():
             risks = data.get('top_risks', []) if isinstance(data, dict) else [];
             if not risks: return "No specific risks identified."
             return "\n".join(f"* **{r.get('risk', 'N/A')}**: {r.get('description', 'N/A')}" for r in risks)
-        
-        # The incorrect line that was here has been removed.
         
         return {
             "dossier_title": f"{quant_data.get('name', 'N/A')} ({quant_data.get('code', 'N/A')}.{quant_data.get('exchange', '')})",
@@ -5897,7 +5876,6 @@ def investment_pipeline_agent():
                 if s in d:
                     html_body += f"<h2>{html.escape(s)}</h2>" + markdown.markdown(str(d[s]), extensions=['tables'])
             
-            # --- FIX: Close the 'dossier' div before the loop moves to the next company ---
             html_body += "</div>"
             
         return f"<!DOCTYPE html><html><head><title>IdeaGen Report</title>{styles}</head><body><div class='container'>{html_body}</div></body></html>"
@@ -5915,10 +5893,9 @@ def investment_pipeline_agent():
     qualitative_theme = st.text_area("**Describe the Qualitative Theme**", "Companies leading the artificial intelligence revolution in enterprise software.", height=75)
     st.subheader("Step 2: Define Validation Criteria")
 
-    # --- FIX 1: Remove the COUNTRY_MAP. Use a simple list of codes that match the EODHD API output. ---
     country_options = [
-    "Brazil", "Chile", "China", "France", "Germany", "Hong Kong", "India",
-    "Italy", "Mexico", "South Africa", "Spain", "Taiwan", "UK", "USA"
+        "Brazil", "Chile", "China", "France", "Germany", "Hong Kong", "India",
+        "Italy", "Mexico", "South Africa", "Spain", "Taiwan", "UK", "USA"
     ]
     selected_country_code = st.selectbox("Target Country", options=country_options, index=country_options.index("USA"))
 
@@ -5929,22 +5906,29 @@ def investment_pipeline_agent():
     st.subheader("Step 3: Generate and Analyze Ideas")
     if st.button("🚀 Generate, Validate, and Analyze", type="primary"):
         if not qualitative_theme: st.warning("Please describe your theme."); return
+        
+        # --- TEMPORARY PRINTS START HERE ---
+        # A single placeholder for high-level stage updates to keep the UI clean.
+        stage_placeholder = st.empty()
+        # --- TEMPORARY PRINTS END HERE ---
+
         with st.spinner("Running full investment pipeline..."):
+            
+            stage_placeholder.info("🔍 Stage 1/4: AI is identifying relevant sectors for the theme...")
             theme_sectors = get_theme_sectors(qualitative_theme, client, llm_deployment_name)
             if not theme_sectors: st.error("Could not identify sectors for this theme."); return
             
+            stage_placeholder.info(f"🧠 Stage 2/4: AI is brainstorming companies in {selected_country_code}...")
             company_tickers = get_company_ideas(qualitative_theme, theme_sectors, selected_country_code, client, llm_deployment_name)
             if not company_tickers: st.error("AI brainstorming returned no ideas."); return
 
+            stage_placeholder.info("⚙️ Stage 3/4: Validating brainstormed companies against your criteria...")
             user_filters = {"market_cap_min": mkt_cap_min, "dividend_yield_min": dividend_yield_min}
 
-            # --- NEW LOGIC: PRE-CALCULATE LOCAL CURRENCY FILTER ---
             local_currency = COUNTRY_CURRENCY_MAP.get(selected_country_code, "USD")
             exchange_rate_cache = {}
-            # Get the value of 1 USD in the local currency (e.g., 88 for USDINR)
             rate_usd_to_local = get_exchange_rate("USD", local_currency, eodhd_api_key, exchange_rate_cache)
             
-            # Convert the USD filter (in millions) to the local currency value
             mkt_cap_filter_local = (user_filters["market_cap_min"] * 1e6) * rate_usd_to_local
             
             validated_companies = []; failure_reasons = []
@@ -5955,11 +5939,10 @@ def investment_pipeline_agent():
                 if not instrument:
                     failure_reasons.append(("NOT_FOUND", {"name": ticker}))
                 else:
-                    # Pass the pre-calculated local filter to the validation function
                     status, result = validate_company_with_reason(instrument, user_filters, eodhd_api_key, mkt_cap_filter_local, theme_sectors)
                     if status == 'PASS': validated_companies.append(result)
                     else: failure_reasons.append((status, result))
-                progress.progress((i + 1) / len(company_tickers))
+                progress.progress((i + 1) / len(company_tickers), text=f"Validating {ticker} ({i+1}/{len(company_tickers)})")
             progress.empty()
 
             if failure_reasons:
@@ -5968,7 +5951,6 @@ def investment_pipeline_agent():
                 summary_md = "| Rejection Reason | Count |\n|---|---|\n"
                 summary_md += f"| Did not meet dividend yield | {failure_counts.get('FAIL_DIVIDEND', 0)} |\n"
                 summary_md += f"| Did not meet market cap | {failure_counts.get('FAIL_MCAP', 0)} |\n"
-                summary_md += f"| Sector did not match | {failure_counts.get('FAIL_SECTOR', 0)} |\n"
                 summary_md += f"| Sector did not match theme | {failure_counts.get('FAIL_SECTOR', 0)} |\n"
                 summary_md += f"| Ticker not found or incomplete data | {failure_counts.get('NOT_FOUND', 0) + failure_counts.get('INCOMPLETE_DATA', 0) + failure_counts.get('ERROR', 0)} |\n"
                 st.markdown(summary_md)
@@ -5976,12 +5958,18 @@ def investment_pipeline_agent():
             if not validated_companies: st.warning("No companies met all your criteria."); return
             
             analysis_df = pd.DataFrame(validated_companies)
-            st.success(f"Validated {len(analysis_df)} companies. Performing deep analysis...")
-            # Display local market cap in the initial table for clarity
+            st.success(f"Validated {len(analysis_df)} companies. Now performing deep analysis...")
             st.dataframe(analysis_df[['code', 'name', 'exchange', 'market_capitalization_local']], hide_index=True, use_container_width=True)
             
+            stage_placeholder.info(f"🔬 Stage 4/4: Performing deep-dive AI analysis on {len(analysis_df)} companies...")
             all_dossiers = []
+            
+            # --- TEMPORARY PRINT: Add a progress bar for the analysis stage ---
+            analysis_progress = st.progress(0, text="Starting deep-dive analysis...")
             for i, company_row in analysis_df.iterrows():
+                # Update progress bar text for each company
+                analysis_progress.progress((i + 1) / len(analysis_df), text=f"Analyzing: {company_row['name']}")
+                
                 ticker_code = f"{company_row['code']}.{company_row['exchange']}"
                 enrichment_data = enrich_company_data_eodhd(ticker_code, eodhd_api_key)
                 if "failed" in enrichment_data.get("description", ""): continue
@@ -5992,19 +5980,23 @@ def investment_pipeline_agent():
                 full_data = company_row.copy()
                 full_data.update(pd.Series(enrichment_data))
                 
-                # Pass the exchange rate to the dossier function for reporting in USD
                 dossier = synthesize_dossier(full_data, qual_analysis, qualitative_theme, rate_usd_to_local)
                 
                 risk_analysis = risk_and_sizing_agent(dossier, client, llm_deployment_name)
                 dossier['risk_analysis'] = risk_analysis
                 all_dossiers.append(dossier)
+            
+            analysis_progress.empty() # Clear the analysis progress bar
+            stage_placeholder.empty() # Clear the stage placeholder
 
-            if all_dossiers:
-                final_html_report = generate_final_html_report(all_dossiers, qualitative_theme)
-                safe_filename = re.sub(r'(?u)[^-\w.]', '', qualitative_theme[:40].strip().replace(' ', '_'))
-                st.download_button(label="📥 Download Full HTML Report", data=final_html_report, file_name=f"IdeaGen_Report_{safe_filename}.html", mime="text/html")
-            else:
-                st.error("Could not generate a report for any of the validated companies.")
+        if all_dossiers:
+            # --- TEMPORARY PRINT: Final success message ---
+            st.success("✅ Analysis complete! Your report is ready for download.")
+            final_html_report = generate_final_html_report(all_dossiers, qualitative_theme)
+            safe_filename = re.sub(r'(?u)[^-\w.]', '', qualitative_theme[:40].strip().replace(' ', '_'))
+            st.download_button(label="📥 Download Full HTML Report", data=final_html_report, file_name=f"IdeaGen_Report_{safe_filename}.html", mime="text/html")
+        else:
+            st.error("Could not generate a report for any of the validated companies.")
 
 
 # ==============================================================================
