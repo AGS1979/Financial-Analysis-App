@@ -45,3 +45,4 @@ toml
 prophet
 pandas-ta
 plotly
+kaleido
