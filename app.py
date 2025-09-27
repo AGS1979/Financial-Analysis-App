@@ -5702,7 +5702,6 @@ def investment_pipeline_agent():
     def get_company_ideas(theme: str, sectors: list, country: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
         st.info(f"**(LIVE) Step 1B: AI is brainstorming companies for '{theme}'...**")
         
-        # --- FIX: Add the selected country and stronger relevance instructions to the prompt ---
         prompt = f"""
         For the investment theme "{theme}" within the sectors '{', '.join(sectors)}', brainstorm up to 20 public companies primarily listed in **{country}** whose **core business is directly related to this theme.**
 
@@ -5712,11 +5711,17 @@ def investment_pipeline_agent():
         For example, for Germany, use tickers from the XETRA exchange where possible (e.g., SAP.DE, DTE.DE).
         """
         try:
-            response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], temperature=0.1)
+            # --- FIX: Set temperature to 0.0 for deterministic results ---
+            response = client.chat.completions.create(
+                model=llm_deployment_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0 
+            )
             tickers = [t.strip() for t in response.choices[0].message.content.split(',') if t.strip()]
             st.info(f"Agent suggested tickers: {tickers}")
             return tickers
-        except Exception: return []
+        except Exception:
+            return []
 
     def find_instrument_data(ticker: str, country_code: str, api_key: str) -> dict:
         """Uses the EODHD Search API to find the correct exchange for a ticker."""
@@ -5782,40 +5787,35 @@ def investment_pipeline_agent():
         Fetches the exchange rate to convert from_currency to to_currency,
         using a cache to avoid redundant API calls.
         """
-        # If currencies are the same, the rate is 1.
         if from_currency == to_currency:
             return 1.0
 
-        # To convert from a currency (e.g., INR) to USD, we need the value of 1 USD in INR.
-        # The standard FOREX pair for this is USDINR.
         pair = f"{from_currency.upper()}{to_currency.upper()}"
         
         if pair in cache:
             return cache[pair]
         
         try:
-            # This is the correct EODHD endpoint for the latest daily FOREX rate.
             url = f"https://eodhistoricaldata.com/api/eod/{pair}.FOREX?api_token={api_key}&fmt=json&period=d&limit=1"
             response = requests.get(url, timeout=5)
             
             if response.status_code == 200:
                 data = response.json()
                 if data and isinstance(data, list):
-                    # The 'close' price is the exchange rate. For USDINR, this is ~88.
                     rate = data[0].get('close')
                     if rate and rate > 0:
                         cache[pair] = rate
                         return rate
             
-            # If the direct pair fails (e.g., a less common currency), try the inverse.
-            inverse_pair = f"{from_currency.upper()}{to_currency.upper()}"
+            # --- FIX: The inverse pair logic was incorrect. This now correctly flips the currencies. ---
+            # The original code had the same variable as the first 'pair'.
+            inverse_pair = f"{to_currency.upper()}{from_currency.upper()}" 
             url = f"https://eodhistoricaldata.com/api/eod/{inverse_pair}.FOREX?api_token={api_key}&fmt=json&period=d&limit=1"
             response = requests.get(url, timeout=5)
 
             if response.status_code == 200:
                 data = response.json()
                 if data and isinstance(data, list):
-                    # For an inverse pair like INRUSD, the rate is ~0.011. We return 1/rate.
                     inverse_rate = data[0].get('close')
                     if inverse_rate and inverse_rate > 0:
                         rate = 1 / inverse_rate
