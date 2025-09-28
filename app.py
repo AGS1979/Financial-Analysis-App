@@ -5679,7 +5679,7 @@ def investment_pipeline_agent():
     # --- CORE FUNCTIONS ---
 
     def get_theme_sectors(theme: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
-        st.info(f"Agent is identifying guideline sectors for '{theme}'...")
+        st.info(f"**(LIVE) Step 1A: AI is identifying guideline sectors for '{theme}'...")
         prompt = f"""
         You are a highly accurate market analyst specializing in GICS sectors. For the investment theme "{theme}", identify up to 5 GICS sectors that are most directly relevant. These will be used as guidelines.
         Return a JSON object with a single key "sectors" containing a list of strings.
@@ -5693,7 +5693,7 @@ def investment_pipeline_agent():
         except Exception: return None
 
     def get_company_ideas(theme: str, sectors: list, country: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
-        st.info(f"Agent is generating a broad list of potential companies for '{theme}'...**")
+        st.info(f"**(LIVE) Step 1B: AI is generating a broad list of potential companies for '{theme}'...**")
         prompt = f"""
         As a financial analyst, generate a comprehensive list of up to 40 public companies relevant to the theme "{theme}", focusing on those in **{country}**. Use the sectors '{', '.join(sectors)}' as a primary guideline, but also include highly relevant companies from other sectors if their core business strongly aligns with the theme.
         
@@ -5716,42 +5716,19 @@ def investment_pipeline_agent():
         """
         Searches for a stock using the EODHD API to find the correct instrument data.
         It prioritizes finding a "Common Stock" that matches the target country to ensure accuracy.
-        
-        Args:
-            ticker_query (str): The ticker suggested by the AI (e.g., "CEMEXCPO.MX").
-            country (str): The target country for the investment (e.g., "Mexico").
-            api_key (str): Your EODHD API key.
-
-        Returns:
-            dict: A dictionary with the instrument's data if a match is found.
-            None: If no suitable match is found or an error occurs.
         """
-        import requests
-        
-        # Use the EODHD search API endpoint
         url = f"https://eodhistoricaldata.com/api/search/{ticker_query}?api_token={api_key}&fmt=json"
-        
         try:
             response = requests.get(url, timeout=10)
             response.raise_for_status()
             search_results = response.json()
-
-            # Iterate through results to find the best match.
             for result in search_results:
-                # A good match must be in the correct country AND be a Common Stock.
-                # This avoids picking up ETFs, funds, or listings in other countries.
                 is_correct_country = result.get("Country") == country
                 is_common_stock = result.get("Type") == "Common Stock"
-
                 if is_correct_country and is_common_stock:
-                    # Return the first high-quality match found.
                     return result
-            
-            # If the loop completes without finding a suitable instrument.
             return None
         except (requests.RequestException, ValueError):
-            # Silently fail on network errors or bad JSON to avoid cluttering the UI.
-            # The calling code is already set up to handle a `None` return.
             return None
 
     def get_exchange_rate(from_currency: str, to_currency: str, api_key: str, cache: dict) -> float:
@@ -5759,38 +5736,24 @@ def investment_pipeline_agent():
         Fetches the exchange rate between two currencies using the EODHD API, with caching.
         Returns 1.0 as a fallback if the API call fails or currencies are the same.
         """
-        # If the currencies are the same, the rate is 1.
         if from_currency == to_currency:
             return 1.0
-
-        # Use a simple cache to avoid repeated API calls for the same rate.
         cache_key = f"{from_currency}-{to_currency}"
         if cache_key in cache:
             return cache[cache_key]
-
-        # The EODHD API ticker format for forex is {FROM}{TO}.FOREX
         ticker = f"{from_currency}{to_currency}.FOREX"
         url = f"https://eodhistoricaldata.com/api/real-time/{ticker}?api_token={api_key}&fmt=json"
-        
         try:
             response = requests.get(url, timeout=10)
-            response.raise_for_status()  # Raise an exception for bad status codes
+            response.raise_for_status()
             data = response.json()
-            
-            # The 'close' price from the real-time endpoint is the current exchange rate.
             rate = float(data.get('close', 1.0))
-            
-            # Store the successful result in the cache.
             cache[cache_key] = rate
             return rate
         except (requests.RequestException, ValueError, KeyError) as e:
             st.warning(f"⚠️ Could not fetch exchange rate for {from_currency} to {to_currency}. Defaulting to 1.0. Error: {e}")
-            # On any error, return 1.0 as a safe default to avoid crashing.
             return 1.0
 
-
-
-    # --- MODIFIED: This function now ONLY performs quantitative validation ---
     def validate_company_quantitatively(instrument: dict, filters: dict, api_key: str, mkt_cap_filter_local: float) -> (str, dict):
         ticker, exchange = instrument['Code'], instrument['Exchange']
         try:
@@ -5813,17 +5776,13 @@ def investment_pipeline_agent():
             if dividend_yield < (filters["dividend_yield_min"] / 100):
                 return "FAIL_DIVIDEND", {"name": name, "value": dividend_yield}
 
-            # The sector check is removed. We now pass if quantitative checks are met.
             return "PASS", {"code": ticker, "name": name, "exchange": exchange, "sector": sector, "market_capitalization_local": market_cap_local, "dividend_yield": dividend_yield}
         except (requests.RequestException, json.JSONDecodeError):
             return "ERROR", {"name": instrument.get('Name')}
 
-    # --- REVISED AND FINAL: AI-powered thematic relevance filter with dynamic country context ---
     def filter_companies_by_theme_relevance(companies_df: pd.DataFrame, theme: str, country: str, client: AzureOpenAI, llm_deployment_name: str, api_key: str) -> list:
         st.info(f"**(LIVE) AI is filtering {len(companies_df)} companies for thematic relevance...**")
-        
         detailed_company_data = []
-        # Fetch descriptions for each company
         for i, company in companies_df.iterrows():
             ticker_code = f"{company['code']}.{company['exchange']}"
             try:
@@ -5839,7 +5798,6 @@ def investment_pipeline_agent():
             st.warning("Could not fetch company details to perform relevance filtering.")
             return []
 
-        # --- THIS DYNAMIC PROMPT IS NOW ROBUST FOR ANY COUNTRY ---
         prompt = f"""
         You are an expert portfolio manager analyzing companies for the investment theme: "{theme}".
         Review the following JSON list of companies from **{country}**.
@@ -5866,11 +5824,10 @@ def investment_pipeline_agent():
         except Exception as e:
             st.error(f"Error during AI relevance filtering: {e}")
             return []
-            
-    # (Other helper functions like enrich_company_data, synthesize_dossier, etc. remain unchanged)
+
+    # --- HELPER FUNCTIONS (LOGGING REMOVED) ---
     def enrich_company_data_eodhd(ticker_code: str, api_key: str) -> dict:
-        # This function is now also used by the relevance filter, but its logic is the same.
-        st.info(f"**(LIVE) Enriching {ticker_code}...**")
+        # st.info removed
         base_url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker_code}"; params = {"api_token": api_key}
         try:
             response = requests.get(base_url, params=params, timeout=15); response.raise_for_status(); data = response.json()
@@ -5888,7 +5845,7 @@ def investment_pipeline_agent():
         except Exception: return "Could not fetch recent news."
 
     def run_ai_qualitative_analysis(company_name: str, text_corpus: str, theme: str, client: AzureOpenAI, llm_deployment_name: str) -> dict:
-        st.info(f"**(LIVE) Running AI Qualitative Analysis for {company_name}...**")
+        # st.info removed
         prompt = f"""Analyze '{company_name}' for the theme '{theme}' using the text below. Return a JSON with keys "theme_analysis", "moat_analysis", "risk_analysis". For "risk_analysis", provide a "top_risks" list of objects, each with "risk" and "description". TEXT: --- {text_corpus[:25000]} ---"""
         try:
             response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "system", "content": "You are an equity analyst that only outputs JSON."}, {"role": "user", "content": prompt}], response_format={"type": "json_object"}, temperature=0.0)
@@ -5896,7 +5853,7 @@ def investment_pipeline_agent():
         except Exception as e: st.error(f"Error in AI Analysis: {e}"); return {}
 
     def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str, local_currency: str) -> dict:
-        st.info(f"**(LIVE) Synthesizing Dossier for {quant_data.get('name', 'N/A')}...")
+        # st.info removed
         market_cap_local = quant_data.get('market_capitalization_local', 0)
         quant_md = f"""| Metric | Value |\n|---|---|\n| Market Cap ({local_currency}) | {market_cap_local / 1e9:,.1f}B |\n| Dividend Yield | {quant_data.get('dividend_yield', 0):.2%} |"""
         def format_ai_analysis_to_markdown(data):
@@ -5921,8 +5878,14 @@ def investment_pipeline_agent():
         return f"<!DOCTYPE html><html><head><title>IdeaGen Report</title>{styles}</head><body><div class='container'>{html_body}</div></body></html>"
 
     def risk_and_sizing_agent(dossier: dict, client: AzureOpenAI, llm_deployment_name: str) -> dict:
-        st.info("**(LIVE) Agent 3/3: Risk & Position Sizing Agent is evaluating risk profile...**")
-        prompt = f"""Analyze the dossier. Recommend a position size (1-10%). Return JSON with "position_size_recommendation" and "rationale". DOSSIER: {json.dumps(dossier)[:10000]}"""
+        # st.info removed
+        prompt_dossier = {
+            "dossier_title": dossier.get("dossier_title"),
+            "Thematic Alignment & Justification": dossier.get("Thematic Alignment & Justification", "")[:1000],
+            "Competitive Moat & Pricing Power": dossier.get("Competitive Moat & Pricing Power", "")[:1000],
+            "Key Risks Identified": dossier.get("Key Risks Identified", "")[:1000]
+        }
+        prompt = f"""Analyze the following investment dossier. Based on the analysis of thematic alignment, moat, and key risks, recommend a position size as a percentage of a portfolio (e.g., from 1% to 10%). Return a JSON object with two keys: "position_size_recommendation" (a string like "3.5%") and "rationale" (a brief explanation for your recommendation). DOSSIER: ```json\n{json.dumps(prompt_dossier, indent=2)}\n```"""
         try:
             response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}, temperature=0.0)
             return json.loads(response.choices[0].message.content)
@@ -5936,7 +5899,7 @@ def investment_pipeline_agent():
     selected_country_code = st.selectbox("Target Country", options=country_options, index=country_options.index("Mexico"))
     col1, col2 = st.columns(2)
     with col1: mkt_cap_min = st.slider("Min Market Cap (Million USD)", 100.0, 500000.0, 1000.0, 100.0)
-    with col2: dividend_yield_min = st.slider("Min Dividend Yield (%)", 0.0, 10.0, 0.5, 0.1)
+    with col2: dividend_yield_min = st.slider("Min Dividend Yield (%)", 0.0, 10.0, 0.0, 0.1) # Default set to 0.0
 
     st.subheader("Step 3: Generate and Analyze Ideas")
     if st.button("🚀 Generate, Validate, and Analyze", type="primary"):
@@ -5950,16 +5913,10 @@ def investment_pipeline_agent():
             company_tickers = get_company_ideas(qualitative_theme, theme_sectors, selected_country_code, client, llm_deployment_name)
             if not company_tickers: st.error("AI agent returned no initial company ideas."); return
 
-            # --- This is the corrected code ---
             user_filters = {"market_cap_min": mkt_cap_min, "dividend_yield_min": dividend_yield_min}
             local_currency = COUNTRY_CURRENCY_MAP.get(selected_country_code, "USD")
-
-            # Create a dictionary to cache exchange rates
             exchange_rate_cache = {} 
-
-            # Call the new function with the cache
             rate_usd_to_local = get_exchange_rate("USD", local_currency, eodhd_api_key, exchange_rate_cache)
-
             mkt_cap_filter_local = (user_filters["market_cap_min"] * 1e6) * rate_usd_to_local
             
             quant_validated_companies = []; failure_reasons = []
@@ -5992,26 +5949,22 @@ def investment_pipeline_agent():
         
         final_df = quant_df[quant_df['code'].isin(relevant_tickers)]
         
-        # --- Stage 4: Deep-Dive Analysis ---
+        # --- Stage 4: Deep-Dive Analysis (NOW CLEANER) ---
         st.success(f"Final list: {len(final_df)} highly relevant companies. Performing deep-dive analysis...")
         all_dossiers = []
-        with st.expander("🔬 Deep-Dive Analysis Log", expanded=True):
+        
+        # Use a spinner for a cleaner UI instead of the expander and st.write logs
+        with st.spinner(f"Performing deep-dive analysis on {len(final_df)} companies. Please wait..."):
             for i, company_row in final_df.iterrows():
-                # (Deep-dive logic is the same as before)
                 company_name = company_row['name']
-                st.write(f"--- Analyzing **{company_name}** ({i+1}/{len(final_df)}) ---")
                 ticker_code = f"{company_row['code']}.{company_row['exchange']}"
-                st.write("   - Enriching company data (description, news)...")
+                
                 enrichment_data = enrich_company_data_eodhd(ticker_code, eodhd_api_key)
-                st.write("   - Running qualitative AI analysis...")
                 qual_analysis = run_ai_qualitative_analysis(company_name, enrichment_data['qualitative_corpus'], qualitative_theme, client, llm_deployment_name)
-                st.write("   - Synthesizing dossier...")
                 dossier = synthesize_dossier(company_row, qual_analysis, qualitative_theme, local_currency)
-                st.write("   - Evaluating risk and position sizing...")
                 risk_analysis = risk_and_sizing_agent(dossier, client, llm_deployment_name)
                 dossier['risk_analysis'] = risk_analysis
                 all_dossiers.append(dossier)
-                st.write(f"   - ✅ **Completed analysis for {company_name}.**")
 
         if all_dossiers:
             st.success("✅ Analysis complete! Your report is ready for download.")
@@ -6397,7 +6350,7 @@ def commodity_forecasting_agent(client: "AzureOpenAI"): # Use a string hint if A
                     query = function_args.get("query")
                     st.info(f"Agent is searching for: '{query}'")
                     search_results = _tavily_client.search(query=query, search_depth="advanced")
-                    tool_response = "\n".join([f"- {res['title']}: {res['snippet']}" for res in search_results['results']])
+                    tool_response = "\n".join([f"- {res['title']}: {res['content']}" for res in search_results['results']])
                     
                     messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": function_name, "content": tool_response})
 
