@@ -5754,7 +5754,12 @@ def investment_pipeline_agent():
             st.warning(f"⚠️ Could not fetch exchange rate for {from_currency} to {to_currency}. Defaulting to 1.0. Error: {e}")
             return 1.0
 
-    def validate_company_quantitatively(instrument: dict, filters: dict, api_key: str, mkt_cap_filter_local: float) -> (str, dict):
+    def validate_company_quantitatively(instrument: dict, filters: dict, api_key: str, cache: dict) -> (str, dict):
+        """
+        Validates a company against quantitative filters, now with robust currency handling.
+        It reads the reporting currency from the API and converts all market caps to USD
+        for a reliable comparison.
+        """
         ticker, exchange = instrument['Code'], instrument['Exchange']
         try:
             url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker}.{exchange}?api_token={api_key}"
@@ -5763,20 +5768,47 @@ def investment_pipeline_agent():
             
             data = response.json()
             general = data.get('General', {}); highlights = data.get('Highlights', {})
-            name = general.get('Name', ticker)
-            sector = general.get('Sector', 'N/A')
             
-            market_cap_local = highlights.get('MarketCapitalization')
-            if not all([name, market_cap_local is not None]):
-                return "INCOMPLETE_DATA", {"name": name}
-            if market_cap_local < mkt_cap_filter_local:
-                return "FAIL_MCAP", {"name": name, "value": market_cap_local}
+            # --- START OF ROBUST FIX ---
+
+            # 1. Get the currency the API is using for this specific stock (e.g., "USD", "MXN")
+            reporting_currency = general.get('CurrencyCode', 'USD') # Default to USD if not specified
+            
+            # 2. Get the market cap value from the API
+            market_cap_from_api = highlights.get('MarketCapitalization')
+
+            if not all([general.get('Name'), market_cap_from_api is not None]):
+                return "INCOMPLETE_DATA", {"name": general.get('Name')}
+
+            # 3. Convert the API's market cap to USD for a consistent comparison
+            if reporting_currency == "USD":
+                market_cap_usd = market_cap_from_api
+            else:
+                # We need to convert the API's local currency value back to USD
+                rate_local_to_usd = get_exchange_rate(reporting_currency, "USD", api_key, cache)
+                market_cap_usd = market_cap_from_api * rate_local_to_usd
+            
+            # 4. The user's filter is already in USD
+            mkt_cap_filter_usd = filters["market_cap_min"] * 1e6
+            
+            # 5. Perform the reliable USD vs USD comparison
+            if market_cap_usd < mkt_cap_filter_usd:
+                return "FAIL_MCAP", {"name": general.get('Name'), "value": market_cap_from_api}
+
+            # --- END OF ROBUST FIX ---
             
             dividend_yield = highlights.get('DividendYield') or 0.0
             if dividend_yield < (filters["dividend_yield_min"] / 100):
-                return "FAIL_DIVIDEND", {"name": name, "value": dividend_yield}
+                return "FAIL_DIVIDEND", {"name": general.get('Name'), "value": dividend_yield}
 
-            return "PASS", {"code": ticker, "name": name, "exchange": exchange, "sector": sector, "market_capitalization_local": market_cap_local, "dividend_yield": dividend_yield}
+            return "PASS", {
+                "code": ticker, 
+                "name": general.get('Name'), 
+                "exchange": exchange, 
+                "sector": general.get('Sector', 'N/A'), 
+                "market_capitalization_local": market_cap_from_api, # Keep original value for display
+                "dividend_yield": dividend_yield
+            }
         except (requests.RequestException, json.JSONDecodeError):
             return "ERROR", {"name": instrument.get('Name')}
 
@@ -5926,7 +5958,7 @@ def investment_pipeline_agent():
                 if not instrument:
                     failure_reasons.append(("NOT_FOUND", {"name": ticker}))
                 else:
-                    status, result = validate_company_quantitatively(instrument, user_filters, eodhd_api_key, mkt_cap_filter_local)
+                    status, result = validate_company_quantitatively(instrument, user_filters, eodhd_api_key, exchange_rate_cache)
                     if status == 'PASS': quant_validated_companies.append(result)
                     else: failure_reasons.append((status, result))
                 progress.progress((i + 1) / len(company_tickers), text=f"Screening {ticker}...")
