@@ -5658,10 +5658,18 @@ def investment_pipeline_agent():
     import streamlit as st
     import os
 
+    # --- START OF FIX 1: DEFINE COUNTRY EQUIVALENCE ---
+    # This allows the search for "China" to include results from "Hong Kong",
+    # which is crucial for finding major Chinese tech companies.
+    COUNTRY_EQUIVALENCE = {
+        "China": ["China", "Hong Kong"]
+    }
+    # --- END OF FIX 1 ---
+
     COUNTRY_CURRENCY_MAP = {
-        "USA": "USD", "India": "INR", "Germany": "EUR", "France": "EUR", 
-        "Italy": "EUR", "Spain": "EUR", "UK": "GBP", "China": "CNY", 
-        "Hong Kong": "HKD", "Taiwan": "TWD", "South Africa": "ZAR", 
+        "USA": "USD", "India": "INR", "Germany": "EUR", "France": "EUR",
+        "Italy": "EUR", "Spain": "EUR", "UK": "GBP", "China": "CNY",
+        "Hong Kong": "HKD", "Taiwan": "TWD", "South Africa": "ZAR",
         "Brazil": "BRL", "Chile": "CLP", "Mexico": "MXN"
     }
 
@@ -5694,14 +5702,20 @@ def investment_pipeline_agent():
 
     def get_company_ideas(theme: str, sectors: list, country: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
         st.info(f"**(LIVE) Step 1B: AI is generating a broad list of potential companies for '{theme}'...**")
-        prompt = f"""
-        As a financial analyst, generate a comprehensive list of up to 40 public companies relevant to the theme "{theme}", focusing on those in **{country}**. Use the sectors '{', '.join(sectors)}' as a primary guideline, but also include highly relevant companies from other sectors if their core business strongly aligns with the theme.
         
+        # --- START OF FIX 2: IMPROVED PROMPT FOR BETTER TICKER GENERATION ---
+        prompt = f"""
+        As a financial analyst, generate a comprehensive list of up to 40 public companies relevant to the theme "{theme}". The focus is on companies primarily operating in or serving the **{country}** market.
+
         Instructions:
-        1.  Ensure ticker symbols are correct for their primary exchange in {country} (e.g., CEMEXCPO.MX for Mexico).
-        2.  Do not invent tickers. Prioritize accuracy.
-        3.  Return ONLY a single comma-separated string of ticker symbols, sorted alphabetically.
+        1.  Provide the ticker symbol including the correct exchange code (e.g., '7203.T' for Toyota, '0700.HK' for Tencent, '600519.SS' for Kweichow Moutai, 'RELIANCE.NS' for Reliance Industries).
+        2.  For companies from **{country}**, prioritize tickers listed on the primary local exchange(s).
+        3.  However, if a major **{country}** company is primarily listed on a foreign exchange (e.g., a Chinese tech company on NASDAQ or in Hong Kong), you **must include** that foreign-listed ticker. This is critical for accuracy.
+        4.  Do not invent tickers. Prioritize accuracy.
+        5.  Return ONLY a single comma-separated string of ticker symbols, sorted alphabetically.
         """
+        # --- END OF FIX 2 ---
+        
         try:
             response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], temperature=0.0)
             content = response.choices[0].message.content
@@ -5714,28 +5728,41 @@ def investment_pipeline_agent():
     
     def find_instrument_data(ticker_query: str, country: str, api_key: str) -> dict | None:
         """
-        Searches for a stock using the EODHD API to find the correct instrument data.
-        It prioritizes finding a "Common Stock" that matches the target country to ensure accuracy.
+        Searches for a stock using the EODHD API. It now uses a country equivalence
+        map to handle cases like Chinese companies listed in Hong Kong.
         """
         url = f"https://eodhistoricaldata.com/api/search/{ticker_query}?api_token={api_key}&fmt=json"
         try:
             response = requests.get(url, timeout=10)
             response.raise_for_status()
             search_results = response.json()
+            
+            # --- START OF FIX 1 (IMPLEMENTATION): USE EQUIVALENCE MAP ---
+            allowed_countries = COUNTRY_EQUIVALENCE.get(country, [country])
+            # --- END OF FIX 1 (IMPLEMENTATION) ---
+
             for result in search_results:
-                is_correct_country = result.get("Country") == country
+                is_correct_country = result.get("Country") in allowed_countries
+                is_common_stock = result.get("Type") == "Common Stock"
+                # Prioritize exact ticker match if possible to improve accuracy
+                is_exact_code_match = ticker_query.upper().startswith(result.get("Code", "").upper())
+
+                if is_correct_country and is_common_stock and is_exact_code_match:
+                    return result # Return the first high-confidence match
+            
+            # Fallback for less precise matches if no exact match was found
+            for result in search_results:
+                is_correct_country = result.get("Country") in allowed_countries
                 is_common_stock = result.get("Type") == "Common Stock"
                 if is_correct_country and is_common_stock:
                     return result
+                    
             return None
         except (requests.RequestException, ValueError):
             return None
 
     def get_exchange_rate(from_currency: str, to_currency: str, api_key: str, cache: dict) -> float:
-        """
-        Fetches the latest closing exchange rate between two currencies using the EODHD API.
-        This version uses the /api/eod/ endpoint and correctly handles inverse rates.
-        """
+        """ Fetches the latest closing exchange rate between two currencies. """
         if from_currency == to_currency:
             return 1.0
 
@@ -5743,23 +5770,16 @@ def investment_pipeline_agent():
         if cache_key in cache:
             return cache[cache_key]
 
-        # --- START OF FINAL FIX ---
-        # Determine the correct ticker and if we need to calculate the inverse.
-        # The EODHD EOD endpoint quotes currencies against the USD by default.
         if from_currency == 'USD':
-            # Example: USD to HKD. Ticker is HKD.FOREX, rate is direct.
             ticker = f"{to_currency}.FOREX"
             inverse = False
         elif to_currency == 'USD':
-            # Example: HKD to USD. Ticker is HKD.FOREX, rate must be inverted.
             ticker = f"{from_currency}.FOREX"
             inverse = True
         else:
-            # Fallback for non-USD pairs, though not used in this script's logic.
             st.warning(f"Non-USD pair conversion ({from_currency}-{to_currency}) not fully supported, defaulting to 1.0.")
             return 1.0
 
-        # Use the /eod/ endpoint for the latest daily closing price.
         url = f"https://eodhistoricaldata.com/api/eod/{ticker}?api_token={api_key}&fmt=json&limit=1"
         
         try:
@@ -5767,14 +5787,11 @@ def investment_pipeline_agent():
             response.raise_for_status()
             data = response.json()
             
-            # The result is a list, get the latest entry.
             if not data:
                 st.warning(f"No exchange rate data returned for {ticker}.")
                 return 1.0
 
             rate = float(data[0].get('close', 1.0))
-
-            # If we need the inverse (e.g., for HKD to USD), calculate 1 / rate.
             final_rate = 1.0 / rate if inverse and rate != 0 else rate
             
             cache[cache_key] = final_rate
@@ -5783,14 +5800,9 @@ def investment_pipeline_agent():
         except (requests.RequestException, ValueError, KeyError, IndexError) as e:
             st.warning(f"⚠️ Could not fetch exchange rate for {from_currency} to {to_currency}. Defaulting to 1.0. Error: {e}")
             return 1.0
-        # --- END OF FINAL FIX ---
 
     def validate_company_quantitatively(instrument: dict, filters: dict, api_key: str, cache: dict) -> (str, dict):
-        """
-        Validates a company against quantitative filters, now with robust currency handling.
-        It reads the reporting currency from the API and converts all market caps to USD
-        for a reliable comparison.
-        """
+        """ Validates a company against quantitative filters with robust currency handling. """
         ticker, exchange = instrument['Code'], instrument['Exchange']
         try:
             url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker}.{exchange}?api_token={api_key}"
@@ -5800,33 +5812,22 @@ def investment_pipeline_agent():
             data = response.json()
             general = data.get('General', {}); highlights = data.get('Highlights', {})
             
-            # --- START OF ROBUST FIX ---
-
-            # 1. Get the currency the API is using for this specific stock (e.g., "USD", "MXN")
-            reporting_currency = general.get('CurrencyCode', 'USD') # Default to USD if not specified
-            
-            # 2. Get the market cap value from the API
+            reporting_currency = general.get('CurrencyCode', 'USD')
             market_cap_from_api = highlights.get('MarketCapitalization')
 
             if not all([general.get('Name'), market_cap_from_api is not None]):
                 return "INCOMPLETE_DATA", {"name": general.get('Name')}
 
-            # 3. Convert the API's market cap to USD for a consistent comparison
             if reporting_currency == "USD":
                 market_cap_usd = market_cap_from_api
             else:
-                # We need to convert the API's local currency value back to USD
                 rate_local_to_usd = get_exchange_rate(reporting_currency, "USD", api_key, cache)
                 market_cap_usd = market_cap_from_api * rate_local_to_usd
             
-            # 4. The user's filter is already in USD
             mkt_cap_filter_usd = filters["market_cap_min"] * 1e6
             
-            # 5. Perform the reliable USD vs USD comparison
             if market_cap_usd < mkt_cap_filter_usd:
                 return "FAIL_MCAP", {"name": general.get('Name'), "value": market_cap_from_api}
-
-            # --- END OF ROBUST FIX ---
             
             dividend_yield = highlights.get('DividendYield') or 0.0
             if dividend_yield < (filters["dividend_yield_min"] / 100):
@@ -5837,7 +5838,7 @@ def investment_pipeline_agent():
                 "name": general.get('Name'), 
                 "exchange": exchange, 
                 "sector": general.get('Sector', 'N/A'), 
-                "market_capitalization_local": market_cap_from_api, # Keep original value for display
+                "market_capitalization_local": market_cap_from_api,
                 "dividend_yield": dividend_yield
             }
         except (requests.RequestException, json.JSONDecodeError):
@@ -5861,8 +5862,9 @@ def investment_pipeline_agent():
             st.warning("Could not fetch company details to perform relevance filtering.")
             return []
 
+        # --- START OF FIX 3: STRICTER PROMPT FOR RELEVANCE FILTERING ---
         prompt = f"""
-        You are an expert portfolio manager analyzing companies for the investment theme: "{theme}".
+        You are an expert portfolio manager with a strict filtering mandate. Your task is to analyze companies for the investment theme: "{theme}".
         Review the following JSON list of companies from **{country}**.
 
         **Company List:**
@@ -5870,13 +5872,17 @@ def investment_pipeline_agent():
         {json.dumps(detailed_company_data, indent=2)}
         ```
 
-        **Task:**
-        Identify companies that are **strong beneficiaries** of the "{theme}" theme. This includes companies whose core business is directly aligned, as well as **key enablers and second-order beneficiaries** whose revenue and growth are materially impacted by the theme. 
-        
-        **IMPORTANT**: The business descriptions for these companies are from **{country}** and may be in the local language. Your analysis must account for this and correctly evaluate their relevance to the English-language theme.
+        **Task & Strict Instructions:**
+        Analyze each company's business description. Identify ONLY the companies where the theme "{theme}" is a **central and primary driver of its business model, revenue, and growth strategy.**
 
-        Return a JSON object with a single key "relevant_tickers", containing a list of the chosen ticker symbols.
+        - **DO** select companies whose core product/service IS the theme.
+        - **DO NOT** select companies where the theme is merely an ancillary function, a minor division, or a tangential part of their business. For example, for the theme 'internet companies', a pure-play e-commerce firm is a strong fit. A large brick-and-mortar retailer that also has a website is a POOR fit and must be excluded.
+
+        Your evaluation must be extremely strict to ensure thematic purity.
+
+        Return a JSON object with a single key "relevant_tickers", containing a list of the ticker symbols that meet this strict criteria.
         """
+        # --- END OF FIX 3 ---
         
         try:
             response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}, temperature=0.0)
@@ -5890,7 +5896,6 @@ def investment_pipeline_agent():
 
     # --- HELPER FUNCTIONS (LOGGING REMOVED) ---
     def enrich_company_data_eodhd(ticker_code: str, api_key: str) -> dict:
-        # st.info removed
         base_url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker_code}"; params = {"api_token": api_key}
         try:
             response = requests.get(base_url, params=params, timeout=15); response.raise_for_status(); data = response.json()
@@ -5908,7 +5913,6 @@ def investment_pipeline_agent():
         except Exception: return "Could not fetch recent news."
 
     def run_ai_qualitative_analysis(company_name: str, text_corpus: str, theme: str, client: AzureOpenAI, llm_deployment_name: str) -> dict:
-        # st.info removed
         prompt = f"""Analyze '{company_name}' for the theme '{theme}' using the text below. Return a JSON with keys "theme_analysis", "moat_analysis", "risk_analysis". For "risk_analysis", provide a "top_risks" list of objects, each with "risk" and "description". TEXT: --- {text_corpus[:25000]} ---"""
         try:
             response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "system", "content": "You are an equity analyst that only outputs JSON."}, {"role": "user", "content": prompt}], response_format={"type": "json_object"}, temperature=0.0)
@@ -5916,7 +5920,6 @@ def investment_pipeline_agent():
         except Exception as e: st.error(f"Error in AI Analysis: {e}"); return {}
 
     def synthesize_dossier(quant_data: pd.Series, qual_analysis: dict, theme: str, local_currency: str) -> dict:
-        # st.info removed
         market_cap_local = quant_data.get('market_capitalization_local', 0)
         quant_md = f"""| Metric | Value |\n|---|---|\n| Market Cap ({local_currency}) | {market_cap_local / 1e9:,.1f}B |\n| Dividend Yield | {quant_data.get('dividend_yield', 0):.2%} |"""
         def format_ai_analysis_to_markdown(data):
@@ -5941,7 +5944,6 @@ def investment_pipeline_agent():
         return f"<!DOCTYPE html><html><head><title>IdeaGen Report</title>{styles}</head><body><div class='container'>{html_body}</div></body></html>"
 
     def risk_and_sizing_agent(dossier: dict, client: AzureOpenAI, llm_deployment_name: str) -> dict:
-        # st.info removed
         prompt_dossier = {
             "dossier_title": dossier.get("dossier_title"),
             "Thematic Alignment & Justification": dossier.get("Thematic Alignment & Justification", "")[:1000],
@@ -5956,20 +5958,20 @@ def investment_pipeline_agent():
 
     # --- UI AND ORCHESTRATION ---
     st.subheader("Step 1: Define Your Investment Theme")
-    qualitative_theme = st.text_area("**Describe the Qualitative Theme**", "Companies benefitting from nearshoring theme.", height=75)
+    qualitative_theme = st.text_area("**Describe the Qualitative Theme**", "Internet companies in China", height=75)
     st.subheader("Step 2: Define Validation Criteria")
     country_options = ["Brazil", "Chile", "China", "France", "Germany", "Hong Kong", "India", "Italy", "Mexico", "South Africa", "Spain", "Taiwan", "UK", "USA"]
-    selected_country_code = st.selectbox("Target Country", options=country_options, index=country_options.index("Mexico"))
+    selected_country_code = st.selectbox("Target Country", options=country_options, index=country_options.index("China"))
     col1, col2 = st.columns(2)
     with col1: mkt_cap_min = st.slider("Min Market Cap (Million USD)", 100.0, 500000.0, 1000.0, 100.0)
-    with col2: dividend_yield_min = st.slider("Min Dividend Yield (%)", 0.0, 10.0, 0.0, 0.1) # Default set to 0.0
+    with col2: dividend_yield_min = st.slider("Min Dividend Yield (%)", 0.0, 10.0, 0.0, 0.1)
 
     st.subheader("Step 3: Generate and Analyze Ideas")
     if st.button("🚀 Generate, Validate, and Analyze", type="primary"):
         if not qualitative_theme: st.warning("Please describe your theme."); return
         
-        # --- Stage 1 & 2: Idea Generation and Quantitative Validation ---
-        with st.spinner("Stage 1: Generating and validating initial ideas..."):
+        # Stages 1 & 2
+        with st.spinner("Stage 1 & 2: Generating and validating initial ideas..."):
             theme_sectors = get_theme_sectors(qualitative_theme, client, llm_deployment_name)
             if not theme_sectors: st.error("Could not identify guideline sectors."); return
             
@@ -5977,10 +5979,7 @@ def investment_pipeline_agent():
             if not company_tickers: st.error("AI agent returned no initial company ideas."); return
 
             user_filters = {"market_cap_min": mkt_cap_min, "dividend_yield_min": dividend_yield_min}
-            local_currency = COUNTRY_CURRENCY_MAP.get(selected_country_code, "USD")
-            exchange_rate_cache = {} 
-            rate_usd_to_local = get_exchange_rate("USD", local_currency, eodhd_api_key, exchange_rate_cache)
-            mkt_cap_filter_local = (user_filters["market_cap_min"] * 1e6) * rate_usd_to_local
+            exchange_rate_cache = {}
             
             quant_validated_companies = []; failure_reasons = []
             progress = st.progress(0, text=f"Screening {len(company_tickers)} tickers...")
@@ -5995,7 +5994,7 @@ def investment_pipeline_agent():
                 progress.progress((i + 1) / len(company_tickers), text=f"Screening {ticker}...")
             progress.empty()
 
-        # --- Stage 3: AI Thematic Relevance Filtering ---
+        # Stage 3
         if not quant_validated_companies:
             st.warning("No companies passed the initial quantitative filters (Market Cap, Dividend Yield).")
             return
@@ -6012,12 +6011,12 @@ def investment_pipeline_agent():
         
         final_df = quant_df[quant_df['code'].isin(relevant_tickers)]
         
-        # --- Stage 4: Deep-Dive Analysis (NOW CLEANER) ---
+        # Stage 4
         st.success(f"Final list: {len(final_df)} highly relevant companies. Performing deep-dive analysis...")
         all_dossiers = []
         
-        # Use a spinner for a cleaner UI instead of the expander and st.write logs
         with st.spinner(f"Performing deep-dive analysis on {len(final_df)} companies. Please wait..."):
+            local_currency = COUNTRY_CURRENCY_MAP.get(selected_country_code, "USD")
             for i, company_row in final_df.iterrows():
                 company_name = company_row['name']
                 ticker_code = f"{company_row['code']}.{company_row['exchange']}"
