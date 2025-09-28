@@ -5733,26 +5733,57 @@ def investment_pipeline_agent():
 
     def get_exchange_rate(from_currency: str, to_currency: str, api_key: str, cache: dict) -> float:
         """
-        Fetches the exchange rate between two currencies using the EODHD API, with caching.
-        Returns 1.0 as a fallback if the API call fails or currencies are the same.
+        Fetches the latest closing exchange rate between two currencies using the EODHD API.
+        This version uses the /api/eod/ endpoint and correctly handles inverse rates.
         """
         if from_currency == to_currency:
             return 1.0
+
         cache_key = f"{from_currency}-{to_currency}"
         if cache_key in cache:
             return cache[cache_key]
-        ticker = f"{from_currency}{to_currency}.FOREX"
-        url = f"https://eodhistoricaldata.com/api/real-time/{ticker}?api_token={api_key}&fmt=json"
+
+        # --- START OF FINAL FIX ---
+        # Determine the correct ticker and if we need to calculate the inverse.
+        # The EODHD EOD endpoint quotes currencies against the USD by default.
+        if from_currency == 'USD':
+            # Example: USD to HKD. Ticker is HKD.FOREX, rate is direct.
+            ticker = f"{to_currency}.FOREX"
+            inverse = False
+        elif to_currency == 'USD':
+            # Example: HKD to USD. Ticker is HKD.FOREX, rate must be inverted.
+            ticker = f"{from_currency}.FOREX"
+            inverse = True
+        else:
+            # Fallback for non-USD pairs, though not used in this script's logic.
+            st.warning(f"Non-USD pair conversion ({from_currency}-{to_currency}) not fully supported, defaulting to 1.0.")
+            return 1.0
+
+        # Use the /eod/ endpoint for the latest daily closing price.
+        url = f"https://eodhistoricaldata.com/api/eod/{ticker}?api_token={api_key}&fmt=json&limit=1"
+        
         try:
             response = requests.get(url, timeout=10)
             response.raise_for_status()
             data = response.json()
-            rate = float(data.get('close', 1.0))
-            cache[cache_key] = rate
-            return rate
-        except (requests.RequestException, ValueError, KeyError) as e:
+            
+            # The result is a list, get the latest entry.
+            if not data:
+                st.warning(f"No exchange rate data returned for {ticker}.")
+                return 1.0
+
+            rate = float(data[0].get('close', 1.0))
+
+            # If we need the inverse (e.g., for HKD to USD), calculate 1 / rate.
+            final_rate = 1.0 / rate if inverse and rate != 0 else rate
+            
+            cache[cache_key] = final_rate
+            return final_rate
+            
+        except (requests.RequestException, ValueError, KeyError, IndexError) as e:
             st.warning(f"⚠️ Could not fetch exchange rate for {from_currency} to {to_currency}. Defaulting to 1.0. Error: {e}")
             return 1.0
+        # --- END OF FINAL FIX ---
 
     def validate_company_quantitatively(instrument: dict, filters: dict, api_key: str, cache: dict) -> (str, dict):
         """
