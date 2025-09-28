@@ -5679,7 +5679,7 @@ def investment_pipeline_agent():
     # --- CORE FUNCTIONS ---
 
     def get_theme_sectors(theme: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
-        st.info(f"**(LIVE) Step 1A: AI is identifying guideline sectors for '{theme}'...")
+        st.info(f"Agent is identifying guideline sectors for '{theme}'...")
         prompt = f"""
         You are a highly accurate market analyst specializing in GICS sectors. For the investment theme "{theme}", identify up to 5 GICS sectors that are most directly relevant. These will be used as guidelines.
         Return a JSON object with a single key "sectors" containing a list of strings.
@@ -5693,7 +5693,7 @@ def investment_pipeline_agent():
         except Exception: return None
 
     def get_company_ideas(theme: str, sectors: list, country: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
-        st.info(f"**(LIVE) Step 1B: AI is generating a broad list of potential companies for '{theme}'...**")
+        st.info(f"Agent is generating a broad list of potential companies for '{theme}'...**")
         prompt = f"""
         As a financial analyst, generate a comprehensive list of up to 40 public companies relevant to the theme "{theme}", focusing on those in **{country}**. Use the sectors '{', '.join(sectors)}' as a primary guideline, but also include highly relevant companies from other sectors if their core business strongly aligns with the theme.
         
@@ -5818,11 +5818,12 @@ def investment_pipeline_agent():
         except (requests.RequestException, json.JSONDecodeError):
             return "ERROR", {"name": instrument.get('Name')}
 
-    # --- NEW: AI-powered thematic relevance filter ---
-    def filter_companies_by_theme_relevance(companies_df: pd.DataFrame, theme: str, client: AzureOpenAI, llm_deployment_name: str, api_key: str) -> list:
+    # --- REVISED AND FINAL: AI-powered thematic relevance filter with dynamic country context ---
+    def filter_companies_by_theme_relevance(companies_df: pd.DataFrame, theme: str, country: str, client: AzureOpenAI, llm_deployment_name: str, api_key: str) -> list:
         st.info(f"**(LIVE) AI is filtering {len(companies_df)} companies for thematic relevance...**")
         
         detailed_company_data = []
+        # Fetch descriptions for each company
         for i, company in companies_df.iterrows():
             ticker_code = f"{company['code']}.{company['exchange']}"
             try:
@@ -5830,17 +5831,18 @@ def investment_pipeline_agent():
                 response = requests.get(url, timeout=10)
                 if response.status_code == 200:
                     description = response.json().get('General', {}).get('Description', 'No description.')
-                    detailed_company_data.append({"ticker": company['code'], "name": company['name'], "sector": company['sector'], "description": description[:500]})
+                    detailed_company_data.append({"ticker": company['code'], "name": company['name'], "sector": company['sector'], "description": description[:700]})
             except Exception:
                 continue
         
         if not detailed_company_data:
-            st.warning("Could not fetch details to perform relevance filtering.")
+            st.warning("Could not fetch company details to perform relevance filtering.")
             return []
 
+        # --- THIS DYNAMIC PROMPT IS NOW ROBUST FOR ANY COUNTRY ---
         prompt = f"""
         You are an expert portfolio manager analyzing companies for the investment theme: "{theme}".
-        Review the following JSON list of companies, which includes their verified GICS sector and business description.
+        Review the following JSON list of companies from **{country}**.
 
         **Company List:**
         ```json
@@ -5848,7 +5850,11 @@ def investment_pipeline_agent():
         ```
 
         **Task:**
-        Identify companies that are **strong beneficiaries** of the "{theme}" theme. This includes companies whose core business is directly aligned, as well as **key enablers and second-order beneficiaries** whose revenue and growth are materially impacted by the theme. Return a JSON object.
+        Identify companies that are **strong beneficiaries** of the "{theme}" theme. This includes companies whose core business is directly aligned, as well as **key enablers and second-order beneficiaries** whose revenue and growth are materially impacted by the theme. 
+        
+        **IMPORTANT**: The business descriptions for these companies are from **{country}** and may be in the local language. Your analysis must account for this and correctly evaluate their relevance to the English-language theme.
+
+        Return a JSON object with a single key "relevant_tickers", containing a list of the chosen ticker symbols.
         """
         
         try:
@@ -5978,7 +5984,7 @@ def investment_pipeline_agent():
         st.info(f"Passed {len(quant_df)} companies through quantitative filters. Now running AI relevance check.")
         st.dataframe(quant_df[['code', 'name', 'sector', 'market_capitalization_local']], hide_index=True, use_container_width=True)
 
-        relevant_tickers = filter_companies_by_theme_relevance(quant_df, qualitative_theme, client, llm_deployment_name, eodhd_api_key)
+        relevant_tickers = filter_companies_by_theme_relevance(quant_df, qualitative_theme, selected_country_code, client, llm_deployment_name, eodhd_api_key)
 
         if not relevant_tickers:
             st.warning("The AI filter found no companies that are highly relevant to your theme from the validated list.")
@@ -6229,25 +6235,27 @@ def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
 # 14. Commodity Price Forecasting Agent (FINAL VERSION V2)
 # ==============================================================================
 
-def commodity_forecasting_agent(client: AzureOpenAI):
+# --- All imports at the top of the file ---
+import streamlit as st
+import pandas as pd
+import plotly.graph_objects as go
+from prophet import Prophet
+from prophet.plot import plot_components_plotly
+import pandas_ta as ta
+import requests
+from jinja2 import Template
+import os
+import json
+from datetime import datetime, timedelta
+from tavily import TavilyClient
+# Make sure to import AzureOpenAI at the top as well
+# from openai import AzureOpenAI # Or wherever it's defined in your full app.py
+
+def commodity_forecasting_agent(client: "AzureOpenAI"): # Use a string hint if AzureOpenAI is defined elsewhere
     """
     An advanced AI agent that uses Tools (Tavily Search) to autonomously find
     and analyze news for commodity price forecasting.
     """
-    # --- Local imports ---
-    import streamlit as st
-    import pandas as pd
-    import plotly.graph_objects as go
-    from prophet import Prophet
-    from prophet.plot import plot_components_plotly
-    import pandas_ta as ta
-    import requests
-    from jinja2 import Template
-    import os
-    import json
-    from datetime import datetime, timedelta
-    from tavily import TavilyClient
-
     # --- Page Configuration ---
     st.set_page_config(layout="wide")
     st.markdown("### 🌾 Commodity Price Forecasting Agent")
@@ -6415,6 +6423,7 @@ def commodity_forecasting_agent(client: AzureOpenAI):
         """
         template = Template(template_str)
         return template.render(data)
+
     # --- UI & WORKFLOW ---
     st.subheader("1. Define Commodity & Forecast Period")
     commodity_options = get_fmp_commodities(FMP_API_KEY)
