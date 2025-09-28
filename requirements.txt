@@ -46,3 +46,4 @@ prophet
 pandas-ta
 plotly
 kaleido
+tavily-python
