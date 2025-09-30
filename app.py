@@ -5675,7 +5675,7 @@ def investment_pipeline_agent():
 
     st.markdown("### 💡 Agent IdeaGen")
     st.markdown("Define a theme. The agent will brainstorm ideas, find the correct tickers, validate them, and perform a deep-dive analysis.")
-    
+
     try:
         eodhd_api_key = os.environ.get("EODHD_API_KEY")
         fmp_api_key = os.environ.get("FMP_API_KEY")
@@ -5684,7 +5684,7 @@ def investment_pipeline_agent():
     except Exception as e:
         st.error(f"Could not initialize secrets or clients. Error: {e}")
         return
-        
+
     # --- CORE FUNCTIONS ---
 
     def get_theme_sectors(theme: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
@@ -5703,7 +5703,7 @@ def investment_pipeline_agent():
 
     def get_company_ideas(theme: str, sectors: list, country: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
         st.info(f"**(LIVE) Step 1B: AI is generating a broad list of potential companies for '{theme}'...**")
-        
+
         prompt = f"""
         As a financial analyst, generate a comprehensive list of up to 15 public companies relevant to the theme "{theme}".
         The focus is on companies primarily operating in or serving the **{country}** market.
@@ -5713,7 +5713,7 @@ def investment_pipeline_agent():
         3.  **General Examples:** Apple is 'AAPL.US', Volkswagen is 'VOW3.F', Tencent is '0700.HK'. Chinese stocks listed on Shanghai Stock Exchange end with '.SS' and those on Shenzen Stock Exchange end with '.SZ'
         Return ONLY a single comma-separated string of the correct ticker symbols, sorted alphabetically.
         """
-        
+
         try:
             response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], temperature=0.0)
             content = response.choices[0].message.content
@@ -5723,7 +5723,7 @@ def investment_pipeline_agent():
             return tickers
         except Exception:
             return []
-    
+
     def get_exchange_rate(from_currency: str, to_currency: str, api_key: str, cache: dict) -> float:
         """ Fetches the latest closing exchange rate between two currencies. """
         if from_currency == to_currency: return 1.0
@@ -5775,14 +5775,14 @@ def investment_pipeline_agent():
 
                     if market_cap_usd < mkt_cap_filter_usd: return "FAIL_MCAP", {}
                     if div_yield < (filters["dividend_yield_min"] / 100): return "FAIL_DIVIDEND", {}
-                    
+
                     return "PASS", {
-                        "code": code, "name": company_name, "exchange": exchange, 
-                        "sector": sector, "market_capitalization_local": market_cap, 
+                        "code": code, "name": company_name, "exchange": exchange,
+                        "sector": sector, "market_capitalization_local": market_cap,
                         "dividend_yield": div_yield
                     }
         except Exception:
-            pass # Silently fail and proceed to fallback
+            pass
 
         # --- Attempt 2: FMP (Fallback) ---
         try:
@@ -5790,7 +5790,7 @@ def investment_pipeline_agent():
             profile_res = requests.get(profile_url, timeout=10)
             if profile_res.status_code != 200 or not profile_res.json():
                 raise ValueError("FMP Profile endpoint failed.")
-            
+
             profile_data = profile_res.json()[0]
             market_cap = profile_data.get('mktCap')
             currency = profile_data.get('currency')
@@ -5803,7 +5803,7 @@ def investment_pipeline_agent():
 
             ratios_data = ratios_res.json()[0]
             div_yield = ratios_data.get('dividendYield', 0.0) or 0.0
-            
+
             code_parts = ticker_full.split('.')
             code = code_parts[0]
             exchange = code_parts[1] if len(code_parts) > 1 else ''
@@ -5815,36 +5815,48 @@ def investment_pipeline_agent():
 
                 if market_cap_usd < mkt_cap_filter_usd: return "FAIL_MCAP", {}
                 if div_yield < (filters["dividend_yield_min"] / 100): return "FAIL_DIVIDEND", {}
-                
-                # Calculate local market cap for downstream compatibility
+
                 market_cap_local = market_cap_usd / rate_local_to_usd if rate_local_to_usd else 0
 
                 return "PASS", {
-                    "code": code, "name": company_name, "exchange": exchange, 
+                    "code": code, "name": company_name, "exchange": exchange,
                     "sector": "N/A", "market_capitalization_local": market_cap_local,
                     "dividend_yield": div_yield
                 }
-
         except Exception:
-            pass # Silently fail if FMP also fails
+            pass
 
-        # --- If both sources fail ---
         return "FAIL_ALL", {}
 
-    def filter_companies_by_theme_relevance(companies_df: pd.DataFrame, theme: str, country: str, client: AzureOpenAI, llm_deployment_name: str, api_key: str) -> list:
+    def filter_companies_by_theme_relevance(companies_df: pd.DataFrame, theme: str, country: str, client: AzureOpenAI, llm_deployment_name: str, eodhd_api_key: str, fmp_api_key: str) -> list:
         st.info(f"**(LIVE) AI is filtering {len(companies_df)} companies for thematic relevance...**")
         detailed_company_data = []
         for i, company in companies_df.iterrows():
             ticker_code = f"{company['code']}.{company['exchange']}"
+            description = None
+            
+            # --- Attempt 1: Get description from EODHD ---
             try:
-                url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker_code}?api_token={api_key}"
-                response = requests.get(url, timeout=10)
-                if response.status_code == 200:
-                    description = response.json().get('General', {}).get('Description', 'No description.')
-                    detailed_company_data.append({"ticker": company['code'], "name": company['name'], "sector": company['sector'], "description": description[:700]})
+                url_eod = f"https://eodhistoricaldata.com/api/fundamentals/{ticker_code}?api_token={eodhd_api_key}"
+                response_eod = requests.get(url_eod, timeout=10)
+                if response_eod.status_code == 200:
+                    description = response_eod.json().get('General', {}).get('Description', None)
             except Exception:
-                continue
-        
+                pass # Silently fail and try FMP
+
+            # --- Attempt 2: Get description from FMP if EODHD failed ---
+            if not description:
+                try:
+                    url_fmp = f"https://financialmodelingprep.com/api/v3/profile/{ticker_code}?apikey={fmp_api_key}"
+                    response_fmp = requests.get(url_fmp, timeout=10)
+                    if response_fmp.status_code == 200 and response_fmp.json():
+                        description = response_fmp.json()[0].get('description', 'No description.')
+                except Exception:
+                    continue # Skip this company if both sources fail
+
+            if description:
+                detailed_company_data.append({"ticker": company['code'], "name": company['name'], "sector": company['sector'], "description": description[:700]})
+
         if not detailed_company_data:
             st.warning("Could not fetch company details to perform relevance filtering.")
             return []
@@ -5852,18 +5864,14 @@ def investment_pipeline_agent():
         prompt = f"""
         You are an expert portfolio manager with a strict filtering mandate. Your task is to analyze companies for the investment theme: "{theme}".
         Review the following JSON list of companies from **{country}**.
-
         **Company List:**
         ```json
         {json.dumps(detailed_company_data, indent=2)}
         ```
-
         **Task & Strict Instructions:**
         Analyze each company's business description. Identify ONLY the companies where the theme "{theme}" is a **central and primary driver of its business model, revenue, and growth strategy.**
-
         - **DO** select companies whose core product/service IS the theme.
         - **DO NOT** select companies where the theme is merely an ancillary function, a minor division, or a tangential part of their business.
-
         Your evaluation must be extremely strict to ensure thematic purity.
         Return a JSON object with a single key "relevant_tickers", containing a list of the ticker symbols that meet this strict criteria.
         """
@@ -5953,18 +5961,18 @@ def investment_pipeline_agent():
     st.subheader("Step 3: Generate and Analyze Ideas")
     if st.button("🚀 Generate, Validate, and Analyze", type="primary"):
         if not qualitative_theme: st.warning("Please describe your theme."); return
-        
+
         # Stages 1 & 2
         with st.spinner("Stage 1 & 2: Generating and validating initial ideas..."):
             theme_sectors = get_theme_sectors(qualitative_theme, client, llm_deployment_name)
             if not theme_sectors: st.error("Could not identify guideline sectors."); return
-            
+
             company_tickers = get_company_ideas(qualitative_theme, theme_sectors, selected_country_code, client, llm_deployment_name)
             if not company_tickers: st.error("AI agent returned no initial company ideas."); return
 
             user_filters = {"market_cap_min": mkt_cap_min, "dividend_yield_min": dividend_yield_min}
             exchange_rate_cache = {}
-            
+
             quant_validated_companies = []
             progress = st.progress(0, text=f"Screening {len(company_tickers)} tickers...")
             for i, ticker in enumerate(company_tickers):
@@ -5980,29 +5988,29 @@ def investment_pipeline_agent():
         if not quant_validated_companies:
             st.warning("No companies passed the initial quantitative filters (Market Cap, Dividend Yield).")
             return
-        
+
         quant_df = pd.DataFrame(quant_validated_companies)
         st.info(f"Passed {len(quant_df)} companies through quantitative filters. Now running AI relevance check.")
         st.dataframe(quant_df[['code', 'name', 'sector', 'market_capitalization_local']], hide_index=True, use_container_width=True)
 
-        relevant_tickers = filter_companies_by_theme_relevance(quant_df, qualitative_theme, selected_country_code, client, llm_deployment_name, eodhd_api_key)
+        relevant_tickers = filter_companies_by_theme_relevance(quant_df, qualitative_theme, selected_country_code, client, llm_deployment_name, eodhd_api_key, fmp_api_key)
 
         if not relevant_tickers:
             st.warning("The AI filter found no companies that are highly relevant to your theme from the validated list.")
             return
-        
+
         final_df = quant_df[quant_df['code'].isin(relevant_tickers)]
-        
+
         # Stage 4
         st.success(f"Final list: {len(final_df)} highly relevant companies. Performing deep-dive analysis...")
         all_dossiers = []
-        
+
         with st.spinner(f"Performing deep-dive analysis on {len(final_df)} companies. Please wait..."):
             local_currency = COUNTRY_CURRENCY_MAP.get(selected_country_code, "USD")
             for i, company_row in final_df.iterrows():
                 company_name = company_row['name']
                 ticker_code = f"{company_row['code']}.{company_row['exchange']}"
-                
+
                 enrichment_data = enrich_company_data_eodhd(ticker_code, eodhd_api_key)
                 qual_analysis = run_ai_qualitative_analysis(company_name, enrichment_data['qualitative_corpus'], qualitative_theme, client, llm_deployment_name)
                 dossier = synthesize_dossier(company_row, qual_analysis, qualitative_theme, local_currency)
