@@ -5678,6 +5678,7 @@ def investment_pipeline_agent():
     
     try:
         eodhd_api_key = os.environ.get("EODHD_API_KEY")
+        fmp_api_key = os.environ.get("FMP_API_KEY")
         client = AzureOpenAI(api_key=os.environ.get("AZURE_OPENAI_KEY"), api_version="2024-02-01", azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"))
         llm_deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
     except Exception as e:
@@ -5703,18 +5704,15 @@ def investment_pipeline_agent():
     def get_company_ideas(theme: str, sectors: list, country: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
         st.info(f"**(LIVE) Step 1B: AI is generating a broad list of potential companies for '{theme}'...**")
         
-        # --- START OF FIX 2: IMPROVED PROMPT FOR BETTER TICKER GENERATION ---
         prompt = f"""
-        As a financial analyst, generate a comprehensive list of up to 40 public companies relevant to the theme "{theme}". The focus is on companies primarily operating in or serving the **{country}** market.
-
-        Instructions:
-        1.  Provide the ticker symbol including the correct exchange code (e.g., '7203.T' for Toyota, '0700.HK' for Tencent, '600519.SS' for Kweichow Moutai, 'RELIANCE.NS' for Reliance Industries).
-        2.  For companies from **{country}**, prioritize tickers listed on the primary local exchange(s).
-        3.  However, if a major **{country}** company is primarily listed on a foreign exchange (e.g., a Chinese tech company on NASDAQ or in Hong Kong), you **must include** that foreign-listed ticker. This is critical for accuracy.
-        4.  Do not invent tickers. Prioritize accuracy.
-        5.  Return ONLY a single comma-separated string of ticker symbols, sorted alphabetically.
+        As a financial analyst, generate a comprehensive list of up to 15 public companies relevant to the theme "{theme}".
+        The focus is on companies primarily operating in or serving the **{country}** market.
+        **CRITICAL INSTRUCTIONS for Ticker Formatting:**
+        1.  You MUST provide the ticker symbol followed by the correct EODHD/FMP exchange code (e.g., .MI for Borsa Italiana).
+        2.  **Examples for Italy:** Enel is 'ENEL.MI', Intesa Sanpaolo is 'ISP.MI'.
+        3.  **General Examples:** Apple is 'AAPL.US', Volkswagen is 'VOW3.F', Tencent is '0700.HK'. Chinese stocks listed on Shanghai Stock Exchange end with '.SS' and those on Shenzen Stock Exchange end with '.SZ'
+        Return ONLY a single comma-separated string of the correct ticker symbols, sorted alphabetically.
         """
-        # --- END OF FIX 2 ---
         
         try:
             response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], temperature=0.0)
@@ -5726,123 +5724,112 @@ def investment_pipeline_agent():
         except Exception:
             return []
     
-    def find_instrument_data(ticker_query: str, country: str, api_key: str) -> dict | None:
-        """
-        Searches for a stock using the EODHD API. It now uses a country equivalence
-        map to handle cases like Chinese companies listed in Hong Kong.
-        """
-        url = f"https://eodhistoricaldata.com/api/search/{ticker_query}?api_token={api_key}&fmt=json"
-        try:
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
-            search_results = response.json()
-            
-            # --- START OF FIX 1 (IMPLEMENTATION): USE EQUIVALENCE MAP ---
-            allowed_countries = COUNTRY_EQUIVALENCE.get(country, [country])
-            # --- END OF FIX 1 (IMPLEMENTATION) ---
-
-            for result in search_results:
-                is_correct_country = result.get("Country") in allowed_countries
-                is_common_stock = result.get("Type") == "Common Stock"
-                # Prioritize exact ticker match if possible to improve accuracy
-                is_exact_code_match = ticker_query.upper().startswith(result.get("Code", "").upper())
-
-                if is_correct_country and is_common_stock and is_exact_code_match:
-                    return result # Return the first high-confidence match
-            
-            # Fallback for less precise matches if no exact match was found
-            for result in search_results:
-                is_correct_country = result.get("Country") in allowed_countries
-                is_common_stock = result.get("Type") == "Common Stock"
-                if is_correct_country and is_common_stock:
-                    return result
-                    
-            return None
-        except (requests.RequestException, ValueError):
-            return None
-
     def get_exchange_rate(from_currency: str, to_currency: str, api_key: str, cache: dict) -> float:
         """ Fetches the latest closing exchange rate between two currencies. """
-        if from_currency == to_currency:
-            return 1.0
-
+        if from_currency == to_currency: return 1.0
         cache_key = f"{from_currency}-{to_currency}"
-        if cache_key in cache:
-            return cache[cache_key]
-
-        if from_currency == 'USD':
-            ticker = f"{to_currency}.FOREX"
-            inverse = False
-        elif to_currency == 'USD':
+        if cache_key in cache: return cache[cache_key]
+        if to_currency == 'USD':
             ticker = f"{from_currency}.FOREX"
             inverse = True
         else:
-            st.warning(f"Non-USD pair conversion ({from_currency}-{to_currency}) not fully supported, defaulting to 1.0.")
             return 1.0
-
         url = f"https://eodhistoricaldata.com/api/eod/{ticker}?api_token={api_key}&fmt=json&limit=1"
-        
         try:
             response = requests.get(url, timeout=10)
             response.raise_for_status()
             data = response.json()
-            
-            if not data:
-                st.warning(f"No exchange rate data returned for {ticker}.")
-                return 1.0
-
+            if not data: return 1.0
             rate = float(data[0].get('close', 1.0))
             final_rate = 1.0 / rate if inverse and rate != 0 else rate
-            
             cache[cache_key] = final_rate
             return final_rate
-            
-        except (requests.RequestException, ValueError, KeyError, IndexError) as e:
-            st.warning(f"⚠️ Could not fetch exchange rate for {from_currency} to {to_currency}. Defaulting to 1.0. Error: {e}")
+        except Exception:
+            st.warning(f"Could not fetch exchange rate for {from_currency}-USD. Defaulting to 1.0")
             return 1.0
 
-    def validate_company_quantitatively(instrument: dict, filters: dict, api_key: str, cache: dict) -> (str, dict):
-        """ Validates a company against quantitative filters with robust currency handling. """
-        ticker, exchange = instrument['Code'], instrument['Exchange']
+    def validate_ticker(ticker_full: str, filters: dict, eodhd_api_key: str, fmp_api_key: str, cache: dict) -> (str, dict):
+        """
+        Attempts to validate a ticker first with EODHD, then falls back to FMP if EODHD fails.
+        Returns a dictionary compatible with downstream functions.
+        """
+        # --- Attempt 1: EODHD ---
         try:
-            url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker}.{exchange}?api_token={api_key}"
+            url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker_full}?api_token={eodhd_api_key}"
             response = requests.get(url, timeout=10)
-            if response.status_code != 200: return "INCOMPLETE_DATA", {"name": instrument.get('Name')}
-            
-            data = response.json()
-            general = data.get('General', {}); highlights = data.get('Highlights', {})
-            
-            reporting_currency = general.get('CurrencyCode', 'USD')
-            market_cap_from_api = highlights.get('MarketCapitalization')
+            if response.status_code == 200:
+                data = response.json()
+                market_cap = data.get('Highlights', {}).get('MarketCapitalization')
+                div_yield = data.get('Highlights', {}).get('DividendYield', 0.0) or 0.0
+                currency = data.get('General', {}).get('CurrencyCode')
+                company_name = data.get('General', {}).get('Name')
+                sector = data.get('General', {}).get('Sector', 'N/A')
+                code_parts = ticker_full.split('.')
+                code = code_parts[0]
+                exchange = code_parts[1] if len(code_parts) > 1 else ''
 
-            if not all([general.get('Name'), market_cap_from_api is not None]):
-                return "INCOMPLETE_DATA", {"name": general.get('Name')}
+                if all([market_cap, currency, company_name]):
+                    rate_local_to_usd = get_exchange_rate(currency, "USD", eodhd_api_key, cache)
+                    market_cap_usd = float(market_cap) * rate_local_to_usd
+                    mkt_cap_filter_usd = filters["market_cap_min"] * 1e6
 
-            if reporting_currency == "USD":
-                market_cap_usd = market_cap_from_api
-            else:
-                rate_local_to_usd = get_exchange_rate(reporting_currency, "USD", api_key, cache)
-                market_cap_usd = market_cap_from_api * rate_local_to_usd
-            
-            mkt_cap_filter_usd = filters["market_cap_min"] * 1e6
-            
-            if market_cap_usd < mkt_cap_filter_usd:
-                return "FAIL_MCAP", {"name": general.get('Name'), "value": market_cap_from_api}
-            
-            dividend_yield = highlights.get('DividendYield') or 0.0
-            if dividend_yield < (filters["dividend_yield_min"] / 100):
-                return "FAIL_DIVIDEND", {"name": general.get('Name'), "value": dividend_yield}
+                    if market_cap_usd < mkt_cap_filter_usd: return "FAIL_MCAP", {}
+                    if div_yield < (filters["dividend_yield_min"] / 100): return "FAIL_DIVIDEND", {}
+                    
+                    return "PASS", {
+                        "code": code, "name": company_name, "exchange": exchange, 
+                        "sector": sector, "market_capitalization_local": market_cap, 
+                        "dividend_yield": div_yield
+                    }
+        except Exception:
+            pass # Silently fail and proceed to fallback
 
-            return "PASS", {
-                "code": ticker, 
-                "name": general.get('Name'), 
-                "exchange": exchange, 
-                "sector": general.get('Sector', 'N/A'), 
-                "market_capitalization_local": market_cap_from_api,
-                "dividend_yield": dividend_yield
-            }
-        except (requests.RequestException, json.JSONDecodeError):
-            return "ERROR", {"name": instrument.get('Name')}
+        # --- Attempt 2: FMP (Fallback) ---
+        try:
+            profile_url = f"https://financialmodelingprep.com/api/v3/profile/{ticker_full}?apikey={fmp_api_key}"
+            profile_res = requests.get(profile_url, timeout=10)
+            if profile_res.status_code != 200 or not profile_res.json():
+                raise ValueError("FMP Profile endpoint failed.")
+            
+            profile_data = profile_res.json()[0]
+            market_cap = profile_data.get('mktCap')
+            currency = profile_data.get('currency')
+            company_name = profile_data.get('companyName')
+
+            ratios_url = f"https://financialmodelingprep.com/api/v3/ratios/{ticker_full}?apikey={fmp_api_key}"
+            ratios_res = requests.get(ratios_url, timeout=10)
+            if ratios_res.status_code != 200 or not ratios_res.json():
+                raise ValueError("FMP Ratios endpoint failed.")
+
+            ratios_data = ratios_res.json()[0]
+            div_yield = ratios_data.get('dividendYield', 0.0) or 0.0
+            
+            code_parts = ticker_full.split('.')
+            code = code_parts[0]
+            exchange = code_parts[1] if len(code_parts) > 1 else ''
+
+            if all([market_cap, currency, company_name]):
+                rate_local_to_usd = get_exchange_rate(currency, "USD", eodhd_api_key, cache)
+                market_cap_usd = float(market_cap) * rate_local_to_usd
+                mkt_cap_filter_usd = filters["market_cap_min"] * 1e6
+
+                if market_cap_usd < mkt_cap_filter_usd: return "FAIL_MCAP", {}
+                if div_yield < (filters["dividend_yield_min"] / 100): return "FAIL_DIVIDEND", {}
+                
+                # Calculate local market cap for downstream compatibility
+                market_cap_local = market_cap_usd / rate_local_to_usd if rate_local_to_usd else 0
+
+                return "PASS", {
+                    "code": code, "name": company_name, "exchange": exchange, 
+                    "sector": "N/A", "market_capitalization_local": market_cap_local,
+                    "dividend_yield": div_yield
+                }
+
+        except Exception:
+            pass # Silently fail if FMP also fails
+
+        # --- If both sources fail ---
+        return "FAIL_ALL", {}
 
     def filter_companies_by_theme_relevance(companies_df: pd.DataFrame, theme: str, country: str, client: AzureOpenAI, llm_deployment_name: str, api_key: str) -> list:
         st.info(f"**(LIVE) AI is filtering {len(companies_df)} companies for thematic relevance...**")
@@ -5862,7 +5849,6 @@ def investment_pipeline_agent():
             st.warning("Could not fetch company details to perform relevance filtering.")
             return []
 
-        # --- START OF FIX 3: STRICTER PROMPT FOR RELEVANCE FILTERING ---
         prompt = f"""
         You are an expert portfolio manager with a strict filtering mandate. Your task is to analyze companies for the investment theme: "{theme}".
         Review the following JSON list of companies from **{country}**.
@@ -5876,13 +5862,11 @@ def investment_pipeline_agent():
         Analyze each company's business description. Identify ONLY the companies where the theme "{theme}" is a **central and primary driver of its business model, revenue, and growth strategy.**
 
         - **DO** select companies whose core product/service IS the theme.
-        - **DO NOT** select companies where the theme is merely an ancillary function, a minor division, or a tangential part of their business. For example, for the theme 'internet companies', a pure-play e-commerce firm is a strong fit. A large brick-and-mortar retailer that also has a website is a POOR fit and must be excluded.
+        - **DO NOT** select companies where the theme is merely an ancillary function, a minor division, or a tangential part of their business.
 
         Your evaluation must be extremely strict to ensure thematic purity.
-
         Return a JSON object with a single key "relevant_tickers", containing a list of the ticker symbols that meet this strict criteria.
         """
-        # --- END OF FIX 3 ---
         
         try:
             response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}, temperature=0.0)
@@ -5894,7 +5878,7 @@ def investment_pipeline_agent():
             st.error(f"Error during AI relevance filtering: {e}")
             return []
 
-    # --- HELPER FUNCTIONS (LOGGING REMOVED) ---
+    # --- HELPER FUNCTIONS (UNCHANGED) ---
     def enrich_company_data_eodhd(ticker_code: str, api_key: str) -> dict:
         base_url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker_code}"; params = {"api_token": api_key}
         try:
@@ -5981,16 +5965,14 @@ def investment_pipeline_agent():
             user_filters = {"market_cap_min": mkt_cap_min, "dividend_yield_min": dividend_yield_min}
             exchange_rate_cache = {}
             
-            quant_validated_companies = []; failure_reasons = []
+            quant_validated_companies = []
             progress = st.progress(0, text=f"Screening {len(company_tickers)} tickers...")
             for i, ticker in enumerate(company_tickers):
-                instrument = find_instrument_data(ticker, selected_country_code, eodhd_api_key)
-                if not instrument:
-                    failure_reasons.append(("NOT_FOUND", {"name": ticker}))
-                else:
-                    status, result = validate_company_quantitatively(instrument, user_filters, eodhd_api_key, exchange_rate_cache)
-                    if status == 'PASS': quant_validated_companies.append(result)
-                    else: failure_reasons.append((status, result))
+                status, result = validate_ticker(
+                    ticker, user_filters, eodhd_api_key, fmp_api_key, exchange_rate_cache
+                )
+                if status == 'PASS':
+                    quant_validated_companies.append(result)
                 progress.progress((i + 1) / len(company_tickers), text=f"Screening {ticker}...")
             progress.empty()
 
