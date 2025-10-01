@@ -5861,20 +5861,36 @@ def investment_pipeline_agent():
             st.warning("Could not fetch company details to perform relevance filtering.")
             return []
 
+        # --- START OF MODIFIED PROMPT ---
         prompt = f"""
-        You are an expert portfolio manager with a strict filtering mandate. Your task is to analyze companies for the investment theme: "{theme}".
+        You are an expert portfolio manager with a nuanced filtering mandate. Your task is to analyze companies for their relevance to the investment theme: "{theme}".
+
         Review the following JSON list of companies from **{country}**.
+
         **Company List:**
         ```json
         {json.dumps(detailed_company_data, indent=2)}
         ```
-        **Task & Strict Instructions:**
-        Analyze each company's business description. Identify ONLY the companies where the theme "{theme}" is a **central and primary driver of its business model, revenue, and growth strategy.**
-        - **DO** select companies whose core product/service IS the theme.
-        - **DO NOT** select companies where the theme is merely an ancillary function, a minor division, or a tangential part of their business.
-        Your evaluation must be extremely strict to ensure thematic purity.
-        Return a JSON object with a single key "relevant_tickers", containing a list of the ticker symbols that meet this strict criteria.
+
+        **Task & Instructions:**
+
+        Analyze each company's business description to determine its connection to the theme. The goal is to identify companies that are integral to the hyperscaler supply chain and ecosystem.
+
+        - **High Relevance:** Select companies whose products or services are essential for building and operating hyperscale data centers. This includes, but is not limited to:
+            - **Semiconductor companies** that design or manufacture high-performance chips (CPUs, GPUs, AI accelerators) used in servers.
+            - **Server manufacturers** and component suppliers (e.g., motherboards, chassis, interconnects).
+            - **Networking equipment** providers.
+            - Companies providing other critical data center infrastructure.
+
+        - **Moderate Relevance:** You may also consider companies that have significant exposure to the hyperscaler market, even if it is not their sole focus.
+
+        - **Low Relevance:** Do not select companies where the connection to hyperscalers is indirect or a minor part of their business.
+
+        Your evaluation should be discerning but not overly literal. Focus on the underlying economic linkage to the theme.
+
+        Return a JSON object with a single key "relevant_tickers", containing a list of the ticker symbols that you identify as relevant.
         """
+        # --- END OF MODIFIED PROMPT ---
         
         try:
             response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}, temperature=0.0)
