@@ -47,3 +47,5 @@ pandas-ta
 plotly
 kaleido
 tavily-python
+
+hdbscan

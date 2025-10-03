@@ -6631,8 +6631,264 @@ def commodity_forecasting_agent(client: "AzureOpenAI"):
                                        use_container_width=True)
 
 
+
 # ==============================================================================
-# 15. MAIN APP ROUTER (CORRECTED AND COMPLETE)
+# 15. Portfolio Risk Correlator (NEW AGENT)
+# ==============================================================================
+
+def portfolio_risk_correlator_app(client: "AzureOpenAI"):
+    """
+    An agent to identify and visualize correlated risks across a portfolio of companies
+    by clustering risk factors extracted from uploaded documents.
+    """
+    import hdbscan
+    import numpy as np
+    from sentence_transformers import SentenceTransformer
+
+    st.markdown("### 🧬 Portfolio Risk Correlator")
+    st.markdown(
+        "Upload annual reports or presentations for your portfolio companies to uncover hidden, correlated risks."
+    )
+
+    # --- AGENT-SPECIFIC HELPER FUNCTIONS ---
+
+    @st.cache_data(show_spinner=False)
+    def extract_text_from_pdf_bytes(file_bytes: bytes, filename: str) -> str:
+        """Extracts text from a PDF file provided as bytes."""
+        import fitz  # PyMuPDF
+        try:
+            with fitz.open(stream=file_bytes, filetype="pdf") as doc:
+                return "\n".join(page.get_text() for page in doc)
+        except Exception as e:
+            st.warning(f"Could not read {filename}: {e}")
+            return ""
+
+    @st.cache_data(show_spinner=False)
+    def extract_risk_sentences_with_llm(_full_text: str, _client: "AzureOpenAI") -> list[str]:
+        """Uses an LLM to pre-process a document and extract only risk-related sentences."""
+        if not _full_text or len(_full_text) < 200:
+            return []
+        
+        # We process the document in chunks to handle large reports
+        chunk_size = 80000  # Approx token limit for context
+        chunks = [_full_text[i:i + chunk_size] for i in range(0, len(_full_text), chunk_size)]
+        all_risks = []
+
+        for chunk in chunks:
+            prompt = f"""
+            From the following text from a corporate document, extract all sentences or short paragraphs (under 100 words) that explicitly describe a business, financial, operational, competitive, or regulatory risk, threat, or uncertainty.
+
+            Return the results as a JSON object with a single key "risks" which is a list of strings.
+            If no risks are found in the text, return an empty list.
+
+            TEXT:
+            ---
+            {chunk}
+            ---
+            """
+            try:
+                response = _client.chat.completions.create(
+                    model=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME"),
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"},
+                    temperature=0.0,
+                )
+                risks = json.loads(response.choices[0].message.content).get("risks", [])
+                all_risks.extend(risks)
+            except Exception as e:
+                st.warning(f"An LLM error occurred during risk extraction: {e}")
+                continue
+        
+        return list(set(all_risks)) # Return unique risks
+
+    @st.cache_data(show_spinner=False)
+    def get_cluster_name_with_llm(risk_sentences: list, _client: "AzureOpenAI") -> str:
+        """Uses an LLM to generate a human-readable name for a cluster of risk sentences."""
+        context = "\n".join([f"- {s}" for s in risk_sentences[:20]]) # Use up to 20 sentences for context
+        prompt = f"""
+        The following is a list of risk statements extracted from various company reports. They have been algorithmically clustered together because they are semantically similar.
+
+        Your task is to provide a single, concise, human-readable name for this cluster of risks. The name should be 3-6 words long.
+
+        RISK STATEMENTS:
+        ---
+        {context}
+        ---
+
+        Example Names: "Geopolitical Tensions in Eastern Europe", "Global Semiconductor Shortage", "Changing Consumer Privacy Regulations".
+
+        Cluster Name:
+        """
+        try:
+            response = _client.chat.completions.create(
+                model=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME"),
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+            )
+            return response.choices[0].message.content.strip().replace('"', '')
+        except Exception:
+            return "Unnamed Risk Cluster"
+
+    def generate_risk_dashboard_html(clusters: dict) -> str:
+        """Creates a visually appealing HTML dashboard from the clustered risk data."""
+        styles = """
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap');
+            .risk-dashboard { font-family: 'Poppins', sans-serif; }
+            .dashboard-header { font-size: 2em; font-weight: 600; color: #00416A; border-bottom: 2px solid #00416A; padding-bottom: 10px; margin-bottom: 25px; }
+            .cluster-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 25px; }
+            .cluster-card { background-color: #f8f9fa; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+            .cluster-title { font-size: 1.2em; font-weight: 600; color: #1e1e1e; margin-bottom: 15px; }
+            .cluster-size { font-size: 0.9em; color: #6c757d; float: right; }
+            .company-list { list-style-type: none; padding-left: 0; }
+            .company-list li { background-color: #e6f1f6; color: #00416A; padding: 8px 12px; border-radius: 20px; margin-bottom: 8px; font-size: 0.9em; display: inline-block; margin-right: 8px; }
+        </style>
+        """
+        
+        cards_html = ""
+        # Sort clusters by size (number of companies) descending
+        sorted_clusters = sorted(clusters.items(), key=lambda item: len(item[1]['companies']), reverse=True)
+
+        for name, data in sorted_clusters:
+            company_pills = "".join(f"<li>{company}</li>" for company in sorted(list(data['companies'])))
+            cards_html += f"""
+            <div class="cluster-card">
+                <div class="cluster-title">
+                    <span class="cluster-size">{len(data['companies'])} Companies</span>
+                    {name}
+                </div>
+                <ul class="company-list">{company_pills}</ul>
+            </div>
+            """
+
+        return f"""
+        <!DOCTYPE html><html><head><title>Portfolio Risk Dashboard</title>{styles}</head>
+        <body><div class="risk-dashboard">
+            <div class="dashboard-header">Top Correlated Risk Clusters</div>
+            <div class="cluster-grid">{cards_html}</div>
+        </div></body></html>
+        """
+
+    # --- UI & WORKFLOW ---
+
+    # Step 1: Initialize Portfolio in Session State
+    if 'prc_portfolio' not in st.session_state:
+        st.session_state.prc_portfolio = {} # e.g., {"Apple": [file1, file2], "Microsoft": [file3]}
+
+    st.subheader("1. Define Your Portfolio & Upload Documents")
+
+    # Step 2: UI to add companies and upload files
+    new_company = st.text_input("Add a new company to the portfolio")
+    if st.button("Add Company") and new_company:
+        if new_company not in st.session_state.prc_portfolio:
+            st.session_state.prc_portfolio[new_company] = None
+        st.rerun()
+
+    if not st.session_state.prc_portfolio:
+        st.info("Start by adding a company to your portfolio.")
+    else:
+        st.write("---")
+        # Create a file uploader for each company in the portfolio
+        for company in list(st.session_state.prc_portfolio.keys()):
+            cols_up, cols_del = st.columns([4, 1])
+            with cols_up:
+                files = st.file_uploader(
+                    f"Upload documents for **{company}**",
+                    type=["pdf"],
+                    accept_multiple_files=True,
+                    key=f"uploader_{company}"
+                )
+                if files:
+                    st.session_state.prc_portfolio[company] = files
+            with cols_del:
+                st.write("") # Spacer
+                st.write("")
+                if st.button(f"Remove {company}", key=f"del_{company}"):
+                    del st.session_state.prc_portfolio[company]
+                    st.rerun()
+
+    st.write("---")
+    st.subheader("2. Run Correlated Risk Analysis")
+
+    # Step 3: Run the analysis
+    if st.button("🚀 Analyze Portfolio Risks", type="primary", use_container_width=True):
+        # Validate that documents have been uploaded
+        portfolio_with_docs = {
+            company: files for company, files in st.session_state.prc_portfolio.items() if files
+        }
+        if len(portfolio_with_docs) < 2:
+            st.warning("Please upload documents for at least two companies to run a correlation analysis.")
+        else:
+            all_risk_data = [] # List of tuples: (company_name, risk_sentence)
+            with st.spinner("Stage 1/4: Extracting risks from all documents... This may take a while."):
+                for company, files in portfolio_with_docs.items():
+                    st.write(f"Processing documents for **{company}**...")
+                    for file in files:
+                        file_bytes = file.getvalue()
+                        full_text = extract_text_from_pdf_bytes(file_bytes, file.name)
+                        risk_sentences = extract_risk_sentences_with_llm(full_text, client)
+                        for risk in risk_sentences:
+                            all_risk_data.append((company, risk))
+
+            if not all_risk_data:
+                st.error("Could not extract any risk statements from the uploaded documents.")
+                st.stop()
+
+            st.success(f"Extracted a total of {len(all_risk_data)} risk statements across {len(portfolio_with_docs)} companies.")
+
+            with st.spinner("Stage 2/4: Embedding risks and running clustering algorithm..."):
+                sentences = [item[1] for item in all_risk_data]
+                
+                # It's good practice to load the model only when needed
+                model = SentenceTransformer("all-MiniLM-L6-v2")
+                embeddings = model.encode(sentences, show_progress_bar=True)
+                
+                # Use HDBSCAN for clustering
+                clusterer = hdbscan.HDBSCAN(min_cluster_size=2, min_samples=1, metric='euclidean', gen_min_span_tree=True)
+                cluster_labels = clusterer.fit_predict(embeddings)
+
+            with st.spinner("Stage 3/4: Interpreting and naming risk clusters with AI..."):
+                # Group sentences by cluster label
+                clustered_sentences = {}
+                for i, label in enumerate(cluster_labels):
+                    if label != -1: # -1 is noise/outliers
+                        if label not in clustered_sentences:
+                            clustered_sentences[label] = {'companies': set(), 'sentences': []}
+                        clustered_sentences[label]['companies'].add(all_risk_data[i][0])
+                        clustered_sentences[label]['sentences'].append(all_risk_data[i][1])
+                
+                # Filter out clusters with only one company
+                meaningful_clusters = {k: v for k, v in clustered_sentences.items() if len(v['companies']) > 1}
+
+                # Name the meaningful clusters
+                final_clusters = {}
+                for label, data in meaningful_clusters.items():
+                    cluster_name = get_cluster_name_with_llm(data['sentences'], client)
+                    final_clusters[cluster_name] = data
+            
+            with st.spinner("Stage 4/4: Generating final dashboard..."):
+                if not final_clusters:
+                     st.warning("No significant correlated risks (affecting more than one company) were found.")
+                     st.session_state.prc_dashboard = "<div>No correlated risks found.</div>"
+                else:
+                    st.session_state.prc_dashboard = generate_risk_dashboard_html(final_clusters)
+                st.success("Analysis complete!")
+
+    # Step 4: Display the dashboard if it exists
+    if 'prc_dashboard' in st.session_state:
+        st.markdown("---")
+        st.subheader("Risk Correlation Dashboard")
+        st.components.v1.html(st.session_state.prc_dashboard, height=800, scrolling=True)
+        st.download_button(
+            label="📥 Download Dashboard as HTML",
+            data=st.session_state.prc_dashboard,
+            file_name="portfolio_risk_dashboard.html",
+            mime="text/html",
+            use_container_width=True
+        )
+
+# ==============================================================================
+# 16. MAIN APP ROUTER (CORRECTED AND COMPLETE)
 # ==============================================================================
 
 def main():
@@ -6700,6 +6956,8 @@ def main():
         real_time_sentinel_app(user_id=st.session_state.username, client=openai_client)
     elif app_mode == "Agent IdeaGen": 
         investment_pipeline_agent()
+    elif app_mode == "Portfolio Risk Correlator":
+        portfolio_risk_correlator_app(client=openai_client)
     elif app_mode == "Agent Credit":
         agent_credit_app_azure()
     elif app_mode == "Model Integrity Agent":
@@ -6741,7 +6999,8 @@ def main():
             {"name": "Agent Sentinel", "title": "📡 Agent Sentinel", "description": "Proactively monitor portfolio companies for key news, filings, and events."},
             {"name": "Model Integrity Agent", "title": "🛡️ Model Integrity Agent", "description": "Audit Excel financial models for errors, hard-codes, and inconsistencies."},
             {"name": "Commodity Forecaster", "title": "🌾 Commodity Forecaster", "description": "Forecast commodity prices using time-series data, technical indicators, and news sentiment analysis."},
-            {"name": "Real-Time Sentinel", "title": "🚨 Real-Time Sentinel", "description": "Provides a real-time warning system for compliance issues and tail risks."}
+            {"name": "Real-Time Sentinel", "title": "🚨 Real-Time Sentinel", "description": "Provides a real-time warning system for compliance issues and tail risks."},
+            {"name": "Portfolio Risk Correlator", "title": "🧬 Portfolio Risk Correlator", "description": "Upload documents for multiple companies to identify and visualize hidden, correlated risks across your portfolio."}
         ]
 
         # Filter the cards based on the user's permissions
