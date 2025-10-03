@@ -5,8 +5,8 @@ FROM python:3.13-slim
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
-# Step 2: Install Google Chrome using the modern, secure method without apt-key
-RUN apt-get update && apt-get install -y curl gnupg \
+# Step 2: Install build tools and Google Chrome in a single layer for efficiency
+RUN apt-get update && apt-get install -y curl gnupg build-essential python3-dev \
     && curl -sS https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome-keyring.gpg \
     && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
     && apt-get update \
