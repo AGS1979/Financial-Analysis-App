@@ -1265,7 +1265,7 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
             response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}, temperature=0.0)
             return json.loads(response.choices[0].message.content)
         except Exception as e:
-            st.error(f"Error generating AI scenarios: {e}"); return None
+            st.error(f"Error generating scenarios: {e}"); return None
 
     def perform_dcf_calculations(financials_df, scenario_assumptions, wacc, terminal_multiples=None):
         if financials_df.empty or not scenario_assumptions: return None
@@ -1419,7 +1419,7 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
         c1, c2 = st.columns(2)
         c1.text_input("Company Name", "NVIDIA", key="dcf_company", help="Enter the full name of the company.")
         # Corrected key to dcf_ticker_input for consistency
-        c1.text_input("Stock Ticker (e.g., 'AAPL', 'BA.L')", key="dcf_ticker_input", help="Provide the exact ticker. This will override the AI search.")
+        c1.text_input("Stock Ticker (e.g., 'AAPL', 'BA.L')", key="dcf_ticker_input", help="Provide the exact ticker. This will override the Agent search.")
         c2.number_input("WACC (%)", 1.0, 20.0, 12.5, 0.1, key="dcf_wacc", help="Weighted Average Cost of Capital.")
         if st.session_state["dcf_data_source"] == "Upload Financials (CSV/Excel)":
             c2.file_uploader("Upload Financials File", type=["csv", "xlsx"], key="dcf_upload")
@@ -1489,7 +1489,7 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
                     st.session_state.dcf_step = "review"
                     st.rerun()
                 else:
-                    st.error("❌ Could not generate AI assumptions.")
+                    st.error("❌ Could not generate assumptions.")
                     st.session_state.dcf_step = "initial"
                     st.rerun()
             else:
@@ -1500,7 +1500,7 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
     # --- Block 3: Reviewing assumptions ---
     if st.session_state.dcf_step == "review":
         st.subheader("🔬 Review AI-Generated Assumptions")
-        st.markdown("The AI has generated forecasts based on its analysis. Review them below and revise if necessary.")
+        st.markdown("The Agent has generated forecasts based on its analysis. Review them below and revise if necessary.")
         
         temp_results = perform_dcf_calculations(st.session_state.dcf_financials, st.session_state.dcf_assumptions, st.session_state.dcf_wacc_input)
         currency_symbol = get_currency_symbol(st.session_state.dcf_ticker)
@@ -3687,7 +3687,7 @@ Approach this analysis without bias. Remain completely objective and do not beco
 
                                 except json.JSONDecodeError:
                                     st.error("Failed to parse the Risk Assessment response from the AI. The format was not valid JSON.")
-                                    st.text_area("Raw AI Response:", analysis_md, height=200)
+                                    st.text_area("Raw Response:", analysis_md, height=200)
 
                             else: # --- Existing workflow for all other types ---
                                 if analysis_choice == "Competitive Analysis":
@@ -4165,7 +4165,7 @@ def pe_agent_app_azure():
             result = poller.result()
             return (result.content or ""), []
         except Exception as e:
-            st.error(f"Azure AI Document Intelligence error: {e}")
+            st.error(f"Azure Document Intelligence error: {e}")
             return None, []
 
     def fallback_pdf_text(file_bytes: bytes) -> str:
@@ -4265,7 +4265,7 @@ def pe_agent_app_azure():
             response = client.chat.completions.create(model=openai_deployment_name, messages=[{"role": "user", "content": f"{prompt}\n\nSOURCE TEXT:\n---\n{source_text[:12000]}\n---"}], temperature=0.1)
             return response.choices[0].message.content
         except Exception as e:
-            return f"Error during AI analysis: {e}"
+            return f"Error during analysis: {e}"
 
     def generate_advanced_outreach_email(company_name: str, recipient_name: str, analysis_points: str, value_prop: str, sender_name: str, sender_title: str, firm_name: str) -> str:
         prompt = f"""...""" # Omitted for brevity
@@ -4964,7 +4964,7 @@ def agent_credit_app_azure():
                             cleaned_txt = re.sub(r"^```json|```$", "", txt.strip(), flags=re.MULTILINE)
                             return json.loads(cleaned_txt)
                         except json.JSONDecodeError:
-                             return {"error": "Failed to decode JSON from AI response."}
+                             return {"error": "Failed to decode JSON from response."}
                     return txt
                 
                 except RateLimitError as e:
@@ -5598,7 +5598,7 @@ def agent_sentinel_app():
             )
             return response.choices[0].message.content
         except Exception as e:
-            return f"## Error\n\n**Error during Azure OpenAI analysis:** {e}"
+            return f"## Error\n\n**Error during analysis:** {e}"
 
     # --- UI & WORKFLOW ---
     st.subheader("1. Define Portfolio")
@@ -5685,7 +5685,7 @@ def investment_pipeline_agent():
 
     # --- (Functions get_theme_sectors, get_company_ideas, get_exchange_rate, validate_ticker, filter_companies_by_theme_relevance remain the same) ---
     def get_theme_sectors(theme: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
-        st.info(f"**(LIVE) Step 1A: AI is identifying guideline sectors for '{theme}'...")
+        st.info(f"**(LIVE) Step 1A: Agent is identifying guideline sectors for '{theme}'...")
         prompt = f"""
         You are a highly accurate market analyst specializing in GICS sectors. For the investment theme "{theme}", identify up to 5 GICS sectors that are most directly relevant. These will be used as guidelines.
         Return a JSON object with a single key "sectors" containing a list of strings.
@@ -5699,7 +5699,7 @@ def investment_pipeline_agent():
         except Exception: return None
 
     def get_company_ideas(theme: str, sectors: list, country: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
-        st.info(f"**(LIVE) Step 1B: AI is generating a broad list of potential companies for '{theme}'...**")
+        st.info(f"**(LIVE) Step 1B: Agent is generating a broad list of potential companies for '{theme}'...**")
         prompt = f"""
         As a financial analyst, generate a comprehensive list of up to 30 public companies relevant to the theme "{theme}".
         The focus is on companies primarily operating in or serving the **{country}** market.
@@ -5784,7 +5784,7 @@ def investment_pipeline_agent():
         return "FAIL_ALL", {}
 
     def filter_companies_by_theme_relevance(companies_df: pd.DataFrame, theme: str, country: str, client: AzureOpenAI, llm_deployment_name: str, eodhd_api_key: str, fmp_api_key: str) -> list:
-        st.info(f"**(LIVE) AI is filtering {len(companies_df)} companies for thematic relevance...**")
+        st.info(f"**(LIVE) Agent is filtering {len(companies_df)} companies for thematic relevance...**")
         detailed_company_data = []
         for i, company in companies_df.iterrows():
             ticker_code = f"{company['code']}.{company['exchange']}"
@@ -5817,10 +5817,10 @@ def investment_pipeline_agent():
         try:
             response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}, temperature=0.0)
             relevant_tickers = json.loads(response.choices[0].message.content).get("relevant_tickers", [])
-            st.success(f"AI identified {len(relevant_tickers)} companies as highly relevant.")
+            st.success(f"Agent identified {len(relevant_tickers)} companies as highly relevant.")
             return relevant_tickers
         except Exception as e:
-            st.error(f"Error during AI relevance filtering: {e}")
+            st.error(f"Error during relevance filtering: {e}")
             return []
 
     def aggregate_qualitative_data_eodhd(ticker_code: str, api_key: str) -> str:
@@ -5898,7 +5898,7 @@ def investment_pipeline_agent():
             )
             return json.loads(response.choices[0].message.content)
         except Exception as e:
-            st.error(f"Error in AI Analysis for {company_name}: {e}")
+            st.error(f"Error in Analysis for {company_name}: {e}")
             return {}
     # --- END OF IMPROVEMENT 2 ---
 
@@ -5992,7 +5992,7 @@ def investment_pipeline_agent():
             theme_sectors = get_theme_sectors(qualitative_theme, client, llm_deployment_name)
             if not theme_sectors: st.error("Could not identify guideline sectors."); return
             company_tickers = get_company_ideas(qualitative_theme, theme_sectors, selected_country_code, client, llm_deployment_name)
-            if not company_tickers: st.error("AI agent returned no initial company ideas."); return
+            if not company_tickers: st.error("Agent returned no initial company ideas."); return
             user_filters = {"market_cap_min": mkt_cap_min, "dividend_yield_min": dividend_yield_min}
             exchange_rate_cache = {}
             quant_validated_companies = []
@@ -6005,10 +6005,10 @@ def investment_pipeline_agent():
 
         if not quant_validated_companies: st.warning("No companies passed initial quantitative filters."); return
         quant_df = pd.DataFrame(quant_validated_companies)
-        st.info(f"Passed {len(quant_df)} companies through quantitative filters. Now running AI relevance check.")
+        st.info(f"Passed {len(quant_df)} companies through quantitative filters. Now running relevance check.")
         
         relevant_tickers = filter_companies_by_theme_relevance(quant_df, qualitative_theme, selected_country_code, client, llm_deployment_name, eodhd_api_key, fmp_api_key)
-        if not relevant_tickers: st.warning("AI filter found no highly relevant companies."); return
+        if not relevant_tickers: st.warning("Agent filter found no highly relevant companies."); return
         
         # --- UPDATED ORCHESTRATION ---
         initial_final_df = quant_df[quant_df['code'].isin(relevant_tickers)].reset_index(drop=True)
@@ -6018,7 +6018,7 @@ def investment_pipeline_agent():
         final_df = enrich_final_companies_with_financials(initial_final_df, eodhd_api_key)
         
         all_dossiers = []
-        with st.spinner(f"Performing deep-dive AI analysis on {len(final_df)} companies..."):
+        with st.spinner(f"Performing deep-dive analysis on {len(final_df)} companies..."):
             local_currency = COUNTRY_CURRENCY_MAP.get(selected_country_code, "USD")
             for i, company_row in final_df.iterrows():
                 company_name = company_row['name']
@@ -6391,7 +6391,7 @@ def commodity_forecasting_agent(client: "AzureOpenAI"):
             return content
         except Exception as e:
             st.error(f"Error in LLM analysis: {e}")
-            return f"Error during AI analysis: {e}" if not is_json else {"error": f"API Error: {e}"}
+            return f"Error during analysis: {e}" if not is_json else {"error": f"API Error: {e}"}
 
     def run_news_analysis_agent(commodity_name, _tavily_client, _azure_client):
         """Orchestrates the tool-using agent to find and analyze news."""
