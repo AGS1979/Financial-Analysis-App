@@ -6644,6 +6644,12 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
     import hdbscan
     import numpy as np
     from sentence_transformers import SentenceTransformer
+    import streamlit as st
+    import fitz  # PyMuPDF
+    import json
+    import os
+    from collections import defaultdict
+    from sklearn.cluster import AgglomerativeClustering
 
     st.markdown("### 🧬 Portfolio Risk Correlator")
     st.markdown(
@@ -6655,7 +6661,6 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
     @st.cache_data(show_spinner=False)
     def extract_text_from_pdf_bytes(file_bytes: bytes, filename: str) -> str:
         """Extracts text from a PDF file provided as bytes."""
-        import fitz  # PyMuPDF
         try:
             with fitz.open(stream=file_bytes, filetype="pdf") as doc:
                 return "\n".join(page.get_text() for page in doc)
@@ -6669,17 +6674,18 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
         if not _full_text or len(_full_text) < 200:
             return []
         
-        # We process the document in chunks to handle large reports
-        chunk_size = 80000  # Approx token limit for context
+        chunk_size = 80000
         chunks = [_full_text[i:i + chunk_size] for i in range(0, len(_full_text), chunk_size)]
         all_risks = []
 
         for chunk in chunks:
             prompt = f"""
-            From the following text from a corporate document, extract all sentences or short paragraphs (under 100 words) that explicitly describe a business, financial, operational, competitive, or regulatory risk, threat, or uncertainty.
+            From the following text from a corporate document, extract all sentences or short paragraphs (under 100 words) that explicitly describe a **specific business, financial, operational, competitive, or regulatory risk, threat, or uncertainty.**
+
+            **Crucially, you MUST IGNORE generic, non-specific, or boilerplate legal disclaimers.** Do not extract sentences related to general forward-looking statements, liability waivers, or unverified information unless they are tied to a specific, quantifiable risk.
 
             Return the results as a JSON object with a single key "risks" which is a list of strings.
-            If no risks are found in the text, return an empty list.
+            If no specific risks are found, return an empty list.
 
             TEXT:
             ---
@@ -6699,12 +6705,74 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
                 st.warning(f"An LLM error occurred during risk extraction: {e}")
                 continue
         
-        return list(set(all_risks)) # Return unique risks
+        return list(set(all_risks))
+
+    @st.cache_data(show_spinner=False)
+    def get_risk_score_with_llm(risk_sentence: str, _client: "AzureOpenAI") -> dict:
+        """Uses an LLM to score a single risk sentence for severity and likelihood."""
+        prompt = f"""
+        You are a financial risk analysis model. Based on the following risk statement from a corporate report, assess its potential severity and likelihood.
+
+        - Severity: The potential impact on the company's financials or operations. Choose one: [Low, Medium, High, Critical].
+        - Likelihood: The probability of the risk occurring in the next 1-2 years. Choose one: [Unlikely, Possible, Likely].
+
+        RISK STATEMENT: "{risk_sentence}"
+
+        Return a JSON object with two keys: "severity" and "likelihood".
+        Example response: {{"severity": "High", "likelihood": "Possible"}}
+        """
+        try:
+            response = _client.chat.completions.create(
+                model=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME"),
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                temperature=0.0,
+            )
+            scores = json.loads(response.choices[0].message.content)
+            if "severity" in scores and "likelihood" in scores:
+                return scores
+            else:
+                return {"severity": "Medium", "likelihood": "Possible"}
+        except Exception:
+            return {"severity": "Medium", "likelihood": "Possible"}
+
+    def deduplicate_and_group_risks(all_risk_data: list[dict], model: "SentenceTransformer"):
+        """
+        Groups semantically similar risks together to avoid boilerplate redundancy.
+        Now handles a list of dictionaries.
+        """
+        if not all_risk_data:
+            return {}
+
+        sentences = [item['sentence'] for item in all_risk_data]
+        embeddings = model.encode(sentences)
+
+        clustering = AgglomerativeClustering(n_clusters=None, distance_threshold=0.1).fit(embeddings)
+        
+        grouped_risks = defaultdict(lambda: {'companies': set(), 'sentences': []})
+        representative_sentence_map = {}
+
+        for i, label in enumerate(clustering.labels_):
+            risk_item = all_risk_data[i]
+            grouped_risks[label]['companies'].add(risk_item['company'])
+            grouped_risks[label]['sentences'].append(risk_item)
+            
+            if label not in representative_sentence_map:
+                representative_sentence_map[label] = risk_item['sentence']
+        
+        final_deduplicated_risks = {}
+        for label, data in grouped_risks.items():
+            if len(data['companies']) > 1:
+                rep_sentence = representative_sentence_map[label]
+                # Store all data associated with the representative sentence
+                final_deduplicated_risks[rep_sentence] = data
+                
+        return final_deduplicated_risks
 
     @st.cache_data(show_spinner=False)
     def get_cluster_name_with_llm(risk_sentences: list, _client: "AzureOpenAI") -> str:
         """Uses an LLM to generate a human-readable name for a cluster of risk sentences."""
-        context = "\n".join([f"- {s}" for s in risk_sentences[:20]]) # Use up to 20 sentences for context
+        context = "\n".join([f"- {s}" for s in risk_sentences[:20]])
         prompt = f"""
         The following is a list of risk statements extracted from various company reports. They have been algorithmically clustered together because they are semantically similar.
 
@@ -6730,29 +6798,48 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
             return "Unnamed Risk Cluster"
 
     def generate_risk_dashboard_html(clusters: dict) -> str:
-        """Creates a visually appealing HTML dashboard from the clustered risk data."""
-        styles = """
+        """Creates a visually appealing HTML dashboard from the clustered risk data, including risk scores."""
+        # Define colors for severity levels
+        severity_colors = {
+            "Critical": "#D32F2F", # Red
+            "High": "#F57C00",     # Orange
+            "Medium": "#FBC02D",   # Yellow
+            "Low": "#388E3C",      # Green
+        }
+        
+        styles = f"""
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap');
-            .risk-dashboard { font-family: 'Poppins', sans-serif; }
-            .dashboard-header { font-size: 2em; font-weight: 600; color: #00416A; border-bottom: 2px solid #00416A; padding-bottom: 10px; margin-bottom: 25px; }
-            .cluster-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 25px; }
-            .cluster-card { background-color: #f8f9fa; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
-            .cluster-title { font-size: 1.2em; font-weight: 600; color: #1e1e1e; margin-bottom: 15px; }
-            .cluster-size { font-size: 0.9em; color: #6c757d; float: right; }
-            .company-list { list-style-type: none; padding-left: 0; }
-            .company-list li { background-color: #e6f1f6; color: #00416A; padding: 8px 12px; border-radius: 20px; margin-bottom: 8px; font-size: 0.9em; display: inline-block; margin-right: 8px; }
+            .risk-dashboard {{ font-family: 'Poppins', sans-serif; }}
+            .dashboard-header {{ font-size: 2em; font-weight: 600; color: #00416A; border-bottom: 2px solid #00416A; padding-bottom: 10px; margin-bottom: 25px; }}
+            .cluster-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 25px; }}
+            .cluster-card {{ background-color: #f8f9fa; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); border-left: 5px solid #ccc; }}
+            .cluster-title {{ font-size: 1.2em; font-weight: 600; color: #1e1e1e; margin-bottom: 15px; }}
+            .cluster-size {{ font-size: 0.9em; color: #6c757d; float: right; }}
+            .company-list {{ list-style-type: none; padding-left: 0; }}
+            .company-list li {{ background-color: #e6f1f6; color: #00416A; padding: 8px 12px; border-radius: 20px; margin-bottom: 8px; font-size: 0.9em; display: inline-block; margin-right: 8px; }}
+            .cluster-card.severity-Critical {{ border-left-color: {severity_colors['Critical']}; }}
+            .cluster-card.severity-High {{ border-left-color: {severity_colors['High']}; }}
+            .cluster-card.severity-Medium {{ border-left-color: {severity_colors['Medium']}; }}
+            .cluster-card.severity-Low {{ border-left-color: {severity_colors['Low']}; }}
         </style>
         """
         
         cards_html = ""
-        # Sort clusters by size (number of companies) descending
-        sorted_clusters = sorted(clusters.items(), key=lambda item: len(item[1]['companies']), reverse=True)
+        # Sort clusters by the highest severity first, then by number of companies
+        severity_order = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1}
+        sorted_clusters = sorted(clusters.items(), 
+                                 key=lambda item: (
+                                     severity_order.get(item[1].get('highest_severity', 'Low'), 0), 
+                                     len(item[1]['companies'])
+                                 ), 
+                                 reverse=True)
 
         for name, data in sorted_clusters:
+            highest_severity = data.get('highest_severity', 'Medium')
             company_pills = "".join(f"<li>{company}</li>" for company in sorted(list(data['companies'])))
             cards_html += f"""
-            <div class="cluster-card">
+            <div class="cluster-card severity-{highest_severity}">
                 <div class="cluster-title">
                     <span class="cluster-size">{len(data['companies'])} Companies</span>
                     {name}
@@ -6770,14 +6857,11 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
         """
 
     # --- UI & WORKFLOW ---
-
-    # Step 1: Initialize Portfolio in Session State
     if 'prc_portfolio' not in st.session_state:
-        st.session_state.prc_portfolio = {} # e.g., {"Apple": [file1, file2], "Microsoft": [file3]}
+        st.session_state.prc_portfolio = {}
 
     st.subheader("1. Define Your Portfolio & Upload Documents")
 
-    # Step 2: UI to add companies and upload files
     new_company = st.text_input("Add a new company to the portfolio")
     if st.button("Add Company") and new_company:
         if new_company not in st.session_state.prc_portfolio:
@@ -6788,7 +6872,6 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
         st.info("Start by adding a company to your portfolio.")
     else:
         st.write("---")
-        # Create a file uploader for each company in the portfolio
         for company in list(st.session_state.prc_portfolio.keys()):
             cols_up, cols_del = st.columns([4, 1])
             with cols_up:
@@ -6801,7 +6884,7 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
                 if files:
                     st.session_state.prc_portfolio[company] = files
             with cols_del:
-                st.write("") # Spacer
+                st.write("")
                 st.write("")
                 if st.button(f"Remove {company}", key=f"del_{company}"):
                     del st.session_state.prc_portfolio[company]
@@ -6810,71 +6893,76 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
     st.write("---")
     st.subheader("2. Run Correlated Risk Analysis")
 
-    # Step 3: Run the analysis
     if st.button("🚀 Analyze Portfolio Risks", type="primary", use_container_width=True):
-        # Validate that documents have been uploaded
-        portfolio_with_docs = {
-            company: files for company, files in st.session_state.prc_portfolio.items() if files
-        }
+        portfolio_with_docs = {c: f for c, f in st.session_state.prc_portfolio.items() if f}
         if len(portfolio_with_docs) < 2:
             st.warning("Please upload documents for at least two companies to run a correlation analysis.")
         else:
-            all_risk_data = [] # List of tuples: (company_name, risk_sentence)
-            with st.spinner("Stage 1/4: Extracting risks from all documents... This may take a while."):
+            all_risk_data = []
+            with st.spinner("Stage 1/4: Extracting and scoring risks from documents..."):
                 for company, files in portfolio_with_docs.items():
                     st.write(f"Processing documents for **{company}**...")
                     for file in files:
                         file_bytes = file.getvalue()
                         full_text = extract_text_from_pdf_bytes(file_bytes, file.name)
                         risk_sentences = extract_risk_sentences_with_llm(full_text, client)
-                        for risk in risk_sentences:
-                            all_risk_data.append((company, risk))
-
+                        for sentence in risk_sentences:
+                            scores = get_risk_score_with_llm(sentence, client)
+                            all_risk_data.append({
+                                "company": company,
+                                "sentence": sentence,
+                                "severity": scores.get("severity", "Medium"),
+                                "likelihood": scores.get("likelihood", "Possible")
+                            })
             if not all_risk_data:
                 st.error("Could not extract any risk statements from the uploaded documents.")
                 st.stop()
-
-            st.success(f"Extracted a total of {len(all_risk_data)} risk statements across {len(portfolio_with_docs)} companies.")
-
-            with st.spinner("Stage 2/4: Embedding risks and running clustering algorithm..."):
-                sentences = [item[1] for item in all_risk_data]
-                
-                # It's good practice to load the model only when needed
-                model = SentenceTransformer("all-MiniLM-L6-v2")
-                embeddings = model.encode(sentences, show_progress_bar=True)
-                
-                # Use HDBSCAN for clustering
-                clusterer = hdbscan.HDBSCAN(min_cluster_size=2, min_samples=1, metric='euclidean', gen_min_span_tree=True)
-                cluster_labels = clusterer.fit_predict(embeddings)
-
-            with st.spinner("Stage 3/4: Interpreting and naming risk clusters with AI..."):
-                # Group sentences by cluster label
-                clustered_sentences = {}
-                for i, label in enumerate(cluster_labels):
-                    if label != -1: # -1 is noise/outliers
-                        if label not in clustered_sentences:
-                            clustered_sentences[label] = {'companies': set(), 'sentences': []}
-                        clustered_sentences[label]['companies'].add(all_risk_data[i][0])
-                        clustered_sentences[label]['sentences'].append(all_risk_data[i][1])
-                
-                # Filter out clusters with only one company
-                meaningful_clusters = {k: v for k, v in clustered_sentences.items() if len(v['companies']) > 1}
-
-                # Name the meaningful clusters
-                final_clusters = {}
-                for label, data in meaningful_clusters.items():
-                    cluster_name = get_cluster_name_with_llm(data['sentences'], client)
-                    final_clusters[cluster_name] = data
+            st.success(f"Extracted and scored {len(all_risk_data)} total risk statements.")
             
+            with st.spinner("Stage 2/4: Deduplicating and grouping semantically similar risks..."):
+                model = SentenceTransformer("all-MiniLM-L6-v2")
+                deduplicated_risks = deduplicate_and_group_risks(all_risk_data, model)
+                if not deduplicated_risks:
+                    st.warning("No correlated risks (affecting more than one company) were found after deduplication.")
+                    st.stop()
+                st.success(f"Found {len(deduplicated_risks)} unique correlated risk themes.")
+
+            with st.spinner("Stage 3/4: Clustering themes and interpreting with AI..."):
+                representative_sentences = list(deduplicated_risks.keys())
+                embeddings = model.encode(representative_sentences)
+                clusterer = hdbscan.HDBSCAN(min_cluster_size=2, min_samples=1, metric='euclidean')
+                cluster_labels = clusterer.fit_predict(embeddings)
+                
+                final_clusters = {}
+                severity_order = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1}
+                for i, label in enumerate(cluster_labels):
+                    if label != -1:
+                        if label not in final_clusters:
+                            # Get all sentences within this new cluster to name it properly
+                            sentences_for_naming = [s for j, l in enumerate(cluster_labels) if l == label for s in [list(deduplicated_risks.keys())[j]]]
+                            cluster_name = get_cluster_name_with_llm(sentences_for_naming, client)
+                            final_clusters[cluster_name] = {'companies': set(), 'sentences': [], 'highest_severity': 'Low'}
+
+                        rep_sentence = representative_sentences[i]
+                        theme_data = deduplicated_risks[rep_sentence]
+                        final_clusters[cluster_name]['companies'].update(theme_data['companies'])
+                        final_clusters[cluster_name]['sentences'].extend(theme_data['sentences'])
+                        
+                        # Determine the highest severity in the cluster
+                        for risk_item in theme_data['sentences']:
+                            current_highest_sev = final_clusters[cluster_name]['highest_severity']
+                            item_sev = risk_item['severity']
+                            if severity_order.get(item_sev, 0) > severity_order.get(current_highest_sev, 0):
+                                final_clusters[cluster_name]['highest_severity'] = item_sev
+
             with st.spinner("Stage 4/4: Generating final dashboard..."):
                 if not final_clusters:
-                     st.warning("No significant correlated risks (affecting more than one company) were found.")
-                     st.session_state.prc_dashboard = "<div>No correlated risks found.</div>"
+                    st.warning("No significant correlated risks were found.")
+                    st.session_state.prc_dashboard = "<div>No correlated risks found.</div>"
                 else:
                     st.session_state.prc_dashboard = generate_risk_dashboard_html(final_clusters)
                 st.success("Analysis complete!")
 
-    # Step 4: Display the dashboard if it exists
     if 'prc_dashboard' in st.session_state:
         st.markdown("---")
         st.subheader("Risk Correlation Dashboard")
