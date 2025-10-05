@@ -6669,57 +6669,51 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
             return ""
 
     @st.cache_data(show_spinner=False)
-    def extract_risk_sentences_with_llm(_full_text: str, _client: "AzureOpenAI") -> list[str]:
-        """Uses an LLM to pre-process a document and extract only risk-related sentences."""
-        if not _full_text or len(_full_text) < 200:
-            return []
-        
-        chunk_size = 80000
-        chunks = [_full_text[i:i + chunk_size] for i in range(0, len(_full_text), chunk_size)]
-        all_risks = []
+def extract_and_score_risks_with_llm(_full_text: str, _client: "AzureOpenAI") -> list[dict]:
+    """
+    Uses an LLM to pre-process a document, extract risk-related sentences,
+    and score them in a single call.
+    """
+    if not _full_text or len(_full_text) < 200:
+        return []
 
-        for chunk in chunks:
-            prompt = f"""
-            From the following text from a corporate document, extract all sentences or short paragraphs (under 100 words) that explicitly describe a **specific business, financial, operational, competitive, or regulatory risk, threat, or uncertainty.**
+    chunk_size = 80000
+    chunks = [_full_text[i:i + chunk_size] for i in range(0, len(_full_text), chunk_size)]
+    all_risks_data = []
 
-            **Crucially, you MUST IGNORE generic, non-specific, or boilerplate legal disclaimers.** Do not extract sentences related to general forward-looking statements, liability waivers, or unverified information unless they are tied to a specific, quantifiable risk.
-
-            Return the results as a JSON object with a single key "risks" which is a list of strings.
-            If no specific risks are found, return an empty list.
-
-            TEXT:
-            ---
-            {chunk}
-            ---
-            """
-            try:
-                response = _client.chat.completions.create(
-                    model=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME"),
-                    messages=[{"role": "user", "content": prompt}],
-                    response_format={"type": "json_object"},
-                    temperature=0.0,
-                )
-                risks = json.loads(response.choices[0].message.content).get("risks", [])
-                all_risks.extend(risks)
-            except Exception as e:
-                st.warning(f"An LLM error occurred during risk extraction: {e}")
-                continue
-        
-        return list(set(all_risks))
-
-    @st.cache_data(show_spinner=False)
-    def get_risk_score_with_llm(risk_sentence: str, _client: "AzureOpenAI") -> dict:
-        """Uses an LLM to score a single risk sentence for severity and likelihood."""
+    for chunk in chunks:
         prompt = f"""
-        You are a financial risk analysis model. Based on the following risk statement from a corporate report, assess its potential severity and likelihood.
+        From the following text from a corporate document, extract all sentences or short paragraphs (under 100 words) that explicitly describe a **specific business, financial, operational, competitive, or regulatory risk, threat, or uncertainty.**
 
-        - Severity: The potential impact on the company's financials or operations. Choose one: [Low, Medium, High, Critical].
-        - Likelihood: The probability of the risk occurring in the next 1-2 years. Choose one: [Unlikely, Possible, Likely].
+        For each risk identified, assess its potential severity and likelihood.
+        - **Severity**: The potential impact on the company's financials or operations. Choose one: [Low, Medium, High, Critical].
+        - **Likelihood**: The probability of the risk occurring in the next 1-2 years. Choose one: [Unlikely, Possible, Likely].
 
-        RISK STATEMENT: "{risk_sentence}"
+        **Crucially, you MUST IGNORE generic, non-specific, or boilerplate legal disclaimers.**
 
-        Return a JSON object with two keys: "severity" and "likelihood".
-        Example response: {{"severity": "High", "likelihood": "Possible"}}
+        Return the results as a JSON object with a single key "risks", which is a list of objects. Each object must have three keys: "sentence", "severity", and "likelihood".
+        If no specific risks are found, return an empty list.
+
+        Example Response:
+        {{
+            "risks": [
+                {{
+                    "sentence": "A significant portion of our revenue is dependent on our top three clients.",
+                    "severity": "High",
+                    "likelihood": "Possible"
+                }},
+                {{
+                    "sentence": "Our operations in the XYZ region are subject to geopolitical instability.",
+                    "severity": "Medium",
+                    "likelihood": "Likely"
+                }}
+            ]
+        }}
+
+        TEXT:
+        ---
+        {chunk}
+        ---
         """
         try:
             response = _client.chat.completions.create(
@@ -6728,46 +6722,13 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
                 response_format={"type": "json_object"},
                 temperature=0.0,
             )
-            scores = json.loads(response.choices[0].message.content)
-            if "severity" in scores and "likelihood" in scores:
-                return scores
-            else:
-                return {"severity": "Medium", "likelihood": "Possible"}
-        except Exception:
-            return {"severity": "Medium", "likelihood": "Possible"}
+            risks = json.loads(response.choices[0].message.content).get("risks", [])
+            all_risks_data.extend(risks)
+        except Exception as e:
+            st.warning(f"An LLM error occurred during risk extraction: {e}")
+            continue
 
-    def deduplicate_and_group_risks(all_risk_data: list[dict], model: "SentenceTransformer"):
-        """
-        Groups semantically similar risks together to avoid boilerplate redundancy.
-        Now handles a list of dictionaries.
-        """
-        if not all_risk_data:
-            return {}
-
-        sentences = [item['sentence'] for item in all_risk_data]
-        embeddings = model.encode(sentences)
-
-        clustering = AgglomerativeClustering(n_clusters=None, distance_threshold=0.1).fit(embeddings)
-        
-        grouped_risks = defaultdict(lambda: {'companies': set(), 'sentences': []})
-        representative_sentence_map = {}
-
-        for i, label in enumerate(clustering.labels_):
-            risk_item = all_risk_data[i]
-            grouped_risks[label]['companies'].add(risk_item['company'])
-            grouped_risks[label]['sentences'].append(risk_item)
-            
-            if label not in representative_sentence_map:
-                representative_sentence_map[label] = risk_item['sentence']
-        
-        final_deduplicated_risks = {}
-        for label, data in grouped_risks.items():
-            if len(data['companies']) > 1:
-                rep_sentence = representative_sentence_map[label]
-                # Store all data associated with the representative sentence
-                final_deduplicated_risks[rep_sentence] = data
-                
-        return final_deduplicated_risks
+    return all_risks_data
 
     @st.cache_data(show_spinner=False)
     def get_cluster_name_with_llm(risk_sentences: list, _client: "AzureOpenAI") -> str:
@@ -6898,6 +6859,7 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
         if len(portfolio_with_docs) < 2:
             st.warning("Please upload documents for at least two companies to run a correlation analysis.")
         else:
+            # ... inside the "Analyze Portfolio Risks" button logic
             all_risk_data = []
             with st.spinner("Stage 1/4: Extracting and scoring risks from documents..."):
                 for company, files in portfolio_with_docs.items():
@@ -6905,14 +6867,16 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
                     for file in files:
                         file_bytes = file.getvalue()
                         full_text = extract_text_from_pdf_bytes(file_bytes, file.name)
-                        risk_sentences = extract_risk_sentences_with_llm(full_text, client)
-                        for sentence in risk_sentences:
-                            scores = get_risk_score_with_llm(sentence, client)
+                        
+                        # SINGLE call to the new, combined function
+                        scored_risks = extract_and_score_risks_with_llm(full_text, client)
+                        
+                        for risk_info in scored_risks:
                             all_risk_data.append({
                                 "company": company,
-                                "sentence": sentence,
-                                "severity": scores.get("severity", "Medium"),
-                                "likelihood": scores.get("likelihood", "Possible")
+                                "sentence": risk_info.get("sentence"),
+                                "severity": risk_info.get("severity", "Medium"),
+                                "likelihood": risk_info.get("likelihood", "Possible")
                             })
             if not all_risk_data:
                 st.error("Could not extract any risk statements from the uploaded documents.")
