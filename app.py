@@ -6669,66 +6669,66 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
             return ""
 
     @st.cache_data(show_spinner=False)
-def extract_and_score_risks_with_llm(_full_text: str, _client: "AzureOpenAI") -> list[dict]:
-    """
-    Uses an LLM to pre-process a document, extract risk-related sentences,
-    and score them in a single call.
-    """
-    if not _full_text or len(_full_text) < 200:
-        return []
-
-    chunk_size = 80000
-    chunks = [_full_text[i:i + chunk_size] for i in range(0, len(_full_text), chunk_size)]
-    all_risks_data = []
-
-    for chunk in chunks:
-        prompt = f"""
-        From the following text from a corporate document, extract all sentences or short paragraphs (under 100 words) that explicitly describe a **specific business, financial, operational, competitive, or regulatory risk, threat, or uncertainty.**
-
-        For each risk identified, assess its potential severity and likelihood.
-        - **Severity**: The potential impact on the company's financials or operations. Choose one: [Low, Medium, High, Critical].
-        - **Likelihood**: The probability of the risk occurring in the next 1-2 years. Choose one: [Unlikely, Possible, Likely].
-
-        **Crucially, you MUST IGNORE generic, non-specific, or boilerplate legal disclaimers.**
-
-        Return the results as a JSON object with a single key "risks", which is a list of objects. Each object must have three keys: "sentence", "severity", and "likelihood".
-        If no specific risks are found, return an empty list.
-
-        Example Response:
-        {{
-            "risks": [
-                {{
-                    "sentence": "A significant portion of our revenue is dependent on our top three clients.",
-                    "severity": "High",
-                    "likelihood": "Possible"
-                }},
-                {{
-                    "sentence": "Our operations in the XYZ region are subject to geopolitical instability.",
-                    "severity": "Medium",
-                    "likelihood": "Likely"
-                }}
-            ]
-        }}
-
-        TEXT:
-        ---
-        {chunk}
-        ---
+    def extract_and_score_risks_with_llm(_full_text: str, _client: "AzureOpenAI") -> list[dict]:
         """
-        try:
-            response = _client.chat.completions.create(
-                model=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME"),
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-                temperature=0.0,
-            )
-            risks = json.loads(response.choices[0].message.content).get("risks", [])
-            all_risks_data.extend(risks)
-        except Exception as e:
-            st.warning(f"An LLM error occurred during risk extraction: {e}")
-            continue
+        Uses an LLM to pre-process a document, extract risk-related sentences,
+        and score them in a single call.
+        """
+        if not _full_text or len(_full_text) < 200:
+            return []
 
-    return all_risks_data
+        chunk_size = 80000
+        chunks = [_full_text[i:i + chunk_size] for i in range(0, len(_full_text), chunk_size)]
+        all_risks_data = []
+
+        for chunk in chunks:
+            prompt = f"""
+            From the following text from a corporate document, extract all sentences or short paragraphs (under 100 words) that explicitly describe a **specific business, financial, operational, competitive, or regulatory risk, threat, or uncertainty.**
+
+            For each risk identified, assess its potential severity and likelihood.
+            - **Severity**: The potential impact on the company's financials or operations. Choose one: [Low, Medium, High, Critical].
+            - **Likelihood**: The probability of the risk occurring in the next 1-2 years. Choose one: [Unlikely, Possible, Likely].
+
+            **Crucially, you MUST IGNORE generic, non-specific, or boilerplate legal disclaimers.**
+
+            Return the results as a JSON object with a single key "risks", which is a list of objects. Each object must have three keys: "sentence", "severity", and "likelihood".
+            If no specific risks are found, return an empty list.
+
+            Example Response:
+            {{
+                "risks": [
+                    {{
+                        "sentence": "A significant portion of our revenue is dependent on our top three clients.",
+                        "severity": "High",
+                        "likelihood": "Possible"
+                    }},
+                    {{
+                        "sentence": "Our operations in the XYZ region are subject to geopolitical instability.",
+                        "severity": "Medium",
+                        "likelihood": "Likely"
+                    }}
+                ]
+            }}
+
+            TEXT:
+            ---
+            {chunk}
+            ---
+            """
+            try:
+                response = _client.chat.completions.create(
+                    model=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME"),
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"},
+                    temperature=0.0,
+                )
+                risks = json.loads(response.choices[0].message.content).get("risks", [])
+                all_risks_data.extend(risks)
+            except Exception as e:
+                st.warning(f"An LLM error occurred during risk extraction: {e}")
+                continue
+
+        return all_risks_data
 
     @st.cache_data(show_spinner=False)
     def get_cluster_name_with_llm(risk_sentences: list, _client: "AzureOpenAI") -> str:
