@@ -6636,7 +6636,7 @@ def commodity_forecasting_agent(client: "AzureOpenAI"):
 # 15. Portfolio Risk Correlator (NEW AGENT)
 # ==============================================================================
 
-def portfolio_risk_correlator_app(client: "AzureOpenAI"):
+def portfolio_risk_correlator_app(client: "AzureOpenAI"): # The 'client' parameter is no longer used but kept for consistency
     """
     An agent to identify and visualize correlated risks across a portfolio of companies
     by clustering risk factors extracted from uploaded documents.
@@ -6648,6 +6648,7 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
     import fitz  # PyMuPDF
     import json
     import os
+    import requests # Added for DeepSeek API calls
     from collections import defaultdict
     from sklearn.cluster import AgglomerativeClustering
 
@@ -6655,6 +6656,18 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
     st.markdown(
         "Upload annual reports or presentations for your portfolio companies to uncover hidden, correlated risks."
     )
+
+    # --- AGENT CONFIG (ADAPTED FOR DEEPSEEK) ---
+    try:
+        DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
+        if not DEEPSEEK_API_KEY:
+            st.error("DeepSeek API key not found. Please add it to your Streamlit secrets.")
+            st.stop()
+    except Exception as e:
+        st.error(f"Configuration error: {e}")
+        st.stop()
+        
+    DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 
     # --- AGENT-SPECIFIC HELPER FUNCTIONS ---
 
@@ -6669,9 +6682,9 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
             return ""
 
     @st.cache_data(show_spinner=False)
-    def extract_and_score_risks_with_llm(_full_text: str, _client: "AzureOpenAI") -> list[dict]:
+    def extract_and_score_risks_with_llm(_full_text: str) -> list[dict]:
         """
-        Uses an LLM to pre-process a document, extract risk-related sentences,
+        Uses DeepSeek to pre-process a document, extract risk-related sentences,
         and score them in a single call.
         """
         if not _full_text or len(_full_text) < 200:
@@ -6694,45 +6707,70 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
             Return the results as a JSON object with a single key "risks", which is a list of objects. Each object must have three keys: "sentence", "severity", and "likelihood".
             If no specific risks are found, return an empty list.
 
-            Example Response:
-            {{
-                "risks": [
-                    {{
-                        "sentence": "A significant portion of our revenue is dependent on our top three clients.",
-                        "severity": "High",
-                        "likelihood": "Possible"
-                    }},
-                    {{
-                        "sentence": "Our operations in the XYZ region are subject to geopolitical instability.",
-                        "severity": "Medium",
-                        "likelihood": "Likely"
-                    }}
-                ]
-            }}
-
             TEXT:
             ---
             {chunk}
             ---
             """
             try:
-                response = _client.chat.completions.create(
-                    model=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME"),
-                    messages=[{"role": "user", "content": prompt}],
-                    response_format={"type": "json_object"},
-                    temperature=0.0,
-                )
-                risks = json.loads(response.choices[0].message.content).get("risks", [])
+                headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
+                payload = {
+                    "model": "deepseek-chat",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "response_format": {"type": "json_object"},
+                    "temperature": 0.0,
+                }
+                response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=120)
+                response.raise_for_status()
+                risks = json.loads(response.json()['choices'][0]['message']['content']).get("risks", [])
                 all_risks_data.extend(risks)
             except Exception as e:
                 st.warning(f"An LLM error occurred during risk extraction: {e}")
                 continue
 
         return all_risks_data
+        
+    def deduplicate_and_group_risks(all_risk_data: list[dict], model: "SentenceTransformer"):
+        """
+        Groups semantically similar risks together to avoid boilerplate redundancy.
+        This function was missing and has been added.
+        """
+        if not all_risk_data:
+            return {}
+
+        sentences = [item['sentence'] for item in all_risk_data if 'sentence' in item]
+        if not sentences:
+             return {} # Return early if no sentences to process
+             
+        embeddings = model.encode(sentences)
+
+        # Use Agglomerative Clustering for deduplication
+        clustering = AgglomerativeClustering(n_clusters=None, distance_threshold=0.1).fit(embeddings)
+        
+        grouped_risks = defaultdict(lambda: {'companies': set(), 'sentences': []})
+        representative_sentence_map = {}
+
+        for i, label in enumerate(clustering.labels_):
+            risk_item = all_risk_data[i]
+            grouped_risks[label]['companies'].add(risk_item['company'])
+            grouped_risks[label]['sentences'].append(risk_item)
+            
+            # Use the first sentence in a cluster as its representative
+            if label not in representative_sentence_map:
+                representative_sentence_map[label] = risk_item['sentence']
+        
+        final_deduplicated_risks = {}
+        for label, data in grouped_risks.items():
+            # Only consider risks that are common to more than one company
+            if len(data['companies']) > 1:
+                rep_sentence = representative_sentence_map[label]
+                final_deduplicated_risks[rep_sentence] = data
+                
+        return final_deduplicated_risks
 
     @st.cache_data(show_spinner=False)
-    def get_cluster_name_with_llm(risk_sentences: list, _client: "AzureOpenAI") -> str:
-        """Uses an LLM to generate a human-readable name for a cluster of risk sentences."""
+    def get_cluster_name_with_llm(risk_sentences: list) -> str:
+        """Uses DeepSeek to generate a human-readable name for a cluster of risk sentences."""
         context = "\n".join([f"- {s}" for s in risk_sentences[:20]])
         prompt = f"""
         The following is a list of risk statements extracted from various company reports. They have been algorithmically clustered together because they are semantically similar.
@@ -6749,17 +6787,21 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
         Cluster Name:
         """
         try:
-            response = _client.chat.completions.create(
-                model=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME"),
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-            )
-            return response.choices[0].message.content.strip().replace('"', '')
+            headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
+            payload = {
+                "model": "deepseek-chat",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.1,
+            }
+            response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=60)
+            response.raise_for_status()
+            return response.json()['choices'][0]['message']['content'].strip().replace('"', '')
         except Exception:
             return "Unnamed Risk Cluster"
 
+    # --- HTML Dashboard Generation (No changes needed here) ---
     def generate_risk_dashboard_html(clusters: dict) -> str:
-        """Creates a visually appealing HTML dashboard from the clustered risk data, including risk scores."""
+        # ... [This function remains exactly the same as in your provided code] ...
         # Define colors for severity levels
         severity_colors = {
             "Critical": "#D32F2F", # Red
@@ -6787,7 +6829,6 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
         """
         
         cards_html = ""
-        # Sort clusters by the highest severity first, then by number of companies
         severity_order = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1}
         sorted_clusters = sorted(clusters.items(), 
                                  key=lambda item: (
@@ -6845,8 +6886,8 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
                 if files:
                     st.session_state.prc_portfolio[company] = files
             with cols_del:
-                st.write("")
-                st.write("")
+                st.write("") # Spacer
+                st.write("") # Spacer
                 if st.button(f"Remove {company}", key=f"del_{company}"):
                     del st.session_state.prc_portfolio[company]
                     st.rerun()
@@ -6859,7 +6900,6 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
         if len(portfolio_with_docs) < 2:
             st.warning("Please upload documents for at least two companies to run a correlation analysis.")
         else:
-            # ... inside the "Analyze Portfolio Risks" button logic
             all_risk_data = []
             with st.spinner("Stage 1/4: Extracting and scoring risks from documents..."):
                 for company, files in portfolio_with_docs.items():
@@ -6868,8 +6908,8 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
                         file_bytes = file.getvalue()
                         full_text = extract_text_from_pdf_bytes(file_bytes, file.name)
                         
-                        # SINGLE call to the new, combined function
-                        scored_risks = extract_and_score_risks_with_llm(full_text, client)
+                        # UPDATED: Call the DeepSeek function
+                        scored_risks = extract_and_score_risks_with_llm(full_text)
                         
                         for risk_info in scored_risks:
                             all_risk_data.append({
@@ -6885,6 +6925,7 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
             
             with st.spinner("Stage 2/4: Deduplicating and grouping semantically similar risks..."):
                 model = SentenceTransformer("all-MiniLM-L6-v2")
+                # This helper function was missing; it's now defined above.
                 deduplicated_risks = deduplicate_and_group_risks(all_risk_data, model)
                 if not deduplicated_risks:
                     st.warning("No correlated risks (affecting more than one company) were found after deduplication.")
@@ -6900,11 +6941,11 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
                 final_clusters = {}
                 severity_order = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1}
                 for i, label in enumerate(cluster_labels):
-                    if label != -1:
+                    if label != -1: # Ignore outliers
                         if label not in final_clusters:
-                            # Get all sentences within this new cluster to name it properly
                             sentences_for_naming = [s for j, l in enumerate(cluster_labels) if l == label for s in [list(deduplicated_risks.keys())[j]]]
-                            cluster_name = get_cluster_name_with_llm(sentences_for_naming, client)
+                            # UPDATED: Call the DeepSeek function
+                            cluster_name = get_cluster_name_with_llm(sentences_for_naming)
                             final_clusters[cluster_name] = {'companies': set(), 'sentences': [], 'highest_severity': 'Low'}
 
                         rep_sentence = representative_sentences[i]
@@ -6912,7 +6953,6 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"):
                         final_clusters[cluster_name]['companies'].update(theme_data['companies'])
                         final_clusters[cluster_name]['sentences'].extend(theme_data['sentences'])
                         
-                        # Determine the highest severity in the cluster
                         for risk_item in theme_data['sentences']:
                             current_highest_sev = final_clusters[cluster_name]['highest_severity']
                             item_sev = risk_item['severity']
