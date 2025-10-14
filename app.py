@@ -2182,119 +2182,119 @@ def esg_analyzer_app():
 
     # --- START: REVISED, MULTI-STAGE ANALYSIS FUNCTION ---
     def analyze_esg_in_stages(text: str) -> dict:
-    """
-    Performs ESG analysis in multiple stages to avoid API timeouts.
-    Stage 1: Get summary and scores.
-    Stage 2: Get KPIs and takeaways for each pillar separately using specialized prompts.
-    """
-    if not text.strip():
-        return {"error": "No text provided for analysis."}
-        
-    try:
-        # Initialize client inside the function that uses it
-        client = AzureOpenAI(
-            api_key=os.environ.get("AZURE_OPENAI_KEY"),
-            api_version="2024-02-01",
-            azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT")
-        )
-        deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
-    except Exception as e:
-        st.error(f"Failed to initialize Azure OpenAI client: {e}")
-        return {"error": f"Azure client initialization failed: {e}"}
-
-    full_esg_data = {}
-    
-    # --- Stage 1: Get overall summary and scores ---
-    with st.spinner("Analyzing overall posture and generating scores... (Stage 1/4)"):
+        """
+        Performs ESG analysis in multiple stages to avoid API timeouts.
+        Stage 1: Get summary and scores.
+        Stage 2: Get KPIs and takeaways for each pillar separately using specialized prompts.
+        """
+        if not text.strip():
+            return {"error": "No text provided for analysis."}
+            
         try:
-            prompt_stage1 = f"""
-            You are an expert ESG analyst. Based on the provided ESG report, perform the following two tasks:
-            1. Write a concise, 2-3 sentence narrative summary of the company's overall ESG posture.
-            2. Provide an estimated score from 0.0 to 10.0 for the overall performance and for each of the E, S, and G pillars.
-
-            Return a single, valid JSON object with the following keys: "executive_summary", "overall_score", "environmental_score", "social_score", "governance_score".
-
-            DOCUMENT TEXT:
-            ---
-            {text[:80000]}
-            ---
-            """
-            response_stage1 = client.chat.completions.create(
-                model=deployment_name,
-                messages=[{"role": "user", "content": prompt_stage1}],
-                response_format={"type": "json_object"},
-                temperature=0.1
+            # Initialize client inside the function that uses it
+            client = AzureOpenAI(
+                api_key=os.environ.get("AZURE_OPENAI_KEY"),
+                api_version="2024-02-01",
+                azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT")
             )
-            summary_and_scores = json.loads(response_stage1.choices[0].message.content)
-            full_esg_data.update(summary_and_scores)
+            deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
         except Exception as e:
-            st.error(f"Error during Stage 1 (Summary & Scores): {e}")
-            return {"error": f"Failed at Stage 1: {e}"}
+            st.error(f"Failed to initialize Azure OpenAI client: {e}")
+            return {"error": f"Azure client initialization failed: {e}"}
 
-    # --- Stage 2: Get details for each pillar individually ---
-    pillars = ["environmental", "social", "governance"]
-    full_esg_data["kpis"] = {}
-    full_esg_data["pillar_takeaways"] = {}
-    full_esg_data["environmental_insights"] = [] # Initialize for classic report
-    full_esg_data["social_insights"] = []
-    full_esg_data["governance_insights"] = []
-
-    for i, pillar in enumerate(pillars):
-        with st.spinner(f"Extracting KPIs and takeaways for {pillar.title()} pillar... (Stage {i+2}/4)"):
+        full_esg_data = {}
+        
+        # --- Stage 1: Get overall summary and scores ---
+        with st.spinner("Analyzing overall posture and generating scores... (Stage 1/4)"):
             try:
-                # Default prompt for Environmental and Social pillars
-                prompt_stage2_base = f"""
-                You are an ESG analyst focused on the '{pillar.title()}' pillar. From the provided ESG report text, perform the following tasks:
-                1.  Identify the 4-5 most relevant and quantifiable Key Performance Indicators (KPIs). For each KPI, provide its icon, title, value, unit, a brief context, and a rating ('Positive', 'Neutral', 'Negative').
-                2.  Provide one or two key takeaways summarizing the company's performance.
-                3.  Extract a list of detailed insights, where each insight is an object with "subcategory" and "detail".
+                prompt_stage1 = f"""
+                You are an expert ESG analyst. Based on the provided ESG report, perform the following two tasks:
+                1. Write a concise, 2-3 sentence narrative summary of the company's overall ESG posture.
+                2. Provide an estimated score from 0.0 to 10.0 for the overall performance and for each of the E, S, and G pillars.
 
-                Return a single, valid JSON object with three keys: "kpis" (a list of objects), "takeaways" (a list of strings), and "insights" (a list of objects).
+                Return a single, valid JSON object with the following keys: "executive_summary", "overall_score", "environmental_score", "social_score", "governance_score".
+
+                DOCUMENT TEXT:
+                ---
+                {text[:80000]}
+                ---
                 """
-
-                # Specialized, more restrictive prompt for the Governance pillar
-                prompt_stage2_governance = """
-                You are a specialist Governance analyst. From the provided ESG report text, perform the following tasks focusing strictly on Governance topics.
-                
-                **Instructions for Governance KPIs:**
-                - Identify the 4-5 most quantifiable Key Performance Indicators (KPIs) related EXCLUSIVELY to corporate governance.
-                - Focus ONLY on topics like: **anti-corruption training, business ethics, data protection (e.g., having a DPO), board of directors composition, supplier audits, lobbying, and shareholder rights.**
-                - **CRITICAL:** DO NOT include any KPIs related to environmental topics such as packaging, waste, food waste, water usage, CO2 emissions, or sustainable agriculture. These are NOT governance KPIs.
-
-                For each KPI, provide its icon, title, value, unit, a brief context, and a rating ('Positive', 'Neutral', 'Negative').
-                
-                **Other Tasks:**
-                1.  Provide one or two key takeaways summarizing the company's governance performance.
-                2.  Extract a list of detailed insights related to governance, where each insight is an object with "subcategory" and "detail".
-
-                Return a single, valid JSON object with three keys: "kpis", "takeaways", and "insights".
-                """
-
-                # Select the appropriate prompt based on the pillar
-                if pillar == "governance":
-                    prompt_stage2 = prompt_stage2_governance + f"\n\nDOCUMENT TEXT:\n---\n{text[:80000]}\n---"
-                else:
-                    prompt_stage2 = prompt_stage2_base + f"\n\nDOCUMENT TEXT:\n---\n{text[:80000]}\n---"
-                
-                response_stage2 = client.chat.completions.create(
+                response_stage1 = client.chat.completions.create(
                     model=deployment_name,
-                    messages=[{"role": "user", "content": prompt_stage2}],
+                    messages=[{"role": "user", "content": prompt_stage1}],
                     response_format={"type": "json_object"},
                     temperature=0.1
                 )
-                pillar_data = json.loads(response_stage2.choices[0].message.content)
-                full_esg_data["kpis"][pillar] = pillar_data.get("kpis", [])
-                full_esg_data["pillar_takeaways"][pillar] = pillar_data.get("takeaways", [])
-                full_esg_data[f"{pillar}_insights"] = pillar_data.get("insights", []) # For classic report
+                summary_and_scores = json.loads(response_stage1.choices[0].message.content)
+                full_esg_data.update(summary_and_scores)
             except Exception as e:
-                st.error(f"Error during Stage 2 ({pillar.title()}): {e}")
-                # Continue even if one pillar fails, initializing empty lists
-                full_esg_data["kpis"][pillar] = []
-                full_esg_data["pillar_takeaways"][pillar] = []
-                full_esg_data[f"{pillar}_insights"] = []
+                st.error(f"Error during Stage 1 (Summary & Scores): {e}")
+                return {"error": f"Failed at Stage 1: {e}"}
 
-    return full_esg_data
-    # --- END: REVISED ANALYSIS FUNCTION ---
+        # --- Stage 2: Get details for each pillar individually ---
+        pillars = ["environmental", "social", "governance"]
+        full_esg_data["kpis"] = {}
+        full_esg_data["pillar_takeaways"] = {}
+        full_esg_data["environmental_insights"] = [] # Initialize for classic report
+        full_esg_data["social_insights"] = []
+        full_esg_data["governance_insights"] = []
+
+        for i, pillar in enumerate(pillars):
+            with st.spinner(f"Extracting KPIs and takeaways for {pillar.title()} pillar... (Stage {i+2}/4)"):
+                try:
+                    # Default prompt for Environmental and Social pillars
+                    prompt_stage2_base = f"""
+                    You are an ESG analyst focused on the '{pillar.title()}' pillar. From the provided ESG report text, perform the following tasks:
+                    1.  Identify the 4-5 most relevant and quantifiable Key Performance Indicators (KPIs). For each KPI, provide its icon, title, value, unit, a brief context, and a rating ('Positive', 'Neutral', 'Negative').
+                    2.  Provide one or two key takeaways summarizing the company's performance.
+                    3.  Extract a list of detailed insights, where each insight is an object with "subcategory" and "detail".
+
+                    Return a single, valid JSON object with three keys: "kpis" (a list of objects), "takeaways" (a list of strings), and "insights" (a list of objects).
+                    """
+
+                    # Specialized, more restrictive prompt for the Governance pillar
+                    prompt_stage2_governance = """
+                    You are a specialist Governance analyst. From the provided ESG report text, perform the following tasks focusing strictly on Governance topics.
+                    
+                    **Instructions for Governance KPIs:**
+                    - Identify the 4-5 most quantifiable Key Performance Indicators (KPIs) related EXCLUSIVELY to corporate governance.
+                    - Focus ONLY on topics like: **anti-corruption training, business ethics, data protection (e.g., having a DPO), board of directors composition, supplier audits, lobbying, and shareholder rights.**
+                    - **CRITICAL:** DO NOT include any KPIs related to environmental topics such as packaging, waste, food waste, water usage, CO2 emissions, or sustainable agriculture. These are NOT governance KPIs.
+
+                    For each KPI, provide its icon, title, value, unit, a brief context, and a rating ('Positive', 'Neutral', 'Negative').
+                    
+                    **Other Tasks:**
+                    1.  Provide one or two key takeaways summarizing the company's governance performance.
+                    2.  Extract a list of detailed insights related to governance, where each insight is an object with "subcategory" and "detail".
+
+                    Return a single, valid JSON object with three keys: "kpis", "takeaways", and "insights".
+                    """
+
+                    # Select the appropriate prompt based on the pillar
+                    if pillar == "governance":
+                        prompt_stage2 = prompt_stage2_governance + f"\n\nDOCUMENT TEXT:\n---\n{text[:80000]}\n---"
+                    else:
+                        prompt_stage2 = prompt_stage2_base + f"\n\nDOCUMENT TEXT:\n---\n{text[:80000]}\n---"
+                    
+                    response_stage2 = client.chat.completions.create(
+                        model=deployment_name,
+                        messages=[{"role": "user", "content": prompt_stage2}],
+                        response_format={"type": "json_object"},
+                        temperature=0.1
+                    )
+                    pillar_data = json.loads(response_stage2.choices[0].message.content)
+                    full_esg_data["kpis"][pillar] = pillar_data.get("kpis", [])
+                    full_esg_data["pillar_takeaways"][pillar] = pillar_data.get("takeaways", [])
+                    full_esg_data[f"{pillar}_insights"] = pillar_data.get("insights", []) # For classic report
+                except Exception as e:
+                    st.error(f"Error during Stage 2 ({pillar.title()}): {e}")
+                    # Continue even if one pillar fails, initializing empty lists
+                    full_esg_data["kpis"][pillar] = []
+                    full_esg_data["pillar_takeaways"][pillar] = []
+                    full_esg_data[f"{pillar}_insights"] = []
+
+        return full_esg_data
+        # --- END: REVISED ANALYSIS FUNCTION ---
 
     # --- Helper functions for generating SVG charts ---
     def _create_gauge_chart_svg(score, size=180):
