@@ -3350,6 +3350,39 @@ From the context provided, compile a report on all legal and regulatory matters.
 }
 """
                     },
+
+                    "Variant Perception": {
+                        "search_query": "Recent earnings call transcripts, management commentary, investor day presentations, forward-looking guidance, strategic initiatives, and recent significant news.",
+                        "system_prompt": """Act as a 'variant perception' analyst for {COMPANY_NAME}.
+You have been given two sets of data:
+
+1.  **Uploaded Consensus Estimates:**
+    ---
+    {CONSENSUS_ESTIMATES}
+    ---
+
+2.  **Qualitative Document Context:** (This will be provided in the next part of the prompt from the company's indexed documents)
+
+**Your Task:**
+1.  First, briefly summarize the quantitative 'Street Consensus' from the data in section 1 (e.g., "Consensus appears to be a Buy with a \$150 target, expecting \$10B in revenue.").
+2.  Second, analyze the 'Qualitative Document Context' (from earnings calls, news, etc.) to find points of disagreement or subtle nuances the market may be missing.
+3.  Finally, generate a 'Variant Perception Thesis' in clean markdown. Identify specific qualitative points (e.g., subtle management tone changes, new guidance, strategic shifts, underestimated product cycles) that the quantitative consensus may be underappreciating, over-appreciating, or completely missing.
+
+**Output Structure:**
+
+## Consensus View (from Upload)
+(Your 1-2 paragraph summary of the uploaded estimates)
+
+## Variant Perception Thesis (from Indexed Documents)
+(Your detailed thesis on what the consensus is getting wrong. Use bullet points to cite specific evidence from the qualitative context, such as management quotes or new initiatives.)
+
+## Key Points of Disagreement
+(A summary list of the 3-5 key disconnects between the quantitative consensus and the qualitative commentary.)
+"""
+                    },
+
+
+
                     "Company Strategy": {
                         "search_query": "Information on corporate strategy, business objectives, future plans, growth initiatives, market expansion, product development, and strategic priorities.",
                         "system_prompt": """You are a strategy consultant.
@@ -3510,7 +3543,7 @@ Approach this analysis without bias. Remain completely objective and do not beco
     # --- UPDATED: analysis_options list ---
     analysis_options = [
         "Quick Company Note", "Competitive Analysis", "Management Meeting Prep", 
-        "Compare Investment Ideas", "Risk Assessment", # <-- Changed here
+        "Compare Investment Ideas", "Variant Perception", "Risk Assessment", # <-- Changed here
         "Cap Structure", "Debt Details", "Litigations and Court Cases/Claims",
         "Company Strategy", "Custom Query"
     ]
@@ -3595,135 +3628,181 @@ Approach this analysis without bias. Remain completely objective and do not beco
                                 "analysis_type": analysis_choice
                             }
 
-    # --- Existing UI for other analysis types ---
-    else:
-        if not indexed_companies:
-            st.info("Please index documents for a company to run this analysis type.")
-        else:
-            selected_companies = st.multiselect("Select Company/Companies to Analyze", options=indexed_companies, default=indexed_companies[0] if indexed_companies else [])
-            
-            user_query = ""
-            if analysis_choice == "Custom Query":
-                user_query = st.text_area("Ask a question about the selected companies' documents")
-
-            # --- NEW UI for Custom Prompt ---
-            # Show custom prompt UI for all non-custom analyses
-            if analysis_choice != "Custom Query":
-                st.markdown("---")
-                st.subheader("Advanced: Customize Analysis Prompt")
-                if analysis_choice == "Risk Assessment":
-                    st.warning("Your custom prompt must request a specific JSON output for the report to generate correctly.")
-                st.text_area(
-                    "Enter your custom prompt for the analysis:",
-                    placeholder=f"Enter your full custom prompt for the '{analysis_choice}' analysis here...",
-                    height=250,
-                    key="portfolio_custom_prompt"
-                )
-            # --- END NEW UI ---
-
-
-            if st.button("🚀 Run Analysis", use_container_width=True):
+    if st.button("🚀 Run Analysis", use_container_width=True):
                 proceed = False
+                # --- [Your existing validation checks remain the same] ---
                 if not selected_companies:
                     st.warning("Please select at least one company.")
                 elif analysis_choice == "Compare Investment Ideas" and len(selected_companies) < 2:
                     st.warning("Please select at least two companies for comparison.")
                 elif analysis_choice == "Custom Query" and not user_query.strip():
                     st.warning("Please enter a question for the custom query.")
-                else:
+                # --- Updated check for Variant Perception ---
+                elif analysis_choice == "Variant Perception":
+                    # Check estimates_file existence *inside* the button logic
+                    # We need to access the variable defined in the UI block above
+                    # This requires getting it from st.session_state if using keys, or ensuring it's in scope
+                    # For simplicity, let's assume 'estimates_file' is correctly scoped from the UI block
+                    
+                    # Attempt to retrieve the file uploader state. It might be None if nothing was uploaded.
+                    # Ensure you have defined `estimates_file = None` before the `if analysis_choice == "Variant Perception":` UI block
+                    # If using keys, you'd do: estimates_file_state = st.session_state.get("variant_estimates_upload")
+                    # but since you defined `estimates_file` directly, let's proceed assuming it's available.
+                    
+                    if not estimates_file: # Check if a file was actually uploaded
+                         st.warning("Please upload a consensus estimates file for Variant Perception analysis.")
+                    else:
+                         proceed = True # Only proceed if the file exists
+                         
+                else: # All other analysis types
                     proceed = True
 
+                # --- Main Analysis Logic ---
                 if proceed:
-                    with st.spinner(f"Running '{analysis_choice}' analysis for {', '.join(selected_companies)}..."):
-                        analysis_md, sources, pinecone_matches = "", "", None
-                        if analysis_choice == "Custom Query":
+                    company_name_for_doc = selected_companies[0] if len(selected_companies) == 1 else "Multiple Companies"
+                    analysis_md, sources, pinecone_matches = "", "", None # Initialize common variables
+
+                    # --- BRANCH 1: CUSTOM QUERY ---
+                    if analysis_choice == "Custom Query":
+                        with st.spinner(f"Running '{analysis_choice}' for {company_name_for_doc}..."):
                             analysis_md, sources = agent.query(user_query, selected_companies)
-                        else:
+
+                    # --- BRANCH 2: VARIANT PERCEPTION (NEW DEDICATED BLOCK) ---
+                    elif analysis_choice == "Variant Perception":
+                        with st.spinner(f"Running 'Variant Perception' for {company_name_for_doc}..."):
+                            try:
+                                # 1. Read uploaded estimates file (estimates_file should be in scope from UI)
+                                estimates_text = agent._extract_text(estimates_file.getvalue(), estimates_file.name)
+                                if not estimates_text.strip():
+                                    st.error("Could not read any text from the uploaded estimates file.")
+                                    st.stop() # Stop execution for this run
+
+                                # 2. Get the qualitative context from Pinecone
+                                config = agent._get_analysis_config()["Variant Perception"]
+                                query_vector = agent.embedding_model.encode(config["search_query"]).tolist()
+                                query_filter = {"company": {"$in": [agent.sanitize_filename(c) for c in selected_companies]}}
+                                # Fetch more results for better context
+                                results = agent.index.query(vector=query_vector, top_k=40, filter=query_filter, include_metadata=True, namespace=agent.namespace)
+
+                                if not results.matches:
+                                    st.error(f"No indexed qualitative documents (like earnings calls or news) were found for {company_name_for_doc} matching the required context.")
+                                    st.stop() # Stop execution
+
+                                context_excerpts = [f"Excerpt from '{m.metadata['source_file']}' (Year: {m.metadata.get('year', 'N/A')}, Page: {m.metadata.get('page_number', 'N/A')}):\n\"{m.metadata['original_text']}\"\n" for m in results.matches]
+                                sources = ", ".join(sorted(list(set(m.metadata['source_file'] for m in results.matches))))
+                                qualitative_context = truncate_context(context_excerpts) # Use your existing truncate function
+
+                                # 3. Format the prompt and call the LLM
+                                system_prompt_template = config['system_prompt']
+                                system_prompt = system_prompt_template.format(
+                                    COMPANY_NAME=company_name_for_doc,
+                                    CONSENSUS_ESTIMATES=estimates_text
+                                )
+                                # Construct the final prompt including the fetched context
+                                prompt = f"{system_prompt}\n\nBase your 'Variant Perception Thesis' *only* on the following indexed qualitative context:\n--- QUALITATIVE CONTEXT ---\n{qualitative_context}\n--- END CONTEXT ---"
+
+                                analysis_md = call_deepseek_model(prompt) # Assuming call_deepseek_model exists
+                                pinecone_matches = results.matches # Store matches if needed later (like for Risk Assessment)
+
+                            except Exception as e:
+                                st.error(f"An error occurred during Variant Perception analysis: {e}")
+                                analysis_md = f"Error: {e}" # Set error message to display
+
+                    # --- BRANCH 3: ALL OTHER PREDEFINED ANALYSES ---
+                    else:
+                        with st.spinner(f"Running '{analysis_choice}' analysis for {company_name_for_doc}..."):
+                            # This now correctly handles only the remaining predefined types
                             analysis_md, sources, pinecone_matches = agent.get_predefined_analysis(analysis_choice, selected_companies)
-                        
-                        company_name_for_doc = selected_companies[0] if len(selected_companies) == 1 else "Multiple Companies"
-                        
-                        if "Error:" in analysis_md or "Could not find" in analysis_md or not analysis_md.strip():
-                            st.error(analysis_md or "Failed to generate a response from the model.")
+
+                    # --- [This output processing block remains largely the same] ---
+                    # It processes analysis_md, sources, pinecone_matches from whichever branch ran
+                    if "Error:" in analysis_md or "Could not find" in analysis_md or not analysis_md.strip():
+                        st.error(analysis_md or "Failed to generate a response from the model.")
+                    else:
+                        report_html = ""
+                        word_bytes = b""
+
+                        # --- Specific handling for Risk Assessment ---
+                        if analysis_choice == "Risk Assessment":
+                            try:
+                                from thefuzz import fuzz
+                                supabase_client = agent._init_supabase()
+                                data = json.loads(analysis_md) # analysis_md should be JSON here
+                                risks = data.get("risks", [])
+
+                                # --- [Your existing Risk Assessment snapshot logic...] ---
+                                for risk in risks:
+                                    quote = risk.get("source_quote", "")
+                                    risk['snapshot_url'] = None
+                                    if not quote or not pinecone_matches or not supabase_client:
+                                        risk['highlighted_quote'] = "Source text not available."
+                                        continue
+                                    # ... [fuzzy matching and snapshot creation logic] ...
+                                    best_match_meta = None
+                                    highest_score = 0
+                                    for match in pinecone_matches:
+                                        score = fuzz.partial_ratio(quote.lower(), match.metadata['original_text'].lower())
+                                        if score > highest_score:
+                                            highest_score = score
+                                            best_match_meta = match.metadata
+                                    MIN_MATCH_SCORE = 75
+                                    if highest_score >= MIN_MATCH_SCORE and best_match_meta:
+                                        snapshot_url = create_and_upload_snapshot(
+                                             supabase_client=supabase_client,
+                                             namespace=user_id,
+                                             company=company_name_for_doc,
+                                             source_file=best_match_meta.get('source_file'),
+                                             page_number=best_match_meta.get('page_number'),
+                                             quote=quote
+                                         )
+                                        risk['snapshot_url'] = snapshot_url
+                                    else:
+                                         risk['highlighted_quote'] = (
+                                             f"<i>(Could not find a high-confidence match for the quote...)</i><br>"
+                                             f"<b>LLM Quote:</b> {html.escape(quote)}"
+                                         )
+                                # --- [End snapshot logic] ---
+
+                                report_html = format_risk_assessment_html(risks, company_name_for_doc, sources)
+                                word_bytes = b"" # No Word doc for Risk Assessment currently
+
+                                # Save results to session state
+                                st.session_state['analysis_output'] = {
+                                    "html": report_html, "word": word_bytes,
+                                    "company_name": company_name_for_doc, "analysis_type": analysis_choice
+                                }
+
+                            except json.JSONDecodeError:
+                                st.error("Failed to parse Risk Assessment JSON.")
+                                st.text_area("Raw Response:", analysis_md, height=200)
+                            except Exception as e:
+                                st.error(f"Error processing Risk Assessment: {e}")
+
+
+                        # --- Handling for ALL OTHER analysis types (including Variant Perception now) ---
                         else:
-                            report_html = ""
-                            word_bytes = b""
-                            
-                            # --- NEW: Custom workflow for Risk Assessment ---
-                            if analysis_choice == "Risk Assessment":
-                                try:
-                                    from thefuzz import fuzz
-                                    supabase_client = agent._init_supabase()
-                                    data = json.loads(analysis_md)
-                                    risks = data.get("risks", [])
-                                    
-                                    for risk in risks:
-                                        # ... (your existing loop for creating snapshots is correct) ...
-                                        quote = risk.get("source_quote", "")
-                                        risk['snapshot_url'] = None
+                            if analysis_choice == "Competitive Analysis":
+                                analysis_md = format_competitive_analysis_output(analysis_md) # Special formatting
 
-                                        if not quote or not pinecone_matches or not supabase_client:
-                                            risk['highlighted_quote'] = "Source text not available."
-                                            continue
+                            # Standard processing for Markdown output
+                            structured_report = parse_markdown_to_structure(analysis_md, analysis_choice)
+                            report_html = format_analysis_as_html(analysis_md, analysis_choice, sources)
+                            word_bytes = markdown_to_word_bytes(structured_report, company_name_for_doc, analysis_choice)
 
-                                        best_match_meta = None
-                                        highest_score = 0
-                                        
-                                        for match in pinecone_matches:
-                                            score = fuzz.partial_ratio(quote.lower(), match.metadata['original_text'].lower())
-                                            if score > highest_score:
-                                                highest_score = score
-                                                best_match_meta = match.metadata
-                                        
-                                        MIN_MATCH_SCORE = 75
-                                        if highest_score >= MIN_MATCH_SCORE and best_match_meta:
-                                            snapshot_url = create_and_upload_snapshot(
-                                                supabase_client=supabase_client,
-                                                namespace=user_id,
-                                                company=company_name_for_doc,
-                                                source_file=best_match_meta.get('source_file'),
-                                                page_number=best_match_meta.get('page_number'),
-                                                quote=quote
-                                            )
-                                            risk['snapshot_url'] = snapshot_url
-                                        else:
-                                            risk['highlighted_quote'] = (
-                                                f"<i>(Could not find a high-confidence match for the quote in source documents.)</i><br>"
-                                                f"<b>LLM-Generated Quote:</b> {html.escape(quote)}"
-                                            )
-
-                                    report_html = format_risk_assessment_html(risks, company_name_for_doc, sources)
-                                    
-                                    # THIS IS THE CRITICAL FIX: The next 6 lines are added to save the result
-                                    # We create a placeholder for the Word doc since the HTML is the primary output.
-                                    word_bytes = b"" 
-                                    st.session_state['analysis_output'] = {
-                                        "html": report_html,
-                                        "word": word_bytes,
-                                        "company_name": company_name_for_doc,
-                                        "analysis_type": analysis_choice
-                                    }
-
-                                except json.JSONDecodeError:
-                                    st.error("Failed to parse the Risk Assessment response from the AI. The format was not valid JSON.")
-                                    st.text_area("Raw Response:", analysis_md, height=200)
-
-                            else: # --- Existing workflow for all other types ---
-                                if analysis_choice == "Competitive Analysis":
-                                    analysis_md = format_competitive_analysis_output(analysis_md)
-
-                                structured_report = parse_markdown_to_structure(analysis_md, analysis_choice)
-                                report_html = format_analysis_as_html(analysis_md, analysis_choice, sources)
-                                word_bytes = markdown_to_word_bytes(structured_report, company_name_for_doc, analysis_choice)
-                            
-                                # This block now correctly handles only the 'else' cases
-                                if report_html and word_bytes:
-                                    st.session_state['analysis_output'] = {
-                                        "html": report_html,
-                                        "word": word_bytes,
-                                        "company_name": company_name_for_doc,
-                                        "analysis_type": analysis_choice
-                                    }
+                            # Save results to session state if outputs were generated
+                            # Allow Variant Perception even if word_bytes is empty if needed, or check both.
+                            # Let's require both HTML and Word for consistency, except for Risk Assessment.
+                            if report_html and word_bytes:
+                                st.session_state['analysis_output'] = {
+                                    "html": report_html, "word": word_bytes,
+                                    "company_name": company_name_for_doc, "analysis_type": analysis_choice
+                                }
+                            # If Variant Perception doesn't generate a Word doc, adjust the condition:
+                            # elif report_html and analysis_choice == "Variant Perception":
+                            #     st.session_state['analysis_output'] = { ... word: b"" ... }
+                            else:
+                                # This case might occur if Word generation fails for some reason
+                                st.warning(f"Could not generate downloadable report files for {analysis_choice}.")
 
     # --- MODIFIED: Shared Output Display Area ---
     if 'analysis_output' in st.session_state:
