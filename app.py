@@ -2595,7 +2595,7 @@ def portfolio_agent_app(user_id: str):
     import xml.etree.ElementTree as ET
     import json # Added for parsing risk assessment
     import html # Added for escaping HTML characters
-    import pandas as pd # <-- NEW: Added for reading Excel estimates
+    import pandas as pd # Added for reading Excel estimates
     
     # FMP API Key is still needed for transcripts and news
     FMP_API_KEY = os.environ.get("FMP_API_KEY")
@@ -2932,30 +2932,36 @@ def portfolio_agent_app(user_id: str):
     # --- MODIFIED: Helper function for Variant Perception ---
     def fetch_fmp_data(ticker: str) -> dict:
         """
-        Fetches latest transcript and recent news from FMP.
-        (REMOVED estimate fetching, as user now provides this.)
+        Fetches latest 3 transcripts and recent news from FMP.
         """
         if not FMP_API_KEY:
             st.error("FMP_API_KEY is not configured in secrets.")
             return {"error": "FMP_API_KEY is not configured in secrets."}
 
         data = {
-            "transcript": "No transcript data found.",
-            "news": []
+            "transcripts": [], # Will be a list of dicts
+            "news": [] # Will be a list of dicts
         }
         
         try:
-            # 1. Fetch Latest Earnings Call Transcript
+            # 1. Fetch Latest Earnings Call Transcripts (up to 3)
             try:
                 transcript_url = f"https://financialmodelingprep.com/api/v3/earning_call_transcript/{ticker}?apikey={FMP_API_KEY}"
                 transcript_res = requests.get(transcript_url, timeout=20)
                 transcript_res.raise_for_status()
                 transcript_data = transcript_res.json()
-                if transcript_data and isinstance(transcript_data, list) and len(transcript_data) > 0:
-                    data["transcript"] = transcript_data[0].get("content", "Transcript content not available.")
+                
+                # Get the most recent 3 transcripts
+                if transcript_data and isinstance(transcript_data, list):
+                    for item in transcript_data[:3]: # Limit to 3
+                        data["transcripts"].append({
+                            "content": item.get("content", "Transcript content not available."),
+                            "quarter": item.get("quarter", "N/A"),
+                            "year": item.get("year", "N/A")
+                        })
             except Exception as e:
                 st.warning(f"Failed to fetch FMP transcript for {ticker}: {e}")
-                data["transcript"] = f"Error fetching transcript: {e}"
+                # Don't error out, just return empty list
 
             # 2. Fetch Recent News
             try:
@@ -2967,7 +2973,7 @@ def portfolio_agent_app(user_id: str):
                     data["news"] = [{"title": item.get("title"), "text": item.get("text")} for item in news_data]
             except Exception as e:
                 st.warning(f"Failed to fetch FMP news for {ticker}: {e}")
-                data["news"] = [{"title": "Error", "text": f"Error fetching news: {e}"}]
+                # Don't error out
 
             return data
 
@@ -3299,9 +3305,15 @@ def portfolio_agent_app(user_id: str):
 
 {CONSENSUS_ESTIMATES_TABLE}
 
-Based on the attached recent earnings transcript and news, identify specific points that the market may be underappreciating or overly pessimistic about regarding these estimates. Focus on subtle changes in management tone, forward-looking guidance, or new strategic initiatives that contradict or support a different outlook than the provided consensus.
+You are also provided with a compilation of recent earnings transcripts (from user uploads and FMP API) and recent news headlines. Your task is to identify specific points that the market may be underappreciating or overly pessimistic about regarding these estimates. 
 
-Frame your output as a potential mispricing thesis in a concise markdown report. Structure your report as follows:
+**Instructions:**
+1.  Analyze the provided consensus estimates.
+2.  Carefully read the compilation of transcripts. Pay close attention to subtle changes in management tone, forward-looking guidance, or new strategic initiatives that contradict or support a different outlook than the provided consensus. Note the source and date of each transcript.
+3.  Review the recent news for any additional catalysts or risks.
+4.  Frame your output as a potential mispricing thesis in a concise markdown report.
+
+**Report Structure:**
 
 ## Consensus View
 (Briefly summarize the consensus estimates provided.)
@@ -3314,10 +3326,13 @@ Frame your output as a potential mispricing thesis in a concise markdown report.
 
 --- DATA ---
 
-## Most Recent Earnings Transcript
-{TRANSCRIPT_TEXT}
+## 1. Consensus Estimates (from User)
+{CONSENSUS_ESTIMATES_TABLE}
 
-## Recent News
+## 2. Recent Transcripts Compilation
+{TRANSCRIPTS_COMPILATION}
+
+## 3. Recent News
 {NEWS_HEADLINES}
 """
                     },
@@ -3480,7 +3495,16 @@ Approach this analysis without bias. Remain completely objective and do not beco
                 }
 
             # --- MODIFIED: get_predefined_analysis to accept user_estimates_table ---
-            def get_predefined_analysis(self, analysis_type: str, companies: List[str], k: int = 40, user_estimates_table: str = None) -> Tuple[str, str, object]:
+            def get_predefined_analysis(
+                self, 
+                analysis_type: str, 
+                companies: List[str], 
+                k: int = 40, 
+                user_estimates_table: str = None,
+                transcripts_data: str = None,
+                news_data: str = None
+            ) -> Tuple[str, str, object]:
+                
                 ANALYSIS_CONFIG = self._get_analysis_config()
                 config = ANALYSIS_CONFIG.get(analysis_type)
                 if not config: return "Invalid analysis type selected.", "", None
@@ -3491,35 +3515,21 @@ Approach this analysis without bias. Remain completely objective and do not beco
                         return "Error: Please select exactly one company (ticker) for Variant Perception.", "", None
                     if not user_estimates_table:
                         return "Error: User estimates table was not provided.", "", None
-
+                    if not transcripts_data:
+                        return "Error: Transcripts data was not provided.", "", None
+                    
                     ticker = self.sanitize_filename(companies[0])
-                    
-                    # --- MODIFIED: fetch_fmp_data now only gets transcript and news ---
-                    with st.spinner(f"Fetching external data (transcript, news) for {ticker} from FMP..."):
-                        fmp_data = fetch_fmp_data(ticker)
-                    
-                    if "error" in fmp_data:
-                        return f"Error fetching FMP data: {fmp_data['error']}", "", None
-                    
                     template = config['system_prompt']
-                    
-                    # Extract data for prompt
-                    transcript = fmp_data.get('transcript', 'No transcript found.')
-                    news_list = [
-                        f"* **{item.get('title', 'No Title')}**: {item.get('text', 'No content')}" 
-                        for item in fmp_data.get('news', [])
-                    ]
-                    news_str = "\n".join(news_list) or "No recent news found."
-                    
+
                     # Populate the prompt
                     final_prompt = template.replace('{COMPANY_NAME}', ticker)
-                    # --- THIS IS THE KEY CHANGE ---
                     final_prompt = final_prompt.replace('{CONSENSUS_ESTIMATES_TABLE}', user_estimates_table) 
-                    final_prompt = final_prompt.replace('{TRANSCRIPT_TEXT}', transcript)
-                    final_prompt = final_prompt.replace('{NEWS_HEADLINES}', news_str)
+                    final_prompt = final_prompt.replace('{TRANSCRIPTS_COMPILATION}', transcripts_data)
+                    final_prompt = final_prompt.replace('{NEWS_HEADLINES}', news_data or "No recent news found.")
                     
                     response_text = call_deepseek_model(final_prompt, is_json=False)
-                    return response_text, "User-Uploaded Estimates, Financial Modeling Prep API (Transcript/News)", None
+                    # The 'sources' string is now built in the UI logic, so we return a placeholder
+                    return response_text, "See UI for sources", None
                 
                 # --- Existing workflow for all other analysis types ---
                 query_vector = self.embedding_model.encode(config["search_query"]).tolist()
@@ -3606,7 +3616,7 @@ Approach this analysis without bias. Remain completely objective and do not beco
     st.subheader("📁 Index New Company Documents")
     
     with st.form("indexing_form", clear_on_submit=True):
-        new_company = st.text_input("Company Name", placeholder="e.g., AAPL, MSFT, RTX Corp.")
+        new_company = st.text_input("Company Name", placeholder="e.g., RTX Corp, Microsoft")
         new_docs = st.file_uploader("Upload Documents (PDF, DOCX, TXT)", type=["pdf", "docx", "txt"], accept_multiple_files=True)
         if st.form_submit_button("Index Documents", type="primary"):
             if new_company and new_docs:
@@ -3714,7 +3724,109 @@ Approach this analysis without bias. Remain completely objective and do not beco
                                 "analysis_type": analysis_choice
                             }
 
-    # --- Existing UI for other analysis types ---
+    # --- MODIFIED: New UI flow for Variant Perception ---
+    elif analysis_choice == "Variant Perception":
+        st.info("ℹ️ This analysis requires a ticker, user-uploaded estimates, and transcripts.")
+        
+        vp_ticker = st.text_input("Enter Company Ticker (FMP Compatible)", placeholder="e.g., AAPL, MSFT")
+        vp_estimates_file = st.file_uploader(
+            "1. Upload Street Estimates (.xlsx)", 
+            type=["xlsx"], 
+            help="File must have a 'line items' column and columns for 'FY25', 'FY26', etc."
+        )
+        vp_transcript_files = st.file_uploader(
+            "2. Upload Transcripts (Optional - will be combined with FMP data)", 
+            type=["pdf", "docx", "txt"], 
+            accept_multiple_files=True,
+            help="Upload transcripts if FMP has no data or if you have more recent files."
+        )
+
+        if st.button("🚀 Run Variant Perception", use_container_width=True, type="primary"):
+            if not vp_ticker or not vp_estimates_file:
+                st.error("Please provide both a company ticker and an estimates file.")
+                st.stop()
+
+            with st.spinner(f"Running Variant Perception for {vp_ticker}..."):
+                # 1. Process Estimates File
+                user_estimates_table_str = None
+                try:
+                    df = pd.read_excel(vp_estimates_file)
+                    if 'line items' not in [str(col).lower() for col in df.columns]:
+                        st.error("Upload failed: Estimates Excel file must contain a 'line items' column.")
+                        st.stop()
+                    user_estimates_table_str = df.to_markdown(index=False)
+                except Exception as e:
+                    st.error(f"Failed to read Excel file: {e}")
+                    st.stop()
+
+                transcripts_compilation = []
+                sources_list = ["User-Uploaded Estimates"]
+
+                # 2. Process User-Uploaded Transcripts (Priority)
+                if vp_transcript_files:
+                    sources_list.append("User-Uploaded Transcripts")
+                    for doc in vp_transcript_files:
+                        text = agent._extract_text(doc.getvalue(), doc.name)
+                        if text:
+                            transcripts_compilation.append(f"--- TRANSCRIPT (Source: User Upload '{doc.name}') ---\n{text}\n\n")
+
+                # 3. Process FMP Data (Transcripts & News)
+                fmp_data = fetch_fmp_data(vp_ticker)
+                if "error" in fmp_data:
+                    st.error(f"Error fetching FMP data: {fmp_data['error']}")
+                    st.stop()
+
+                fmp_transcripts = fmp_data.get("transcripts", [])
+                fmp_news = fmp_data.get("news", [])
+
+                if fmp_transcripts:
+                    sources_list.append("FMP API (Transcripts)")
+                    for item in fmp_transcripts: # Already limited to 3 in fetch function
+                        transcripts_compilation.append(f"--- TRANSCRIPT (Source: FMP API - Q{item.get('quarter')} {item.get('year')}) ---\n{item.get('content', 'N/A')}\n\n")
+
+                # 4. Check for Failure
+                if not transcripts_compilation:
+                    st.error("No transcripts found. FMP had no data for this ticker, and no transcripts were uploaded. Please upload at least one transcript to run this analysis.")
+                    st.stop()
+
+                # 5. Compile News
+                news_str = ""
+                if fmp_news:
+                    sources_list.append("FMP API (News)")
+                    news_list = [
+                        f"* **{item.get('title', 'No Title')}**: {item.get('text', 'No content')}" 
+                        for item in fmp_news
+                    ]
+                    news_str = "\n".join(news_list)
+
+                # 6. Call Agent
+                final_transcripts_str = "\n".join(transcripts_compilation)
+                analysis_md, _, _ = agent.get_predefined_analysis(
+                    analysis_type=analysis_choice,
+                    companies=[vp_ticker], # Pass ticker as the "company"
+                    user_estimates_table=user_estimates_table_str,
+                    transcripts_data=final_transcripts_str,
+                    news_data=news_str
+                )
+                
+                sources_str = ", ".join(sources_list)
+
+                # 7. Process and Save Output
+                if "Error:" in analysis_md or not analysis_md.strip():
+                    st.error(analysis_md or "Failed to generate a response from the model.")
+                else:
+                    structured_report = parse_markdown_to_structure(analysis_md, analysis_choice)
+                    report_html = format_analysis_as_html(analysis_md, analysis_choice, sources_str)
+                    word_bytes = markdown_to_word_bytes(structured_report, vp_ticker, analysis_choice)
+                    
+                    st.session_state['analysis_output'] = {
+                        "html": report_html,
+                        "word": word_bytes,
+                        "company_name": vp_ticker,
+                        "analysis_type": analysis_choice
+                    }
+
+    # --- Existing UI for ALL OTHER analysis types ---
     else:
         if not indexed_companies:
              st.info("Please index documents for a company to run this analysis type.")
@@ -3722,17 +3834,6 @@ Approach this analysis without bias. Remain completely objective and do not beco
             selected_companies = st.multiselect("Select Company/Companies to Analyze", options=indexed_companies, default=indexed_companies[0] if indexed_companies else [])
             
             user_query = ""
-            user_estimates_file = None # <-- NEW
-
-            # --- MODIFIED: Show special UI for Variant Perception ---
-            if analysis_choice == "Variant Perception":
-                st.info("ℹ️ This analysis requires the company name to be its ticker symbol (e.g., 'AAPL'). It will fetch external transcript/news and compare it against your uploaded estimates.")
-                user_estimates_file = st.file_uploader(
-                    "Upload Street Estimates (.xlsx)", 
-                    type=["xlsx"], 
-                    help="File must have a 'line items' column and columns for 'FY25', 'FY26', etc."
-                )
-            
             if analysis_choice == "Custom Query":
                 user_query = st.text_area("Ask a question about the selected companies' documents")
 
@@ -3756,11 +3857,6 @@ Approach this analysis without bias. Remain completely objective and do not beco
                 proceed = False
                 if not selected_companies:
                     st.warning("Please select at least one company.")
-                # --- NEW: Check for Variant Perception ---
-                elif analysis_choice == "Variant Perception" and len(selected_companies) != 1:
-                    st.warning("Please select exactly one company for Variant Perception.")
-                elif analysis_choice == "Variant Perception" and not user_estimates_file: # <-- NEW
-                    st.warning("Please upload the Street Estimates file for Variant Perception.")
                 elif analysis_choice == "Compare Investment Ideas" and len(selected_companies) < 2:
                     st.warning("Please select at least two companies for comparison.")
                 elif analysis_choice == "Custom Query" and not user_query.strip():
@@ -3768,33 +3864,16 @@ Approach this analysis without bias. Remain completely objective and do not beco
                 else:
                     proceed = True
 
-                # --- NEW: File reading logic ---
-                user_estimates_table_str = None
-                if proceed and analysis_choice == "Variant Perception" and user_estimates_file:
-                    try:
-                        df = pd.read_excel(user_estimates_file)
-                        # Basic validation
-                        if 'line items' not in df.columns:
-                            st.error("Upload failed: Excel file must contain a 'line items' column.")
-                            proceed = False # Stop execution
-                        else:
-                            user_estimates_table_str = df.to_markdown(index=False)
-                    except Exception as e:
-                        st.error(f"Failed to read Excel file: {e}")
-                        proceed = False # Stop execution
-
-
                 if proceed:
                     with st.spinner(f"Running '{analysis_choice}' analysis for {', '.join(selected_companies)}..."):
                         analysis_md, sources, pinecone_matches = "", "", None
                         if analysis_choice == "Custom Query":
                             analysis_md, sources = agent.query(user_query, selected_companies)
                         else:
-                            # --- MODIFIED: Pass the estimates table string to the agent ---
+                            # This now handles all *other* predefined analyses
                             analysis_md, sources, pinecone_matches = agent.get_predefined_analysis(
-                                analysis_choice, 
-                                selected_companies, 
-                                user_estimates_table=user_estimates_table_str
+                                analysis_type=analysis_choice, 
+                                companies=selected_companies
                             )
                         
                         company_name_for_doc = selected_companies[0] if len(selected_companies) == 1 else "Multiple Companies"
@@ -3805,7 +3884,7 @@ Approach this analysis without bias. Remain completely objective and do not beco
                             report_html = ""
                             word_bytes = b""
                             
-                            # --- NEW: Custom workflow for Risk Assessment ---
+                            # --- Custom workflow for Risk Assessment ---
                             if analysis_choice == "Risk Assessment":
                                 try:
                                     from thefuzz import fuzz
@@ -3814,7 +3893,6 @@ Approach this analysis without bias. Remain completely objective and do not beco
                                     risks = data.get("risks", [])
                                     
                                     for risk in risks:
-                                        # ... (your existing loop for creating snapshots is correct) ...
                                         quote = risk.get("source_quote", "")
                                         risk['snapshot_url'] = None
 
@@ -3849,10 +3927,7 @@ Approach this analysis without bias. Remain completely objective and do not beco
                                             )
 
                                     report_html = format_risk_assessment_html(risks, company_name_for_doc, sources)
-                                    
-                                    # THIS IS THE CRITICAL FIX: The next 6 lines are added to save the result
-                                    # We create a placeholder for the Word doc since the HTML is the primary output.
-                                    word_bytes = b"" 
+                                    word_bytes = b"" # No Word doc for this type
                                     st.session_state['analysis_output'] = {
                                         "html": report_html,
                                         "word": word_bytes,
@@ -3864,7 +3939,7 @@ Approach this analysis without bias. Remain completely objective and do not beco
                                     st.error("Failed to parse the Risk Assessment response from the AI. The format was not valid JSON.")
                                     st.text_area("Raw Response:", analysis_md, height=200)
 
-                            else: # --- Existing workflow for all other types (incl. Variant Perception) ---
+                            else: # --- Existing workflow for all other types ---
                                 if analysis_choice == "Competitive Analysis":
                                     analysis_md = format_competitive_analysis_output(analysis_md)
 
@@ -3872,7 +3947,6 @@ Approach this analysis without bias. Remain completely objective and do not beco
                                 report_html = format_analysis_as_html(analysis_md, analysis_choice, sources)
                                 word_bytes = markdown_to_word_bytes(structured_report, company_name_for_doc, analysis_choice)
                                 
-                                # This block now correctly handles only the 'else' cases
                                 if report_html:
                                     st.session_state['analysis_output'] = {
                                         "html": report_html,
