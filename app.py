@@ -424,20 +424,40 @@ def authentication_ui():
                         # 1. Generate a new unique session token.
                         session_token = str(uuid.uuid4())
                         
-                        # 2. Store the new token in the database, overwriting any old one.
+                        # 2. Get the user's UUID (required for audit logging)
+                        # We query for it here to ensure we have the correct foreign key for the log.
+                        try:
+                            user_record = conn.client.table("users").select("id").eq("email", email).single().execute()
+                            user_id = user_record.data['id']
+                        except Exception as e:
+                            st.error(f"Could not retrieve user ID for logging: {e}")
+                            st.stop() # Stop execution if we can't get the ID
+                        
+                        # 3. Store the new token in the database, overwriting any old one.
                         conn.client.table("users").update({"active_session_token": session_token}).eq("email", email).execute()
 
-                        # 3. Store user details and the new token in the session state.
+                        # 4. Store user details, new token, and user_id in the session state.
                         st.session_state['logged_in'] = True
-                        st.session_state['username'] = email
+                        st.session_state['username'] = email      # For display
+                        st.session_state['user_id'] = user_id      # <<< NEW: For logging
                         st.session_state['session_token'] = session_token 
                         # --- END: MODIFIED SESSION LOGIC ---
+                        
+                        # --- ADD AUDIT LOG CALL (SUCCESS) ---
+                        log_audit_event(action_type="USER_LOGIN", status="SUCCESS")
+                        # ---
                         
                         st.rerun()
                     else:
                         st.error("Incorrect password.")
+                        # --- ADD AUDIT LOG CALL (FAILURE) ---
+                        log_audit_event(action_type="USER_LOGIN_FAILURE", status="FAILURE", details={"email_attempt": email})
+                        # ---
                 else:
                     st.error("Email address not found.")
+                    # --- ADD AUDIT LOG CALL (NOT FOUND) ---
+                    log_audit_event(action_type="USER_LOGIN_NOT_FOUND", status="FAILURE", details={"email_attempt": email})
+                    # ---
 
         elif choice == "Sign Up":
             st.subheader("Create New Account")
@@ -464,6 +484,42 @@ def authentication_ui():
                     st.info("Please switch to the Login tab to sign in.")
     
     return st.session_state.get('logged_in', False)
+
+# Add this function near the top of app.py, after your imports and client initializations
+
+def log_audit_event(action_type: str, status: str, target_id: str = None, details: dict = None):
+    """
+    Writes a standardized entry to the audit_log table.
+    Pulls user_id from the session state.
+    """
+    try:
+        # Get user_id from session state (set during login)
+        user_id = st.session_state.get('user_id')
+        
+        if not user_id:
+            # This should not happen for a logged-in user, but as a fallback:
+            st.warning("Could not log audit event: user_id not found in session state.")
+            return
+
+        # Get Supabase connection
+        conn = st.connection("supabase", type=SupabaseConnection)
+        
+        log_entry = {
+            "user_id": user_id,
+            "action_type": action_type,
+            "status": status,
+            "target_id": target_id,
+            "details": details,
+            # 'ip_address' and 'user_agent' are harder to get in Streamlit
+            # Supabase auth logs the IP on login, which is often sufficient.
+        }
+        
+        # Insert the log entry
+        conn.client.table("audit_log").insert(log_entry).execute()
+
+    except Exception as e:
+        # Log to Streamlit console if logging to DB fails
+        print(f"CRITICAL: Failed to write to audit_log. Error: {e}")
 
 
 def validate_session():
@@ -1440,6 +1496,20 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
         )
         # --- END NEW UI ---
         if st.button("🚀 Generate DCF Analysis", use_container_width=True):
+
+            # --- ADD AUDIT LOG CALL ---
+            log_audit_event(
+                action_type="RUN_DCF_ANALYSIS", 
+                status="STARTED",
+                target_id=st.session_state.dcf_company,
+                details={
+                    "wacc": st.session_state.dcf_wacc,
+                    "data_source": st.session_state.dcf_data_source
+                }
+            )
+            # ---
+
+            
             st.session_state.update({
                 'dcf_company_name': st.session_state.dcf_company,
                 'dcf_wacc_input': st.session_state.dcf_wacc,
@@ -1453,6 +1523,9 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
             ticker = st.session_state.dcf_ticker_input.upper() or get_fmp_ticker(st.session_state.dcf_company_name)
             if not ticker:
                 st.error("❌ Could not determine ticker. Please provide one.")
+                # --- ADD AUDIT LOG CALL ---
+                log_audit_event(action_type="RUN_DCF_ANALYSIS", status="FAILURE", target_id=st.session_state.dcf_company_name, details={"error": "Could not determine ticker"})
+                # ---
                 st.session_state.dcf_step = "initial"
                 st.rerun()
 
@@ -1461,6 +1534,9 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
                 uploaded_file = st.session_state.get("dcf_upload")
                 if not uploaded_file:
                     st.error("❌ Please upload a financials file.")
+                    # --- ADD AUDIT LOG CALL ---
+                    log_audit_event(action_type="RUN_DCF_ANALYSIS", status="FAILURE", target_id=st.session_state.dcf_company_name, details={"error": "User did not upload financials file"})
+                    # ---
                     st.session_state.dcf_step = "initial"
                     st.rerun()
                 financials = load_uploaded_financials(uploaded_file)
@@ -1485,15 +1561,24 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
                 
                 assumptions = extract_scenario_assumptions(memo, st.session_state.dcf_company_name, hist_summary)
                 if assumptions:
+                    # --- ADD AUDIT LOG CALL ---
+                    log_audit_event(action_type="DCF_STEP_ASSUMPTIONS", status="SUCCESS", target_id=st.session_state.dcf_company_name)
+                    # ---
                     st.session_state.dcf_assumptions = assumptions
                     st.session_state.dcf_step = "review"
                     st.rerun()
                 else:
                     st.error("❌ Could not generate assumptions.")
+                    # --- ADD AUDIT LOG CALL ---
+                    log_audit_event(action_type="DCF_STEP_ASSUMPTIONS", status="FAILURE", target_id=st.session_state.dcf_company_name, details={"error": "Could not generate assumptions"})
+                    # ---
                     st.session_state.dcf_step = "initial"
                     st.rerun()
             else:
                 st.error(f"❌ Could not fetch complete financial data for {ticker}.")
+                # --- ADD AUDIT LOG CALL ---
+                log_audit_event(action_type="DCF_STEP_DATA_FETCH", status="FAILURE", target_id=st.session_state.dcf_company_name, details={"error": f"Could not fetch FMP/financial data for {ticker}"})
+                # ---
                 st.session_state.dcf_step = "initial"
                 st.rerun()
 
@@ -1532,22 +1617,42 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
 
     # --- Block 4: Final calculation ---
     if st.session_state.dcf_step == "processing_final":
-        with st.spinner("Finalizing valuation..."):
-            results = perform_dcf_calculations(
-                st.session_state.dcf_financials, 
-                st.session_state.dcf_assumptions, 
-                st.session_state.dcf_wacc_input, 
-                terminal_multiples=st.session_state.get('dcf_terminal_multiples')
+        try: # <<< NEW: Added try/except block for safety
+            with st.spinner("Finalizing valuation..."):
+                results = perform_dcf_calculations(
+                    st.session_state.dcf_financials, 
+                    st.session_state.dcf_assumptions, 
+                    st.session_state.dcf_wacc_input, 
+                    terminal_multiples=st.session_state.get('dcf_terminal_multiples')
+                )
+                st.session_state.dcf_results_data = results
+                
+                if results and results.get('base_case_terminal_fcf_is_negative') and 'dcf_terminal_multiples' not in st.session_state:
+                    st.session_state.dcf_step = "request_multiples"
+                    st.rerun() # This rerun is correct as it's a conditional branch.
+                else:
+                    st.session_state.dcf_valuation_method = 'EV/EBITDA Multiple' if 'dcf_terminal_multiples' in st.session_state else 'Perpetuity Growth'
+                    st.session_state.dcf_step = "complete"
+                    
+                    # --- ADD AUDIT LOG CALL (SUCCESS) ---
+                    log_audit_event(
+                        action_type="RUN_DCF_ANALYSIS", 
+                        status="SUCCESS",
+                        target_id=st.session_state.dcf_company_name,
+                        details={"valuation_method": st.session_state.dcf_valuation_method}
+                    )
+                    # ---
+        except Exception as e:
+            # --- ADD AUDIT LOG CALL (FAILURE) ---
+            log_audit_event(
+                action_type="RUN_DCF_ANALYSIS", 
+                status="FAILURE",
+                target_id=st.session_state.dcf_company_name,
+                details={"error_step": "processing_final", "error_message": str(e)}
             )
-            st.session_state.dcf_results_data = results
-            
-            if results and results.get('base_case_terminal_fcf_is_negative') and 'dcf_terminal_multiples' not in st.session_state:
-                st.session_state.dcf_step = "request_multiples"
-                st.rerun() # This rerun is correct as it's a conditional branch.
-            else:
-                st.session_state.dcf_valuation_method = 'EV/EBITDA Multiple' if 'dcf_terminal_multiples' in st.session_state else 'Perpetuity Growth'
-                st.session_state.dcf_step = "complete"
-                # CRITICAL FIX: No st.rerun() here. Let the script "fall through" to the complete block.
+            # ---
+            st.error(f"An error occurred during final calculation: {e}")
+            st.session_state.dcf_step = "initial" # Reset on failure
 
     # --- Block 5: Optional step for providing multiples ---
     if st.session_state.dcf_step == "request_multiples":
@@ -1569,6 +1674,13 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
         st.markdown(format_report_as_html(st.session_state), unsafe_allow_html=True)
         
         if st.button("🔄 Start New Analysis"):
+            # --- ADD AUDIT LOG CALL ---
+            log_audit_event(
+                action_type="DCF_RESET_ANALYSIS", 
+                status="SUCCESS",
+                target_id=st.session_state.get('dcf_company_name', 'N/A')
+            )
+            # ---
             keys_to_delete = [key for key in st.session_state.keys() if key.startswith('dcf_')]
             for key in keys_to_delete:
                 del st.session_state[key]
