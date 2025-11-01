@@ -379,6 +379,19 @@ h1 {
     opacity: 0.7;
 }
 
+
+/* New container for a scrollable history feed */
+.history-scroll-container {
+    max-height: 440px; /* This sets the fixed height (approx. 3 cards) */
+    overflow-y: auto;  /* This adds a vertical scrollbar *only* if needed */
+    padding: 10px;     /* A little space inside the box */
+    margin-bottom: 20px;
+    background-color: #fdfdfd; /* A very light background to frame the cards */
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+}
+
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -7685,40 +7698,33 @@ def main():
         st.markdown('<p class="welcome-subtitle">A unified platform for advanced financial analysis.</p>', unsafe_allow_html=True)
         st.info("👈 **Select an agent from the sidebar to begin.**")
         
-        # --- START: NEW HISTORY DISPLAY SECTION (v3) ---
+        # --- START: HISTORY DISPLAY WITH SCROLL (v4) ---
         st.markdown("---")
         st.subheader("Your Recent Activity")
 
-        history_items = get_user_history(limit=5) # Fetch the 5 most recent items
+        # Fetch more items now that we have a scroll box
+        history_items = get_user_history(limit=15) 
 
         if not history_items:
             st.info("You have no recent activity.")
         else:
-            # This full_html string will be built and then rendered once.
             html_items = []
             for item in history_items:
                 timestamp = pd.to_datetime(item['created_at']).strftime('%b %d, %Y at %I:%M %p')
                 
                 tags_html = ""
-                
-                # Action Tag
                 if item.get('action_type'):
                     tags_html += f'<div class="history-tag" title="{html.escape(item["action_type"])}"><span class="history-tag-label">Action:</span> {html.escape(item["action_type"])}</div>'
-                
-                # Target Tag
                 if item.get('target_id'):
                     tags_html += f'<div class="history-tag" title="{html.escape(item["target_id"])}"><span class="history-tag-label">Target:</span> {html.escape(item["target_id"])}</div>'
                 
-                # Parameters Tags
                 if item.get('details'):
                     clean_details = {k: v for k, v in item['details'].items() if v is not None}
                     for key, value in clean_details.items():
-                        # Make the key more readable (e.g., 'source_file' -> 'Source File')
                         clean_key = key.replace('_', ' ').title()
                         value_str = str(value)
                         tags_html += f'<div class="history-tag" title="{html.escape(value_str)}"><span class="history-tag-label">{html.escape(clean_key)}:</span> {html.escape(value_str)}</div>'
 
-                # Assemble the full item
                 html_items.append(f"""
                 <div class="history-item">
                     <div class="history-summary">{html.escape(item['summary'])}</div>
@@ -7729,10 +7735,17 @@ def main():
                 </div>
                 """)
             
-            # Render all history items
-            st.markdown("\n".join(html_items), unsafe_allow_html=True)
+            # --- THIS IS THE KEY CHANGE ---
+            # We wrap all the generated items in our new scrollable container
+            full_history_html = f"""
+            <div class="history-scroll-container">
+                {"\n".join(html_items)}
+            </div>
+            """
+            st.markdown(full_history_html, unsafe_allow_html=True)
+            # --- END OF KEY CHANGE ---
             
-        # --- END: NEW HISTORY DISPLAY SECTION (v3) ---
+        # --- END: HISTORY DISPLAY WITH SCROLL (v4) ---
         
         st.subheader("Available Agents")
 
@@ -7804,8 +7817,7 @@ def main():
                     line-height: 1.5;
                 }}
                 </style>
-            </head>
-            <body>
+            </head>            <body>
                 <div class="agent-grid">
                     {''.join(card_html_list)}
                 </div>
@@ -7813,8 +7825,6 @@ def main():
         </html>
         """
         
-        # We now use a more generous height of 220px per row to ensure
-        # all content is visible without being cut off.
         num_rows = (len(visible_agent_details) + 2) // 3
         height_px = num_rows * 220
         
