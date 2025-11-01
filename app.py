@@ -424,26 +424,18 @@ def authentication_ui():
                         # 1. Generate a new unique session token.
                         session_token = str(uuid.uuid4())
                         
-                        # 2. Get the user's UUID (required for audit logging)
-                        # We query for it here to ensure we have the correct foreign key for the log.
-                        try:
-                            user_record = conn.client.table("users").select("id").eq("email", email).single().execute()
-                            user_id = user_record.data['id']
-                        except Exception as e:
-                            st.error(f"Could not retrieve user ID for logging: {e}")
-                            st.stop() # Stop execution if we can't get the ID
-                        
-                        # 3. Store the new token in the database, overwriting any old one.
+                        # 2. Store the new token in the database.
                         conn.client.table("users").update({"active_session_token": session_token}).eq("email", email).execute()
 
-                        # 4. Store user details, new token, and user_id in the session state.
+                        # 3. Store user details in the session state.
+                        # We no longer need to query for user_id.
                         st.session_state['logged_in'] = True
-                        st.session_state['username'] = email      # For display
-                        st.session_state['user_id'] = user_id      # <<< NEW: For logging
+                        st.session_state['username'] = email      # This is the email, and our new key for logging
                         st.session_state['session_token'] = session_token 
                         # --- END: MODIFIED SESSION LOGIC ---
                         
                         # --- ADD AUDIT LOG CALL (SUCCESS) ---
+                        # This will now work, as log_audit_event pulls 'username' (the email)
                         log_audit_event(action_type="USER_LOGIN", status="SUCCESS")
                         # ---
                         
@@ -489,32 +481,27 @@ def authentication_ui():
 
 def log_audit_event(action_type: str, status: str, target_id: str = None, details: dict = None):
     """
-    Writes a standardized entry to the audit_log table.
-    Pulls user_id from the session state.
+    Writes a standardized entry to the audit_log table using EMAIL.
+    Pulls user_email from the session state.
     """
     try:
-        # Get user_id from session state (set during login)
-        user_id = st.session_state.get('user_id')
+        # Get user_email from session state
+        user_email = st.session_state.get('username') # <<< CHANGED from user_id
         
-        if not user_id:
-            # This should not happen for a logged-in user, but as a fallback:
-            st.warning("Could not log audit event: user_id not found in session state.")
+        if not user_email:
+            # This won't happen for logged-in users, but good to check
             return
 
-        # Get Supabase connection
         conn = st.connection("supabase", type=SupabaseConnection)
         
         log_entry = {
-            "user_id": user_id,
+            "user_email": user_email, # <<< CHANGED from user_id
             "action_type": action_type,
             "status": status,
             "target_id": target_id,
             "details": details,
-            # 'ip_address' and 'user_agent' are harder to get in Streamlit
-            # Supabase auth logs the IP on login, which is often sufficient.
         }
         
-        # Insert the log entry
         conn.client.table("audit_log").insert(log_entry).execute()
 
     except Exception as e:
