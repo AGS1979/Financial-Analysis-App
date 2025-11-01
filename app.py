@@ -7713,21 +7713,34 @@ def main():
                 timestamp = pd.to_datetime(item['created_at']).strftime('%b %d, %Y at %I:%M %p')
                 
                 tags_html = ""
-                if item.get('action_type'):
-                    tags_html += f'<div class="history-tag" title="{html.escape(item["action_type"])}"><span class="history-tag-label">Action:</span> {html.escape(item["action_type"])}</div>'
-                if item.get('target_id'):
-                    tags_html += f'<div class="history-tag" title="{html.escape(item["target_id"])}"><span class="history-tag-label">Target:</span> {html.escape(item["target_id"])}</div>'
                 
+                # We use html.escape() on all user-facing data to prevent errors
+                # if a summary or filename contains special characters like < or >.
+                
+                # Action Tag
+                if item.get('action_type'):
+                    safe_action = html.escape(item["action_type"])
+                    tags_html += f'<div class="history-tag" title="{safe_action}"><span class="history-tag-label">Action:</span> {safe_action}</div>'
+                
+                # Target Tag
+                if item.get('target_id'):
+                    safe_target = html.escape(item["target_id"])
+                    tags_html += f'<div class="history-tag" title="{safe_target}"><span class="history-tag-label">Target:</span> {safe_target}</div>'
+                
+                # Parameters Tags
                 if item.get('details'):
                     clean_details = {k: v for k, v in item['details'].items() if v is not None}
                     for key, value in clean_details.items():
-                        clean_key = key.replace('_', ' ').title()
-                        value_str = str(value)
-                        tags_html += f'<div class="history-tag" title="{html.escape(value_str)}"><span class="history-tag-label">{html.escape(clean_key)}:</span> {html.escape(value_str)}</div>'
+                        # Make the key more readable (e.g., 'source_file' -> 'Source File')
+                        clean_key = html.escape(key.replace('_', ' ').title())
+                        value_str = html.escape(str(value))
+                        tags_html += f'<div class="history-tag" title="{value_str}"><span class="history-tag-label">{clean_key}:</span> {value_str}</div>'
 
+                # Assemble the full item
+                safe_summary = html.escape(item['summary'])
                 html_items.append(f"""
                 <div class="history-item">
-                    <div class="history-summary">{html.escape(item['summary'])}</div>
+                    <div class="history-summary">{safe_summary}</div>
                     <div class="history-timestamp">Performed on {timestamp}</div>
                     <div class="history-tags">
                         {tags_html}
@@ -7735,15 +7748,18 @@ def main():
                 </div>
                 """)
             
-            # --- THIS IS THE KEY CHANGE ---
-            # We wrap all the generated items in our new scrollable container
+            # --- THIS IS THE KEY PART ---
+            # We wrap all the generated items in our scrollable container
             full_history_html = f"""
             <div class="history-scroll-container">
                 {"\n".join(html_items)}
             </div>
             """
+            
+            # --- AND THIS IS THE CRITICAL FIX ---
+            # Ensure unsafe_allow_html=True is set.
             st.markdown(full_history_html, unsafe_allow_html=True)
-            # --- END OF KEY CHANGE ---
+            # --- END OF CRITICAL FIX ---
             
         # --- END: HISTORY DISPLAY WITH SCROLL (v4) ---
         
