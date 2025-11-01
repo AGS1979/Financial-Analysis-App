@@ -7757,8 +7757,10 @@ def main():
             """
             
             # --- AND THIS IS THE CRITICAL FIX ---
-            # Ensure unsafe_allow_html=True is set.
-            st.markdown(full_history_html, unsafe_allow_html=True)
+            # We are using components.html instead of st.markdown
+            # to force the raw HTML to render and bypass any parsing/caching issues.
+            # 450px = 440px for the container + 10px for internal padding
+            components.html(full_history_html, height=450)
             # --- END OF CRITICAL FIX ---
             
         # --- END: HISTORY DISPLAY WITH SCROLL (v4) ---
