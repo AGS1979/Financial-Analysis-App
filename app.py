@@ -388,6 +388,51 @@ def get_users_db():
         return pd.DataFrame(columns=['email', 'password_hash'])
     return pd.DataFrame(rows.data)
 
+# --- New Database Functions for User History ---
+
+def log_user_history(action_type: str, target_id: str, summary: str, details: dict = None):
+    """Writes a user-facing history event to the database."""
+    try:
+        user_email = st.session_state.get('username')
+        if not user_email:
+            return
+
+        conn = st.connection("supabase", type=SupabaseConnection)
+        history_entry = {
+            "user_email": user_email,
+            "action_type": action_type,
+            "target_id": target_id,
+            "summary": summary,
+            "details": details,
+        }
+        conn.client.table("user_history").insert(history_entry).execute()
+
+    except Exception as e:
+        # Log to the console if history logging fails, but don't stop the app
+        print(f"WARNING: Failed to write to user_history. Error: {e}")
+
+def get_user_history(limit: int = 10):
+    """Fetches the most recent history items for the current user."""
+    try:
+        user_email = st.session_state.get('username')
+        if not user_email:
+            return []
+
+        conn = st.connection("supabase", type=SupabaseConnection)
+        response = conn.client.table("user_history") \
+            .select("created_at, action_type, target_id, summary, details") \
+            .eq("user_email", user_email) \
+            .order("created_at", desc=True) \
+            .limit(limit) \
+            .execute()
+        
+        return response.data if response.data else []
+
+    except Exception as e:
+        print(f"WARNING: Failed to fetch user_history. Error: {e}")
+        return []
+
+
 def add_user_db(email: str, hashed_password: str):
     """Adds a new user to the users table."""
     conn.client.table("users").insert([{"email": email, "password_hash": hashed_password}]).execute()
@@ -1074,6 +1119,14 @@ def investment_memo_app():
 
         # In your main app flow, under the "if st.button..."
         if st.button("📘 Generate Investment Memo", key="gen_memo"):
+            # --- ADD AUDIT LOG CALL ---
+            log_audit_event(
+                action_type="PRE_IPO_MEMO_GEN",
+                status="STARTED",
+                target_id=uploaded_file.name,
+                details={"custom_focus": custom_focus}
+            )
+            # ---
             with st.spinner("⏳ Analyzing document and generating memo... This may take a few minutes."):
                 try:
                     full_text = ""
@@ -1090,6 +1143,7 @@ def investment_memo_app():
                         raise ValueError("Could not extract text from the document.")
                     
                     company_name = extract_company_name(full_text)
+                    st.session_state.pre_ipo_company_name = company_name # Save for later
                     
                     # --- CALL THE NEW, FIXED FUNCTION ---
                     # It now takes the full_text and handles context internally.
@@ -1100,8 +1154,29 @@ def investment_memo_app():
                     st.session_state.memo_generated = True
                     st.session_state.memo_path = memo_path
                     st.success("✅ Memo generated successfully!")
+                    # --- ADD AUDIT LOG CALL ---
+                    log_audit_event(action_type="PRE_IPO_MEMO_GEN", status="SUCCESS", target_id=company_name)
+                    # ---
                     
+                    # --- START: NEW HISTORY LOG CALL ---
+                    log_user_history(
+                        action_type="Pre-IPO Memo",
+                        target_id=company_name,
+                        summary=f"Generated Pre-IPO Memo for {company_name}",
+                        details={"source_file": uploaded_file.name}
+                    )
+                    # --- END: NEW HISTORY LOG CALL ---
+
+
                 except Exception as e:
+                    # --- ADD AUDIT LOG CALL ---
+                    log_audit_event(
+                        action_type="PRE_IPO_MEMO_GEN",
+                        status="FAILURE",
+                        target_id=uploaded_file.name,
+                        details={"error": str(e)}
+                    )
+                    # ---
                     st.error(f"❌ Error generating memo: {e}")
                     st.session_state.memo_generated = False
         
@@ -1116,12 +1191,19 @@ def investment_memo_app():
             st.markdown("---")
             st.subheader("🎨 2. Generate Infographic")
             if st.button("🖼️ Generate Infographic", key="gen_infographic"):
+                company_name = st.session_state.get("pre_ipo_company_name", "Company")
+                # --- ADD AUDIT LOG CALL ---
+                log_audit_event(action_type="PRE_IPO_INFOGRAPHIC_GEN", status="STARTED", target_id=company_name)
+                # ---
                 with st.spinner("✨ Creating infographic summary..."):
                     try:
-                        company_name = Path(st.session_state.memo_path).stem.split('_PreIPO_Memo_')[0].replace('_', ' ')
                         infographic_html = generate_infographic_html(st.session_state.memo_path, company_name)
                         
                         st.components.v1.html(infographic_html, width=1100, height=1000, scrolling=True)
+                        
+                        # --- ADD AUDIT LOG CALL ---
+                        log_audit_event(action_type="PRE_IPO_INFOGRAPHIC_GEN", status="SUCCESS", target_id=company_name)
+                        # ---
                                         
                         st.download_button(
                             label="📥 Download Infographic (.html)",
@@ -1130,6 +1212,14 @@ def investment_memo_app():
                             mime="text/html"
                         )
                     except Exception as e:
+                        # --- ADD AUDIT LOG CALL ---
+                        log_audit_event(
+                            action_type="PRE_IPO_INFOGRAPHIC_GEN",
+                            status="FAILURE",
+                            target_id=company_name,
+                            details={"error": str(e)}
+                        )
+                        # ---
                         st.error(f"❌ Error generating infographic: {e}")
 
         # --- Q&A Section ---
@@ -1137,6 +1227,14 @@ def investment_memo_app():
         st.subheader("🔍 3. Ask Questions from the Document")
         query = st.text_input("Type your question (e.g., What are the key risk factors?)", key="memo_query")
         if query:
+            # --- ADD AUDIT LOG CALL ---
+            log_audit_event(
+                action_type="PRE_IPO_QA",
+                status="STARTED",
+                target_id=st.session_state.doc_path,
+                details={"query": query}
+            )
+            # ---
             with st.spinner("💬 Searching for answers in the document..."):
                 try:
                     # MODIFICATION: Use the updated engine
@@ -1144,7 +1242,23 @@ def investment_memo_app():
                     answer_html, cited_sources, source_label = engine.answer_query(st.session_state.doc_path, query)
                     st.markdown(answer_html, unsafe_allow_html=True)
                     st.caption(f"📄 Answer generated from information on {source_label.lower()}s: {', '.join(map(str, cited_sources))}")
+                    # --- ADD AUDIT LOG CALL ---
+                    log_audit_event(
+                        action_type="PRE_IPO_QA",
+                        status="SUCCESS",
+                        target_id=st.session_state.doc_path,
+                        details={"query": query}
+                    )
+                    # ---
                 except Exception as e:
+                    # --- ADD AUDIT LOG CALL ---
+                    log_audit_event(
+                        action_type="PRE_IPO_QA",
+                        status="FAILURE",
+                        target_id=st.session_state.doc_path,
+                        details={"error": str(e)}
+                    )
+                    # ---
                     st.error(f"❌ Query Error: {e}")
 
 # ==============================================================================
@@ -1496,7 +1610,19 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
             )
             # ---
 
-            
+            # --- START: NEW HISTORY LOG CALL ---
+            log_user_history(
+                action_type="DCF Analysis",
+                target_id=st.session_state.dcf_company,
+                summary=f"Ran DCF Analysis for {st.session_state.dcf_company}",
+                details={
+                    "wacc": st.session_state.dcf_wacc,
+                    "data_source": st.session_state.dcf_data_source,
+                    "primary_doc": st.session_state.get("dcf_primary_doc").name if st.session_state.get("dcf_primary_doc") else None
+                }
+            )
+            # --- END: NEW HISTORY LOG CALL ---
+
             st.session_state.update({
                 'dcf_company_name': st.session_state.dcf_company,
                 'dcf_wacc_input': st.session_state.dcf_wacc,
@@ -1538,7 +1664,7 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
                 
                 memo, sources = generate_analyst_memo(docs_text, st.session_state.dcf_company_name, financials)
                 st.session_state.update({'dcf_memo': memo, 'dcf_sources': sources})
-                
+
                 hist = financials.sort_values("Year", ascending=False).head(3)
                 hist_summary = "Not enough data for 3-year trends."
                 if len(hist) >= 3:
@@ -2172,6 +2298,14 @@ Section to Summarize:
         if not company_name_memo or not situation_type_memo or not uploaded_files_memo:
             st.warning("Please fill in all fields and upload at least one document.")
         else:
+            # --- ADD AUDIT LOG CALL ---
+            log_audit_event(
+                action_type="SITUATIONS_MEMO_GEN",
+                status="STARTED",
+                target_id=company_name_memo,
+                details={"situation_type": situation_type_memo, "valuation_mode": valuation_mode, "files": [f.name for f in uploaded_files_memo]}
+            )
+            # ---
             with st.spinner("Generating memo... This may take a moment."):
                 try:
                     memo_path = generate_special_situation_note(
@@ -2187,6 +2321,9 @@ Section to Summarize:
                     st.session_state.situation_type = situation_type_memo
                     
                     st.success("Memo generated successfully!")
+                    # --- ADD AUDIT LOG CALL ---
+                    log_audit_event(action_type="SITUATIONS_MEMO_GEN", status="SUCCESS", target_id=company_name_memo)
+                    # ---
                     with open(memo_path, "rb") as f:
                         st.download_button(
                             label="Download Memo (.docx)",
@@ -2195,6 +2332,14 @@ Section to Summarize:
                             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                         )
                 except Exception as e:
+                    # --- ADD AUDIT LOG CALL ---
+                    log_audit_event(
+                        action_type="SITUATIONS_MEMO_GEN",
+                        status="FAILURE",
+                        target_id=company_name_memo,
+                        details={"error": str(e)}
+                    )
+                    # ---
                     st.error(f"An error occurred during memo generation: {e}")
 
     st.markdown("\n\n---\n\n")
@@ -2214,6 +2359,9 @@ Section to Summarize:
         if not memo_file_to_use or not company_name_infographic or not situation_type_infographic:
             st.warning("Please generate a memo first in Step 1, or upload a previously generated memo.")
         else:
+            # --- ADD AUDIT LOG CALL ---
+            log_audit_event(action_type="SITUATIONS_INFOGRAPHIC_GEN", status="STARTED", target_id=company_name_infographic)
+            # ---
             with st.spinner("Extracting sections and generating infographic..."):
                 try:
                     sections = extract_sections_from_docx_for_infographic(memo_file_to_use, situation_type_infographic)
@@ -2225,6 +2373,10 @@ Section to Summarize:
                         
                         st.subheader("Infographic Preview")
                         st.components.v1.html(html_content, height=800, scrolling=True)
+                        
+                        # --- ADD AUDIT LOG CALL ---
+                        log_audit_event(action_type="SITUATIONS_INFOGRAPHIC_GEN", status="SUCCESS", target_id=company_name_infographic)
+                        # ---
 
                         st.download_button(
                             label="Download Infographic (.html)",
@@ -2233,6 +2385,14 @@ Section to Summarize:
                             mime="text/html"
                         )
                 except Exception as e:
+                    # --- ADD AUDIT LOG CALL ---
+                    log_audit_event(
+                        action_type="SITUATIONS_INFOGRAPHIC_GEN",
+                        status="FAILURE",
+                        target_id=company_name_infographic,
+                        details={"error": str(e)}
+                    )
+                    # ---
                     st.error(f"An error occurred during infographic generation: {e}")
 
 # ==============================================================================
@@ -2621,13 +2781,32 @@ def esg_analyzer_app():
             if not all([company_dash, file_dash]): 
                 st.error("Please provide a company name and a PDF file.")
             else:
+                # --- ADD AUDIT LOG CALL ---
+                log_audit_event(
+                    action_type="ESG_DASHBOARD_GEN",
+                    status="STARTED",
+                    target_id=company_dash,
+                    details={"file": file_dash.name}
+                )
+                # ---
                 text = extract_text_from_pdf_esg(file_dash)
                 if text:
                     esg_data = analyze_esg_in_stages(text)
                     if "error" in esg_data: 
+                        # --- ADD AUDIT LOG CALL ---
+                        log_audit_event(
+                            action_type="ESG_DASHBOARD_GEN",
+                            status="FAILURE",
+                            target_id=company_dash,
+                            details={"error": esg_data['error']}
+                        )
+                        # ---
                         st.error(f"Analysis failed: {esg_data['error']}")
                     else:
                         st.success("Dashboard generated successfully!")
+                        # --- ADD AUDIT LOG CALL ---
+                        log_audit_event(action_type="ESG_DASHBOARD_GEN", status="SUCCESS", target_id=company_dash)
+                        # ---
                         report_content, report_filename = generate_esg_dashboard_html(esg_data, company_dash)
                         st.download_button("📥 Download HTML Dashboard", report_content, report_filename, "text/html", use_container_width=True)
                         st.markdown("### Dashboard Preview:")
@@ -2646,13 +2825,32 @@ def esg_analyzer_app():
             if not all([company_classic, file_classic]): 
                 st.error("Please provide a company name and a PDF file.")
             else:
+                # --- ADD AUDIT LOG CALL ---
+                log_audit_event(
+                    action_type="ESG_REPORT_GEN",
+                    status="STARTED",
+                    target_id=company_classic,
+                    details={"file": file_classic.name}
+                )
+                # ---
                 text = extract_text_from_pdf_esg(file_classic)
                 if text:
                     esg_data = analyze_esg_in_stages(text) # Use the same robust function
                     if "error" in esg_data: 
+                        # --- ADD AUDIT LOG CALL ---
+                        log_audit_event(
+                            action_type="ESG_REPORT_GEN",
+                            status="FAILURE",
+                            target_id=company_classic,
+                            details={"error": esg_data['error']}
+                        )
+                        # ---
                         st.error(f"Analysis failed: {esg_data['error']}")
                     else:
                         st.success("Analysis complete!")
+                        # --- ADD AUDIT LOG CALL ---
+                        log_audit_event(action_type="ESG_REPORT_GEN", status="SUCCESS", target_id=company_classic)
+                        # ---
                         report_content, report_filename = generate_html_report_esg(esg_data, company_classic)
                         st.download_button("📥 Download HTML Report", report_content, report_filename, "text/html", use_container_width=True)
                         st.markdown("### Report Preview:")
@@ -2665,6 +2863,14 @@ def esg_analyzer_app():
             if not 2 <= len(uploaded_html_files) <= 5: 
                 st.warning("Please upload between 2 and 5 HTML files to compare.")
             else:
+                # --- ADD AUDIT LOG CALL ---
+                log_audit_event(
+                    action_type="ESG_COMPARE_REPORTS",
+                    status="STARTED",
+                    target_id="Multiple Files",
+                    details={"files": [f.name for f in uploaded_html_files]}
+                )
+                # ---
                 comparison_data = []
                 with st.spinner("Parsing reports for comparison..."):
                     for f in uploaded_html_files:
@@ -2677,6 +2883,9 @@ def esg_analyzer_app():
                 if comparison_data:
                     compare_content, compare_filename = generate_comparison_html_esg(comparison_data)
                     st.success("Comparison complete!")
+                    # --- ADD AUDIT LOG CALL ---
+                    log_audit_event(action_type="ESG_COMPARE_REPORTS", status="SUCCESS", target_id="Multiple Files")
+                    # ---
                     st.download_button("📥 Download Comparison Report", compare_content, compare_filename, "text/html", use_container_width=True)
                     st.markdown("### Comparison Preview:")
                     st.components.v1.html(compare_content.decode(), height=800, scrolling=True)
@@ -7429,6 +7638,31 @@ def main():
     else: # This is the "🏠 Welcome" page
         st.markdown('<p class="welcome-subtitle">A unified platform for advanced financial analysis.</p>', unsafe_allow_html=True)
         st.info("👈 **Select an agent from the sidebar to begin.**")
+        
+
+        # --- START: NEW HISTORY DISPLAY SECTION ---
+        st.markdown("---")
+        st.subheader("Your Recent Activity")
+
+        history_items = get_user_history(limit=5) # Fetch the 5 most recent items
+
+        if not history_items:
+            st.info("You have no recent activity.")
+        else:
+            for item in history_items:
+                # Format the timestamp for better readability
+                timestamp = pd.to_datetime(item['created_at']).strftime('%b %d, %Y at %I:%M %p')
+                
+                with st.expander(f"**{item['summary']}** - {timestamp}"):
+                    st.markdown(f"**Action:** {item['action_type']}")
+                    st.markdown(f"**Target:** {item['target_id']}")
+                    if item.get('details'):
+                        st.markdown("**Parameters:**")
+                        # Display details nicely, filtering out any None values
+                        clean_details = {k: v for k, v in item['details'].items() if v is not None}
+                        st.json(clean_details)
+        # --- END: NEW HISTORY DISPLAY SECTION ---
+
         st.subheader("Available Agents")
 
         # Define all possible agent cards in a master list
