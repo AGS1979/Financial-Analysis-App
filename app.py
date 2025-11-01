@@ -333,6 +333,52 @@ h1 {
     margin-top: 0;
 }
 
+
+/* 11. User History Styles */
+.history-item {
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
+    background-color: #ffffff;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+}
+.history-summary {
+    font-weight: 600;
+    font-size: 1.05em;
+    color: #1e1e1e;
+    margin-bottom: 4px;
+}
+.history-timestamp {
+    font-size: 0.9em;
+    color: #6c757d;
+    margin-bottom: 16px;
+}
+.history-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+}
+.history-tag {
+    font-size: 0.85em;
+    padding: 5px 12px;
+    border-radius: 16px;
+    background-color: #e6f1f6;
+    color: #00416A;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    max-width: 400px; /* Prevents tags from being too long */
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.history-tag-label {
+    font-weight: 600;
+    opacity: 0.7;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -7639,7 +7685,7 @@ def main():
         st.markdown('<p class="welcome-subtitle">A unified platform for advanced financial analysis.</p>', unsafe_allow_html=True)
         st.info("👈 **Select an agent from the sidebar to begin.**")
         
-        # --- START: MODIFIED HISTORY DISPLAY SECTION ---
+        # --- START: NEW HISTORY DISPLAY SECTION (v3) ---
         st.markdown("---")
         st.subheader("Your Recent Activity")
 
@@ -7648,32 +7694,45 @@ def main():
         if not history_items:
             st.info("You have no recent activity.")
         else:
+            # This full_html string will be built and then rendered once.
+            html_items = []
             for item in history_items:
-                # Format the timestamp for better readability
                 timestamp = pd.to_datetime(item['created_at']).strftime('%b %d, %Y at %I:%M %p')
                 
-                # Use st.container(border=True) for a clean, simple box
-                with st.container(border=True):
-                    # Main summary
-                    st.markdown(f"**{item['summary']}**")
-                    st.caption(f"Performed on {timestamp}") # Use st.caption for the date
-
-                    # Use columns for a cleaner layout
-                    col1, col2 = st.columns(2)
-                    col1.markdown(f"**Action:** `{item['action_type']}`")
-                    col2.markdown(f"**Target:** `{item['target_id']}`")
-
-                    # Show details if they exist
-                    if item.get('details'):
-                        # Filter out any keys that have None as a value
-                        clean_details = {k: v for k, v in item['details'].items() if v is not None}
-                        if clean_details: # Only show if there are non-null details
-                            st.markdown("**Parameters:**")
-                            st.json(clean_details)
+                tags_html = ""
                 
-                # Add a small vertical space between entries
-                st.write("") 
-        # --- END: MODIFIED HISTORY DISPLAY SECTION ---
+                # Action Tag
+                if item.get('action_type'):
+                    tags_html += f'<div class="history-tag" title="{html.escape(item["action_type"])}"><span class="history-tag-label">Action:</span> {html.escape(item["action_type"])}</div>'
+                
+                # Target Tag
+                if item.get('target_id'):
+                    tags_html += f'<div class="history-tag" title="{html.escape(item["target_id"])}"><span class="history-tag-label">Target:</span> {html.escape(item["target_id"])}</div>'
+                
+                # Parameters Tags
+                if item.get('details'):
+                    clean_details = {k: v for k, v in item['details'].items() if v is not None}
+                    for key, value in clean_details.items():
+                        # Make the key more readable (e.g., 'source_file' -> 'Source File')
+                        clean_key = key.replace('_', ' ').title()
+                        value_str = str(value)
+                        tags_html += f'<div class="history-tag" title="{html.escape(value_str)}"><span class="history-tag-label">{html.escape(clean_key)}:</span> {html.escape(value_str)}</div>'
+
+                # Assemble the full item
+                html_items.append(f"""
+                <div class="history-item">
+                    <div class="history-summary">{html.escape(item['summary'])}</div>
+                    <div class="history-timestamp">Performed on {timestamp}</div>
+                    <div class="history-tags">
+                        {tags_html}
+                    </div>
+                </div>
+                """)
+            
+            # Render all history items
+            st.markdown("\n".join(html_items), unsafe_allow_html=True)
+            
+        # --- END: NEW HISTORY DISPLAY SECTION (v3) ---
         
         st.subheader("Available Agents")
 
@@ -7754,11 +7813,10 @@ def main():
         </html>
         """
         
-        # --- THE FIX IS HERE ---
         # We now use a more generous height of 220px per row to ensure
         # all content is visible without being cut off.
         num_rows = (len(visible_agent_details) + 2) // 3
-        height_px = num_rows * 220  # Increased from 180 to 220 for more space
+        height_px = num_rows * 220
         
         components.html(full_html, height=height_px)
 
