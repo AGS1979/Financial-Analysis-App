@@ -3,23 +3,23 @@
 
 [user_permissions]
 # This is the default set of agents for any user NOT listed below.
-"__DEFAULT__" = ["🏠 Welcome", "DCF Ginny", "ESG Analyzer"]
+"__DEFAULT__" = ["🏠 Welcome", "DCF Ginny", "ESG Analyzer", "History"]
 
 # User permissions for specific email addresses.
 # All users below have access to the complete set of agents.
 
-"avi104@yahoo.co.in" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel", "Commodity Forecaster", "Portfolio Risk Correlator"]
-"avinashg.singh@aranca.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel"]
-"akash.khairnar@aranca.com" = ["🏠 Welcome", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO"]
-"pragnya.pattnaik@aranca.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio"]
-"rohit.dhawan@aranca.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent Pre-IPO", "Agent Special Situations", "ESG Analyzer"]
-"omkar.dhavalikar@oneture.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel"]
-"mahesh.pathak@oneture.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel"]
-"gaurav.kankaria@oneture.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel"]
-"ravi.mevcha@oneture.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel"]
-"user8@example.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel"]
-"user9@example.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel"]
-"user10@example.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel"]
+"avi104@yahoo.co.in" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel", "Commodity Forecaster", "Portfolio Risk Correlator", "History"]
+"avinashg.singh@aranca.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel", "History"]
+"akash.khairnar@aranca.com" = ["🏠 Welcome", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "History"]
+"pragnya.pattnaik@aranca.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "History"]
+"rohit.dhawan@aranca.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent Pre-IPO", "Agent Special Situations", "ESG Analyzer", "History"]
+"omkar.dhavalikar@oneture.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel", "History"]
+"mahesh.pathak@oneture.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel", "History"]
+"gaurav.kankaria@oneture.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel", "History"]
+"ravi.mevcha@oneture.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel", "History"]
+"user8@example.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel", "History"]
+"user9@example.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel", "History"]
+"user10@example.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel", "History"]
 "user11@example.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel"]
 "user12@example.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel"]
 "user13@example.com" = ["🏠 Welcome", "Agent IdeaGen", "Agent PE", "Model Integrity Agent", "Agent Credit", "Agent Pre-IPO", "DCF Ginny", "Agent Special Situations", "ESG Analyzer", "Agent Portfolio", "Agent Sentinel", "Tariff Impact Tracker", "Real-Time Sentinel"]

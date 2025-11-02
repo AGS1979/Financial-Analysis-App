@@ -7601,6 +7601,70 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"): # The 'client' paramet
             use_container_width=True
         )
 
+
+
+
+# ==============================================================================
+# 16. HISTORY PAGE FUNCTION (NEW)
+# ==============================================================================
+
+def show_history_page():
+    """
+    Renders a full page for the user's recent activity, using the app's CSS.
+    """
+    st.markdown("### 📜 Your Recent Activity")
+    st.markdown("Here is a log of your most recent actions on the platform.")
+    st.markdown("---")
+
+    # Fetch a larger number of items since it's a full page
+    history_items = get_user_history(limit=25) 
+
+    if not history_items:
+        st.info("You have no recent activity.")
+    else:
+        html_items = []
+        for item in history_items:
+            # Format the timestamp
+            timestamp = pd.to_datetime(item['created_at']).strftime('%b %d, %Y at %I:%M %p')
+            
+            tags_html = ""
+            
+            # Action Tag
+            if item.get('action_type'):
+                safe_action = html.escape(item["action_type"])
+                tags_html += f'<div class="history-tag" title="{safe_action}"><span class="history-tag-label">Action:</span> {safe_action}</div>'
+            
+            # Target Tag
+            if item.get('target_id'):
+                safe_target = html.escape(item["target_id"])
+                tags_html += f'<div class="history-tag" title="{safe_target}"><span class="history-tag-label">Target:</span> {safe_target}</div>'
+            
+            # Parameters Tags
+            if item.get('details'):
+                clean_details = {k: v for k, v in item['details'].items() if v is not None}
+                for key, value in clean_details.items():
+                    clean_key = html.escape(key.replace('_', ' ').title())
+                    value_str = html.escape(str(value))
+                    tags_html += f'<div class="history-tag" title="{value_str}"><span class="history-tag-label">{clean_key}:</span> {value_str}</div>'
+
+            # Assemble the full HTML for this one card
+            safe_summary = html.escape(item['summary'])
+            html_items.append(f"""
+            <div class="history-item">
+                <div class="history-summary">{safe_summary}</div>
+                <div class="history-timestamp">Performed on {timestamp}</div>
+                <div class="history-tags">
+                    {tags_html}
+                </div>
+            </div>
+            """)
+        
+        # Join all cards into a single HTML string
+        full_history_html = "\n".join(html_items)
+        
+        # Render the HTML directly to the page. The page will scroll naturally.
+        st.markdown(full_history_html, unsafe_allow_html=True)
+
 # ==============================================================================
 # 16. MAIN APP ROUTER (CORRECTED AND COMPLETE)
 # ==============================================================================
@@ -7694,76 +7758,19 @@ def main():
         tariff_impact_tracker_app(DEEPSEEK_API_KEY=DEEPSEEK_API_KEY, FMP_API_KEY=FMP_API_KEY, logo_base64_string=logo_base64)
     elif app_mode == "Commodity Forecaster":
         commodity_forecasting_agent(client=openai_client)
+    elif app_mode == "History":
+        show_history_page()
     else: # This is the "🏠 Welcome" page
         st.markdown('<p class="welcome-subtitle">A unified platform for advanced financial analysis.</p>', unsafe_allow_html=True)
         st.info("👈 **Select an agent from the sidebar to begin.**")
         
-        st.markdown("---")
-        
-        # --- START: MODIFIED HISTORY BLOCK ---
-        # The subheader is now the label for a collapsible expander.
-        with st.expander("Your Recent Activity", expanded=False):
-            # Fetch more items now that we have a scroll box
-            history_items = get_user_history(limit=15) 
-    
-            if not history_items:
-                st.info("You have no recent activity.")
-            else:
-                html_items = []
-                for item in history_items:
-                    timestamp = pd.to_datetime(item['created_at']).strftime('%b %d, %Y at %I:%M %p')
-                    
-                    tags_html = ""
-                    
-                    # We use html.escape() on all user-facing data to prevent errors
-                    # if a summary or filename contains special characters like < or >.
-                    
-                    # Action Tag
-                    if item.get('action_type'):
-                        safe_action = html.escape(item["action_type"])
-                        tags_html += f'<div class="history-tag" title="{safe_action}"><span class="history-tag-label">Action:</span> {safe_action}</div>'
-                    
-                    # Target Tag
-                    if item.get('target_id'):
-                        safe_target = html.escape(item["target_id"])
-                        tags_html += f'<div class="history-tag" title="{safe_target}"><span class="history-tag-label">Target:</span> {safe_target}</div>'
-                    
-                    # Parameters Tags
-                    if item.get('details'):
-                        clean_details = {k: v for k, v in item['details'].items() if v is not None}
-                        for key, value in clean_details.items():
-                            # Make the key more readable (e.g., 'source_file' -> 'Source File')
-                            clean_key = html.escape(key.replace('_', ' ').title())
-                            value_str = html.escape(str(value))
-                            tags_html += f'<div class="history-tag" title="{value_str}"><span class="history-tag-label">{clean_key}:</span> {value_str}</div>'
-
-                    # Assemble the full item
-                    safe_summary = html.escape(item['summary'])
-                    html_items.append(f"""
-                    <div class="history-item">
-                        <div class="history-summary">{safe_summary}</div>
-                        <div class="history-timestamp">Performed on {timestamp}</div>
-                        <div class="history-tags">
-                            {tags_html}
-                        </div>
-                    </div>
-                    """)
-                
-                # We wrap all the generated items in our scrollable container
-                full_history_html = f"""
-                <div class="history-scroll-container">
-                    {"\n".join(html_items)}
-                </div>
-                """
-                
-                # Use components.html to render the styled cards inside the expander
-                components.html(full_history_html, height=450)
-        # --- END: MODIFIED HISTORY BLOCK ---
+        # --- The history section has been removed ---
         
         st.subheader("Available Agents")
 
         # Define all possible agent cards in a master list
         ALL_AGENT_DETAILS = [
+            {"name": "History", "title": "📜 History", "description": "View a full log of your recent activity and generated analyses."},
             {"name": "Agent IdeaGen", "title": "💡 Agent IdeaGen", "description": "Discover new investment ideas by screening the market based on a specific theme or set of custom criteria."},
             {"name": "Agent PE", "title": "🔒 Agent PE", "description": "Analyze confidential IMs and teasers with enterprise-grade secured environment."},
             {"name": "DCF Ginny", "title": "📈 DCF Ginny", "description": "Generate a document-driven Discounted Cash Flow (DCF) analysis using public data or your own financials."},
