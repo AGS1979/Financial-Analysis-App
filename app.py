@@ -7698,72 +7698,67 @@ def main():
         st.markdown('<p class="welcome-subtitle">A unified platform for advanced financial analysis.</p>', unsafe_allow_html=True)
         st.info("👈 **Select an agent from the sidebar to begin.**")
         
-        # --- START: HISTORY DISPLAY WITH SCROLL (v4) ---
         st.markdown("---")
-        st.subheader("Your Recent Activity")
+        
+        # --- START: MODIFIED HISTORY BLOCK ---
+        # The subheader is now the label for a collapsible expander.
+        with st.expander("Your Recent Activity", expanded=False):
+            # Fetch more items now that we have a scroll box
+            history_items = get_user_history(limit=15) 
+    
+            if not history_items:
+                st.info("You have no recent activity.")
+            else:
+                html_items = []
+                for item in history_items:
+                    timestamp = pd.to_datetime(item['created_at']).strftime('%b %d, %Y at %I:%M %p')
+                    
+                    tags_html = ""
+                    
+                    # We use html.escape() on all user-facing data to prevent errors
+                    # if a summary or filename contains special characters like < or >.
+                    
+                    # Action Tag
+                    if item.get('action_type'):
+                        safe_action = html.escape(item["action_type"])
+                        tags_html += f'<div class="history-tag" title="{safe_action}"><span class="history-tag-label">Action:</span> {safe_action}</div>'
+                    
+                    # Target Tag
+                    if item.get('target_id'):
+                        safe_target = html.escape(item["target_id"])
+                        tags_html += f'<div class="history-tag" title="{safe_target}"><span class="history-tag-label">Target:</span> {safe_target}</div>'
+                    
+                    # Parameters Tags
+                    if item.get('details'):
+                        clean_details = {k: v for k, v in item['details'].items() if v is not None}
+                        for key, value in clean_details.items():
+                            # Make the key more readable (e.g., 'source_file' -> 'Source File')
+                            clean_key = html.escape(key.replace('_', ' ').title())
+                            value_str = html.escape(str(value))
+                            tags_html += f'<div class="history-tag" title="{value_str}"><span class="history-tag-label">{clean_key}:</span> {value_str}</div>'
 
-        # Fetch more items now that we have a scroll box
-        history_items = get_user_history(limit=15) 
-
-        if not history_items:
-            st.info("You have no recent activity.")
-        else:
-            html_items = []
-            for item in history_items:
-                timestamp = pd.to_datetime(item['created_at']).strftime('%b %d, %Y at %I:%M %p')
-                
-                tags_html = ""
-                
-                # We use html.escape() on all user-facing data to prevent errors
-                # if a summary or filename contains special characters like < or >.
-                
-                # Action Tag
-                if item.get('action_type'):
-                    safe_action = html.escape(item["action_type"])
-                    tags_html += f'<div class="history-tag" title="{safe_action}"><span class="history-tag-label">Action:</span> {safe_action}</div>'
-                
-                # Target Tag
-                if item.get('target_id'):
-                    safe_target = html.escape(item["target_id"])
-                    tags_html += f'<div class="history-tag" title="{safe_target}"><span class="history-tag-label">Target:</span> {safe_target}</div>'
-                
-                # Parameters Tags
-                if item.get('details'):
-                    clean_details = {k: v for k, v in item['details'].items() if v is not None}
-                    for key, value in clean_details.items():
-                        # Make the key more readable (e.g., 'source_file' -> 'Source File')
-                        clean_key = html.escape(key.replace('_', ' ').title())
-                        value_str = html.escape(str(value))
-                        tags_html += f'<div class="history-tag" title="{value_str}"><span class="history-tag-label">{clean_key}:</span> {value_str}</div>'
-
-                # Assemble the full item
-                safe_summary = html.escape(item['summary'])
-                html_items.append(f"""
-                <div class="history-item">
-                    <div class="history-summary">{safe_summary}</div>
-                    <div class="history-timestamp">Performed on {timestamp}</div>
-                    <div class="history-tags">
-                        {tags_html}
+                    # Assemble the full item
+                    safe_summary = html.escape(item['summary'])
+                    html_items.append(f"""
+                    <div class="history-item">
+                        <div class="history-summary">{safe_summary}</div>
+                        <div class="history-timestamp">Performed on {timestamp}</div>
+                        <div class="history-tags">
+                            {tags_html}
+                        </div>
                     </div>
+                    """)
+                
+                # We wrap all the generated items in our scrollable container
+                full_history_html = f"""
+                <div class="history-scroll-container">
+                    {"\n".join(html_items)}
                 </div>
-                """)
-            
-            # --- THIS IS THE KEY PART ---
-            # We wrap all the generated items in our scrollable container
-            full_history_html = f"""
-            <div class="history-scroll-container">
-                {"\n".join(html_items)}
-            </div>
-            """
-            
-            # --- AND THIS IS THE CRITICAL FIX ---
-            # We are using components.html instead of st.markdown
-            # to force the raw HTML to render and bypass any parsing/caching issues.
-            # 450px = 440px for the container + 10px for internal padding
-            components.html(full_history_html, height=450)
-            # --- END OF CRITICAL FIX ---
-            
-        # --- END: HISTORY DISPLAY WITH SCROLL (v4) ---
+                """
+                
+                # Use components.html to render the styled cards inside the expander
+                components.html(full_history_html, height=450)
+        # --- END: MODIFIED HISTORY BLOCK ---
         
         st.subheader("Available Agents")
 
