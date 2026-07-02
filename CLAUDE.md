@@ -44,13 +44,12 @@ static/styles.css     # the app stylesheet, injected once by app.py:_inject_css(
 ```
 
 ### app.py bootstrap + router
-`app.py` runs, in order: `st.set_page_config` (must stay first Streamlit call) → `_inject_css()` (loads `static/styles.css`) → `config.validate_core_config()` → builds module globals `openai_client = config.get_azure_client()`, `conn = config.get_conn()`, and re-exports `DEEPSEEK_API_KEY`/`FMP_API_KEY`/`logo_base64` for the router to pass into agents. `main()` gates on `authentication_ui()` + `validate_session()`, builds the sidebar agent list from `config.toml` permissions, and dispatches via a large `if/elif` chain on `app_mode`.
+`app.py` runs, in order: `st.set_page_config` (must stay first Streamlit call) → `_inject_css()` (loads `static/styles.css`) → `config.validate_core_config()` → builds module globals `openai_client = config.get_azure_client()`, `conn = config.get_conn()`, and re-exports `DEEPSEEK_API_KEY`/`FMP_API_KEY`/`logo_base64` for the router to pass into agents. `main()` gates on `authentication_ui()` + `validate_session()`, builds the sidebar agent list from `config.toml` permissions, and dispatches via an `AgentRegistry` — `AGENTS.get(app_mode).render()` — built once by `_build_agent_registry()`. The registry (from `agents/base.py`: `BaseAgent`/`FunctionAgent`/`AgentRegistry`) is the single source of truth for both dispatch and the welcome-page cards.
 
-**To add or modify an agent**, four things must use the exact same display string (e.g. `"DCF Ginny"`):
-1. the agent module `agents/<name>.py` (a function that renders its own Streamlit UI) and its `from agents.<name> import <fn>` line in `app.py`;
-2. the `if/elif` branch in `main()`;
-3. the `ALL_AGENT_DETAILS` card list in `main()`;
-4. the `config.toml` `[user_permissions]` entry.
+**To add or modify an agent**:
+1. write the agent as `agents/<name>.py` (a function that renders its own Streamlit UI) and import it in `app.py`;
+2. register it in `_build_agent_registry()` via `add(name, title, description, render_fn)` — wrap any runtime args (client, keys, user id) in a lambda. This one entry drives both the router and the card;
+3. add the display-name to `config.toml` `[user_permissions]`. All must use the exact same string (e.g. `"DCF Ginny"`).
 
 Agents get shared dependencies by importing from `config`/`utils` (e.g. `from utils.net import http_post`, `from config import require_env`). A few agents (`dcf`, `real_time_sentinel`, `commodity`) receive the Azure `client` and/or API keys as **parameters** from the router rather than importing them.
 
@@ -62,7 +61,7 @@ Agents get shared dependencies by importing from `config`/`utils` (e.g. `from ut
 Auth is Supabase Postgres tables via `st_supabase_connection`, **not** Supabase Auth. Tables: `users`, `whitelist` (signup is whitelist-gated), `user_history`, `audit_log`, `credit_deals`, `tickers`. Passwords are hashed with **bcrypt**; legacy SHA-256 hashes are still verified and transparently re-hashed to bcrypt on the next successful login. Single-session enforcement writes `active_session_token` to the `users` row; sessions also expire after `SESSION_TTL_HOURS` (12) — **this requires a `users.session_expires_at timestamptz` column** (a NULL is treated as "no expiry"). Auth code lives in `auth/`.
 
 ### LLM & external services
-There is **no unified LLM client wrapper yet** (that's the pending Phase 3) — agents still construct Azure OpenAI clients inline (via `require_env` + `AzureOpenAI`) and call DeepSeek through `http_post(config.DEEPSEEK_API_URL, ...)`. All outbound HTTP goes through `utils.net.http_post`/`http_get`, which apply a 60s default timeout and retry/backoff.
+Model calls go through the unified `llm.client.LLMClient` (`from llm import llm`; then `llm.complete(prompt, system=..., provider=...)` or `llm.chat(messages, ...)`), which wraps DeepSeek (default), Azure OpenAI, and OpenAI behind one text-returning API. `temperature`/`max_tokens` are only sent when provided; `response_format` (JSON mode) and other kwargs pass through. All outbound HTTP still uses `utils.net.http_post`/`http_get` (60s timeout + retry/backoff). **Exceptions not on LLMClient:** `agents/commodity.py` keeps the raw Azure client for its function-calling (`tools=`) loop, which needs the raw response object; and Google Vertex/Gemini (PE agent) is not wrapped.
 - **Azure OpenAI** — primary LLM (`config.get_azure_client()`; also re-instantiated in several agents).
 - **DeepSeek** — memo, special_situations, portfolio, tariff, risk_correlator.
 - **Google Vertex AI / Gemini + Document AI + DLP** — PE agent (`agents/pe.py`).
@@ -83,4 +82,5 @@ Env vars are read in `config.py`. `st.connection("supabase")` additionally reads
 The refactor is following the work order in `SPEC.md` (kept locally, untracked/gitignored):
 - **Phase 1 (security) — done:** bcrypt + legacy migration, `require_env` replacing the broken `except KeyError` pattern, HTTP timeouts + retry, session expiry.
 - **Phase 2 (break up the monolith) — done:** `config.py`, `auth/`, `utils/`, `static/styles.css`, and all 14 agents extracted to `agents/`. Moves were byte-for-byte; import headers were computed from each function's AST.
-- **Phase 3+ (not yet done):** a shared `agents/base.py` `BaseAgent` interface and a unified `llm/client.py` wrapper (agents still hand-roll clients today), then the new agents in SPEC Phase 4. Duplicated per-agent document-parsing/report helpers (e.g. `parse_pdf_with_azure_di`, `parse_excel_to_markdown`, `clean_markdown`, `generate_report_html_from_markdown`) were intentionally left in place during the move and are candidates for consolidation into `documents/`/`utils/`.
+- **Phase 3 — done:** `agents/base.py` (`BaseAgent`/`FunctionAgent`/`AgentRegistry`), `llm/client.py` (`LLMClient`), the registry-driven router, and all agent model calls routed through `LLMClient` (except commodity's function-calling loop and the PE agent's Vertex/Gemini calls).
+- **Phase 4+ (not yet done):** the new agents in SPEC Phase 4. Duplicated per-agent document-parsing/report helpers (e.g. `parse_pdf_with_azure_di`, `parse_excel_to_markdown`, `clean_markdown`, `generate_report_html_from_markdown`) were intentionally left in place and are candidates for consolidation into `documents/`/`utils/`. A few agents still hold now-unused local config (e.g. ideagen passes an unused `client` through nested functions) — harmless, cleanup-later.
