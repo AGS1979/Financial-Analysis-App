@@ -5,6 +5,7 @@ Intelligence + Azure OpenAI): diligence Q&A, key-term comparison, outreach draft
 """
 
 from config import require_env
+from llm import llm
 from utils.net import http_post, http_get
 
 
@@ -43,13 +44,6 @@ def pe_agent_app_azure():
     openai_endpoint = _cfg["AZURE_OPENAI_ENDPOINT"]
     openai_key = _cfg["AZURE_OPENAI_KEY"]
     openai_deployment_name = _cfg["AZURE_OPENAI_DEPLOYMENT_NAME"]
-
-    # --- Initialize AzureOpenAI client ---
-    client = AzureOpenAI(
-        api_key=openai_key,
-        api_version="2024-02-01",
-        azure_endpoint=openai_endpoint,
-    )
 
     # --- PROMPTS FOR DOCUMENT ANALYSIS (Fully expanded) ---
     ANALYSIS_PROMPTS = {
@@ -135,14 +129,14 @@ def pe_agent_app_azure():
 
     def analyze_document_with_azure_openai(_context: str, _prompt: str) -> str:
         try:
-            response = client.chat.completions.create(
-                model=openai_deployment_name,
-                messages=[
+            return llm.chat(
+                [
                     {"role": "system", "content": "You are an expert financial analyst that responds only with clean, structured markdown as instructed."},
                     {"role": "user", "content": f"CONTEXT DOCUMENT:\n---\n{_context}\n---\nYOUR TASK: {_prompt}"},
                 ],
+                provider="azure",
+                model=openai_deployment_name,
             )
-            return response.choices[0].message.content
         except Exception as e:
             return f"## Error\n\n**Error during Azure OpenAI analysis:** {e}"
 
@@ -197,16 +191,14 @@ def pe_agent_app_azure():
     def analyze_source_for_outreach(company_name: str, source_text: str) -> str:
         prompt = f"""...""" # Omitted for brevity
         try:
-            response = client.chat.completions.create(model=openai_deployment_name, messages=[{"role": "user", "content": f"{prompt}\n\nSOURCE TEXT:\n---\n{source_text[:12000]}\n---"}], temperature=0.1)
-            return response.choices[0].message.content
+            return llm.chat([{"role": "user", "content": f"{prompt}\n\nSOURCE TEXT:\n---\n{source_text[:12000]}\n---"}], provider="azure", model=openai_deployment_name, temperature=0.1)
         except Exception as e:
             return f"Error during analysis: {e}"
 
     def generate_advanced_outreach_email(company_name: str, recipient_name: str, analysis_points: str, value_prop: str, sender_name: str, sender_title: str, firm_name: str) -> str:
         prompt = f"""...""" # Omitted for brevity
         try:
-            response = client.chat.completions.create(model=openai_deployment_name, messages=[{"role": "user", "content": prompt}], temperature=0.5)
-            return response.choices[0].message.content
+            return llm.chat([{"role": "user", "content": prompt}], provider="azure", model=openai_deployment_name, temperature=0.5)
         except Exception as e:
             return f"Error generating email: {e}"
             
@@ -323,8 +315,7 @@ def pe_agent_app_azure():
                     
                     QUESTION: {user_question}
                     """
-                    response = client.chat.completions.create(model=openai_deployment_name, messages=[{"role": "user", "content": prompt}])
-                    st.markdown(response.choices[0].message.content)
+                    st.markdown(llm.chat([{"role": "user", "content": prompt}], provider="azure", model=openai_deployment_name))
 
     # --- TAB 3: EXPERT CALL SUMMARIZER ---
     with tab3:
@@ -365,8 +356,7 @@ def pe_agent_app_azure():
                 (A bulleted list of the most impactful direct quotes from the expert(s), citing the source transcript name if possible.)
                 """
                 with st.spinner("Synthesizing expert calls..."):
-                    response = client.chat.completions.create(model=openai_deployment_name, messages=[{"role": "user", "content": prompt}])
-                    st.session_state['expert_call_summary'] = response.choices[0].message.content
+                    st.session_state['expert_call_summary'] = llm.chat([{"role": "user", "content": prompt}], provider="azure", model=openai_deployment_name)
 
         if 'expert_call_summary' in st.session_state:
             st.markdown(st.session_state['expert_call_summary'])
@@ -409,13 +399,8 @@ def pe_agent_app_azure():
 
                         Return your response as a JSON object where keys are the terms and values are the extracted text.
                         """
-                        response = client.chat.completions.create(
-                            model=openai_deployment_name,
-                            messages=[{"role": "user", "content": prompt}],
-                            response_format={"type": "json_object"}
-                        )
                         try:
-                            extracted_terms = json.loads(response.choices[0].message.content)
+                            extracted_terms = json.loads(llm.chat([{"role": "user", "content": prompt}], provider="azure", model=openai_deployment_name, response_format={"type": "json_object"}))
                             comparison_data[file.name] = extracted_terms
                         except json.JSONDecodeError:
                             st.warning(f"Could not parse JSON for {file.name}")

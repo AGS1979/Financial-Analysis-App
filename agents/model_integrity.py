@@ -6,6 +6,7 @@ Azure OpenAI.
 """
 
 from config import require_env
+from llm import llm
 
 
 def model_integrity_agent_app():
@@ -128,17 +129,14 @@ def model_integrity_agent_app():
         ---
         """
         try:
-            client = AzureOpenAI(
-                api_key=openai_key, api_version="2024-02-01", azure_endpoint=openai_endpoint
-            )
-            response = client.chat.completions.create(
-                model=openai_deployment_name,
-                messages=[
+            return llm.chat(
+                [
                     {"role": "system", "content": "You are a financial modeling audit expert."},
                     {"role": "user", "content": prompt},
                 ],
+                provider="azure",
+                model=openai_deployment_name,
             )
-            return response.choices[0].message.content
         except Exception as e:
             return f"## Error\n\n**Error during Azure OpenAI analysis:** {e}"
 

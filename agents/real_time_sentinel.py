@@ -7,6 +7,7 @@ simulated data). The client is passed in by the router.
 import os
 
 from openai import AzureOpenAI
+from llm import llm
 from utils.net import http_post, http_get
 
 
@@ -90,12 +91,9 @@ def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
                     for item in news_data:
                         # Use LLM to check for MNPI proxy
                         prompt = f"Does the following news headline for {ticker} contain any information that could be considered material non-public information (MNPI) for a public company? Answer 'Yes' or 'No' and provide a brief reason.\n\nHeadline: {item['title']}"
-                        response = client.chat.completions.create(
-                            model=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME"),
-                            messages=[{"role": "user", "content": prompt}]
-                        )
-                        if "yes" in response.choices[0].message.content.lower():
-                            compliance_findings[ticker]["news_mnpi"].append(f"**{item['title']}** - Potential MNPI: {response.choices[0].message.content}")
+                        mnpi_reply = llm.chat([{"role": "user", "content": prompt}], provider="azure")
+                        if "yes" in mnpi_reply.lower():
+                            compliance_findings[ticker]["news_mnpi"].append(f"**{item['title']}** - Potential MNPI: {mnpi_reply}")
 
             except Exception as e:
                 st.warning(f"Could not fetch news for {ticker}: {e}")

@@ -7,6 +7,7 @@ with a comparison dashboard and report.
 import os
 import streamlit as st
 
+from llm import llm
 from utils.logging import log_audit_event, log_user_history, get_user_history
 
 
@@ -59,12 +60,6 @@ def esg_analyzer_app():
             return {"error": "No text provided for analysis."}
             
         try:
-            # Initialize client inside the function that uses it
-            client = AzureOpenAI(
-                api_key=os.environ.get("AZURE_OPENAI_KEY"),
-                api_version="2024-02-01",
-                azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT")
-            )
             deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
         except Exception as e:
             st.error(f"Failed to initialize Azure OpenAI client: {e}")
@@ -87,13 +82,7 @@ def esg_analyzer_app():
                 {text[:80000]}
                 ---
                 """
-                response_stage1 = client.chat.completions.create(
-                    model=deployment_name,
-                    messages=[{"role": "user", "content": prompt_stage1}],
-                    response_format={"type": "json_object"},
-                    temperature=0.1
-                )
-                summary_and_scores = json.loads(response_stage1.choices[0].message.content)
+                summary_and_scores = json.loads(llm.chat([{"role": "user", "content": prompt_stage1}], provider="azure", model=deployment_name, response_format={"type": "json_object"}, temperature=0.1))
                 full_esg_data.update(summary_and_scores)
             except Exception as e:
                 st.error(f"Error during Stage 1 (Summary & Scores): {e}")
@@ -144,13 +133,7 @@ def esg_analyzer_app():
                     else:
                         prompt_stage2 = prompt_stage2_base + f"\n\nDOCUMENT TEXT:\n---\n{text[:80000]}\n---"
                     
-                    response_stage2 = client.chat.completions.create(
-                        model=deployment_name,
-                        messages=[{"role": "user", "content": prompt_stage2}],
-                        response_format={"type": "json_object"},
-                        temperature=0.1
-                    )
-                    pillar_data = json.loads(response_stage2.choices[0].message.content)
+                    pillar_data = json.loads(llm.chat([{"role": "user", "content": prompt_stage2}], provider="azure", model=deployment_name, response_format={"type": "json_object"}, temperature=0.1))
                     full_esg_data["kpis"][pillar] = pillar_data.get("kpis", [])
                     full_esg_data["pillar_takeaways"][pillar] = pillar_data.get("takeaways", [])
                     full_esg_data[f"{pillar}_insights"] = pillar_data.get("insights", []) # For classic report

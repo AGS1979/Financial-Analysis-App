@@ -5,6 +5,7 @@ Intelligence + Azure OpenAI), with covenant monitoring and Q&A over stored deals
 """
 
 from config import require_env
+from llm import llm
 
 
 def agent_credit_app_azure():
@@ -338,25 +339,24 @@ def agent_credit_app_azure():
             if not context_text or not prompt_text:
                 return {"error": "Context or prompt not found in cache"}
 
-            client = AzureOpenAI(api_key=openai_key, api_version="2024-02-01", azure_endpoint=openai_endpoint)
             kwargs = {"response_format": {"type": "json_object"}} if as_json else {}
             
             max_retries = 3
             for attempt in range(max_retries):
                 try:
-                    response = client.chat.completions.create(
-                        model=openai_deployment_name,
-                        temperature=0,
-                        top_p=0,
-                        extra_body={"seed": 1234}, # For reproducibility
-                        messages=[
+                    txt = llm.chat(
+                        [
                             {"role": "system", "content": "You are a precise credit-document extractor. If JSON is requested, return ONLY strict JSON."},
                             {"role": "user", "content": f"CONTEXT EXCERPT:\n---\n{context_text}\n---\nTASK:\n{prompt_text}"}
                         ],
-                        **kwargs
+                        provider="azure",
+                        model=openai_deployment_name,
+                        temperature=0,
+                        top_p=0,
+                        extra_body={"seed": 1234},
+                        **kwargs,
                     )
                     
-                    txt = response.choices[0].message.content
                     if as_json:
                         try:
                             # Clean up potential markdown code fences around the JSON

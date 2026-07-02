@@ -12,6 +12,7 @@ import streamlit as st
 
 from PyPDF2 import PdfReader
 from openai import OpenAI
+from llm import llm
 from utils.logging import log_audit_event, log_user_history, get_user_history
 from utils.net import http_post, http_get
 
@@ -77,8 +78,7 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
     def get_fmp_ticker(company_name):
         prompt = f'What is the exact stock ticker for the company "{company_name}"? Return only the raw ticker symbol.'
         try:
-            response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], temperature=0)
-            return response.choices[0].message.content.strip().upper().split()[0].strip('".:,')
+            return llm.chat([{"role": "user", "content": prompt}], provider="azure", model="gpt-4o-mini", temperature=0).strip().upper().split()[0].strip('".:,')
         except Exception as e:
             st.error(f"Could not retrieve ticker: {e}"); return None
 
@@ -145,8 +145,7 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
         --- CONTEXT ---\n{documents_text}\n{historical_summary}\n--- END CONTEXT ---
         """
         try:
-            response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}, temperature=0.2)
-            result = json.loads(response.choices[0].message.content)
+            result = json.loads(llm.chat([{"role": "user", "content": prompt}], provider="azure", model="gpt-4o", response_format={"type": "json_object"}, temperature=0.2))
             return result.get("memo", "Could not generate memo."), result.get("sources", [])
         except Exception as e:
             st.error(f"Error generating Analyst Memo: {e}")
@@ -170,8 +169,7 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
         --- HISTORICAL METRICS ---\n{historical_summary}\n--- ANALYST MEMO ---\n{analyst_memo}\n--- END ---
         """
         try:
-            response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}, temperature=0.0)
-            return json.loads(response.choices[0].message.content)
+            return json.loads(llm.chat([{"role": "user", "content": prompt}], provider="azure", model="gpt-4o", response_format={"type": "json_object"}, temperature=0.0))
         except Exception as e:
             st.error(f"Error generating scenarios: {e}"); return None
 

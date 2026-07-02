@@ -5,6 +5,7 @@ Turns an investment theme into validated tickers and deep-dive dossiers
 """
 
 from config import require_env
+from llm import llm
 from utils.net import http_post, http_get
 
 
@@ -62,8 +63,7 @@ def investment_pipeline_agent():
         Example: {{"sectors": ["Information Technology", "Industrials"]}}
         """
         try:
-            response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}, temperature=0.0)
-            sectors = json.loads(response.choices[0].message.content).get('sectors', [])
+            sectors = json.loads(llm.chat([{"role": "user", "content": prompt}], provider="azure", model=llm_deployment_name, response_format={"type": "json_object"}, temperature=0.0)).get('sectors', [])
             st.success(f"Identified guideline sectors: **{', '.join(sectors)}**")
             return sectors
         except Exception: return None
@@ -80,8 +80,7 @@ def investment_pipeline_agent():
         Return ONLY a single comma-separated string of the correct ticker symbols, sorted alphabetically.
         """
         try:
-            response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], temperature=0.0)
-            content = response.choices[0].message.content
+            content = llm.chat([{"role": "user", "content": prompt}], provider="azure", model=llm_deployment_name, temperature=0.0)
             cleaned_content = re.sub(r'```.*?\n|```', '', content).strip()
             tickers = sorted(list(set([t.strip() for t in cleaned_content.split(',') if t.strip()])))
             st.info(f"Agent suggested {len(tickers)} unique tickers for screening.")
@@ -185,8 +184,7 @@ def investment_pipeline_agent():
         3.  **Final Output:** Return a JSON object with a single key "relevant_tickers", containing a list of ticker symbols.
         """
         try:
-            response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}, temperature=0.0)
-            relevant_tickers = json.loads(response.choices[0].message.content).get("relevant_tickers", [])
+            relevant_tickers = json.loads(llm.chat([{"role": "user", "content": prompt}], provider="azure", model=llm_deployment_name, response_format={"type": "json_object"}, temperature=0.0)).get("relevant_tickers", [])
             st.success(f"Agent identified {len(relevant_tickers)} companies as highly relevant.")
             return relevant_tickers
         except Exception as e:
@@ -260,13 +258,7 @@ def investment_pipeline_agent():
         }}
         """
         try:
-            response = client.chat.completions.create(
-                model=llm_deployment_name,
-                messages=[{"role": "system", "content": "You are an equity analyst that only outputs structured JSON."}, {"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-                temperature=0.1
-            )
-            return json.loads(response.choices[0].message.content)
+            return json.loads(llm.chat([{"role": "system", "content": "You are an equity analyst that only outputs structured JSON."}, {"role": "user", "content": prompt}], provider="azure", model=llm_deployment_name, response_format={"type": "json_object"}, temperature=0.1))
         except Exception as e:
             st.error(f"Error in Analysis for {company_name}: {e}")
             return {}
@@ -339,8 +331,7 @@ def investment_pipeline_agent():
         }
         prompt = f"""Analyze the investment dossier. Based on the analysis of thematic alignment, SWOT, and the bull/bear cases, recommend a position size as a percentage of a portfolio (e.g., from 1% to 10%). Return a JSON object with two keys: "position_size_recommendation" (a string like "3.5%") and "rationale" (a brief explanation for your recommendation). DOSSIER: ```json\n{json.dumps(prompt_dossier, indent=2)}\n```"""
         try:
-            response = client.chat.completions.create(model=llm_deployment_name, messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"}, temperature=0.0)
-            return json.loads(response.choices[0].message.content)
+            return json.loads(llm.chat([{"role": "user", "content": prompt}], provider="azure", model=llm_deployment_name, response_format={"type": "json_object"}, temperature=0.0))
         except Exception as e: return {"error": f"Risk analysis failed: {e}"}
 
     # --- UI AND ORCHESTRATION ---
