@@ -2,9 +2,11 @@ import os
 from pinecone import Pinecone
 
 # --- CONFIGURATION ---
-# Replace with your actual API key
-PINECONE_API_KEY = "***PINECONE_KEY_REDACTED***" 
-INDEX_NAME = "portfolio-agent" # The name of your index from the screenshot
+PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
+INDEX_NAME = "portfolio-agent"  # The name of your index
+
+if not PINECONE_API_KEY:
+    raise SystemExit("Set the PINECONE_API_KEY environment variable before running this script.")
 
 # --- INITIALIZE CONNECTION ---
 try:
