@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A Streamlit application ("ARANC'AI'") that bundles 14 financial-analysis "agents" behind email/password auth. Originally a single ~7,850-line `app.py`; it has since been refactored (see **Refactor status** below) into a package: `app.py` is now a thin ~370-line router and the agents/auth/utils/config live in their own modules. There is **no automated test suite** and no lint/build config; verification during the refactor was done with `python -m py_compile` and `python -m pyflakes`.
+A Streamlit application ("ARANC'AI'") that bundles 14 financial-analysis "agents" behind email/password auth. Originally a single ~7,850-line `app.py`; it has since been refactored (see **Refactor status** below) into a package: `app.py` is now a thin ~370-line router and the agents/auth/utils/config live in their own modules. There is a **pytest smoke-test suite** under `tests/` (see Commands); the root `conftest.py` stubs deployment-only heavy deps so it runs anywhere. No lint/build config beyond that; `py_compile` + `pyflakes` were also used during the refactor.
 
 ## Commands
 
@@ -15,9 +15,13 @@ streamlit run app.py
 # Install dependencies
 pip install -r requirements.txt
 
-# Syntax + static checks used in lieu of tests
-python -m py_compile app.py config.py auth/*.py utils/*.py agents/*.py
-python -m pyflakes app.py config.py auth/*.py utils/*.py agents/*.py   # watch for "undefined name"
+# Run the smoke-test suite (stubs heavy deps; no live services needed)
+pip install -r requirements-dev.txt
+python -m pytest
+
+# Syntax + static checks also used during the refactor
+python -m py_compile app.py config.py auth/*.py utils/*.py agents/*.py llm/*.py
+python -m pyflakes app.py config.py auth/*.py utils/*.py agents/*.py llm/*.py   # watch for "undefined name"
 
 # Build/run the container (installs Chrome for plotly/kaleido image export)
 docker build -t financial-analysis-app .
@@ -80,6 +84,7 @@ Env vars are read in `config.py`. `st.connection("supabase")` additionally reads
 ## Refactor status (SPEC-driven)
 
 The refactor is following the work order in `SPEC.md` (kept locally, untracked/gitignored):
+- **Phase 0 (safety net) — done:** pytest smoke suite in `tests/` (imports, password/session, LLMClient, registry) with a dep-stubbing `conftest.py`.
 - **Phase 1 (security) — done:** bcrypt + legacy migration, `require_env` replacing the broken `except KeyError` pattern, HTTP timeouts + retry, session expiry.
 - **Phase 2 (break up the monolith) — done:** `config.py`, `auth/`, `utils/`, `static/styles.css`, and all 14 agents extracted to `agents/`. Moves were byte-for-byte; import headers were computed from each function's AST.
 - **Phase 3 — done:** `agents/base.py` (`BaseAgent`/`FunctionAgent`/`AgentRegistry`), `llm/client.py` (`LLMClient`), the registry-driven router, and all agent model calls routed through `LLMClient` (except commodity's function-calling loop and the PE agent's Vertex/Gemini calls).
