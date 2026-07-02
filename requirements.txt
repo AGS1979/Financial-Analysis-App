@@ -4,6 +4,7 @@ pandas
 numpy
 requests
 markdown
+bcrypt
 
 # AI & LLM Services
 openai>=1.0.0

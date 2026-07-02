@@ -11,7 +11,9 @@ from google.cloud import dlp_v2
 import vertexai
 from vertexai.generative_models import GenerativeModel, Part
 from st_supabase_connection import SupabaseConnection
-import hashlib # For password hashing
+import hashlib # For legacy SHA-256 password verification (migration only)
+import hmac     # For constant-time legacy hash comparison
+import bcrypt   # For password hashing
 import html # Used to escape markdown characters
 import io
 from docx.enum.style import WD_STYLE_TYPE
@@ -26,7 +28,7 @@ import json
 import requests
 import markdown
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from PyPDF2 import PdfReader
 from docx import Document
 from docx.shared import Pt, Inches
@@ -50,25 +52,107 @@ from jinja2 import Template
 import toml
 
 
-# --- GLOBAL CLIENT INITIALIZATION ---
-# This code runs only once when the app starts
-try:
-    openai_client = AzureOpenAI(
-        api_key=os.environ.get("AZURE_OPENAI_KEY"),
-        api_version="2024-02-01",  # Match your API version
-        azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
-        # The deployed model name is CRITICAL here
-        azure_deployment=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
-    )
-except KeyError as e:
-    st.error(f"Configuration error: Missing Azure secret: {e}. Please check your secrets.toml file.")
-    st.stop()
-
 # --- Must be the first st.* command ---
 st.set_page_config(
     page_title="ARANC'AI'",
     page_icon="📈",  # Adds a browser tab icon
     layout="wide"
+)
+
+# ==============================================================================
+# SHARED CONFIG & HTTP HELPERS (Phase 1 security hardening)
+# ==============================================================================
+from requests.adapters import HTTPAdapter
+try:
+    from urllib3.util.retry import Retry
+except ImportError:  # pragma: no cover - older urllib3 layout
+    from requests.packages.urllib3.util.retry import Retry
+
+# Default timeout (seconds) applied to every outbound HTTP call so a hung
+# external service (DeepSeek, FMP, EODHD, ...) can never freeze the session.
+DEFAULT_HTTP_TIMEOUT = 60
+
+# How long a login session stays valid before it must be re-established.
+SESSION_TTL_HOURS = 12
+
+
+def _build_http_session():
+    """A requests.Session with retry/backoff for transient failures on GET and POST."""
+    session = requests.Session()
+    retry = Retry(
+        total=3,
+        connect=3,
+        read=3,
+        backoff_factor=1.5,  # 0s, 1.5s, 3s, 6s between attempts
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset(["GET", "POST"]),
+        raise_on_status=False,
+        respect_retry_after_header=True,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+_HTTP_SESSION = _build_http_session()
+
+
+def http_post(url, **kwargs):
+    """requests.post with a default timeout and retry/backoff (see _build_http_session)."""
+    kwargs.setdefault("timeout", DEFAULT_HTTP_TIMEOUT)
+    return _HTTP_SESSION.post(url, **kwargs)
+
+
+def http_get(url, **kwargs):
+    """requests.get with a default timeout and retry/backoff (see _build_http_session)."""
+    kwargs.setdefault("timeout", DEFAULT_HTTP_TIMEOUT)
+    return _HTTP_SESSION.get(url, **kwargs)
+
+
+def require_env(*names):
+    """Return the named environment variables as a dict, or stop the app with a clear
+    message listing every one that is missing.
+
+    os.environ.get() returns None for missing keys (it never raises KeyError), so
+    missing configuration must be checked explicitly rather than caught.
+    """
+    values = {name: os.environ.get(name) for name in names}
+    missing = [name for name, value in values.items() if not value]
+    if missing:
+        st.error(
+            "Configuration error: the following required environment variable(s) are "
+            f"missing or empty: {', '.join(missing)}. Please set them in your "
+            "environment (or secrets.toml)."
+        )
+        st.stop()
+    return values
+
+
+def _parse_timestamp(value):
+    """Parse an ISO-8601 timestamp (with or without tz) into an aware UTC datetime, or None."""
+    if not value:
+        return None
+    try:
+        ts = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts.astimezone(timezone.utc)
+
+
+# --- GLOBAL CLIENT INITIALIZATION ---
+# This code runs only once when the app starts
+_azure_cfg = require_env(
+    "AZURE_OPENAI_KEY", "AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_DEPLOYMENT_NAME"
+)
+openai_client = AzureOpenAI(
+    api_key=_azure_cfg["AZURE_OPENAI_KEY"],
+    api_version="2024-02-01",  # Match your API version
+    azure_endpoint=_azure_cfg["AZURE_OPENAI_ENDPOINT"],
+    # The deployed model name is CRITICAL here
+    azure_deployment=_azure_cfg["AZURE_OPENAI_DEPLOYMENT_NAME"],
 )
 
 
@@ -496,14 +580,40 @@ def add_user_db(email: str, hashed_password: str):
     """Adds a new user to the users table."""
     conn.client.table("users").insert([{"email": email, "password_hash": hashed_password}]).execute()
 
-# --- Password Hashing ---
-def hash_password(password):
-    """Hashes a password using SHA-256."""
-    return hashlib.sha256(str.encode(password)).hexdigest()
+def update_user_password_db(email: str, new_hash: str):
+    """Updates a user's stored password hash (used to migrate legacy hashes to bcrypt)."""
+    conn.client.table("users").update({"password_hash": new_hash}).eq("email", email).execute()
 
-def verify_password(stored_password_hash, provided_password):
-    """Verifies a provided password against a stored hash."""
-    return stored_password_hash == hash_password(provided_password)
+# --- Password Hashing ---
+def hash_password(password: str) -> str:
+    """Hashes a password using bcrypt. Returns a str suitable for DB storage."""
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+def _is_bcrypt_hash(stored_hash) -> bool:
+    """True if the stored hash is a bcrypt hash (rather than a legacy SHA-256 hex digest)."""
+    return isinstance(stored_hash, str) and stored_hash.startswith(("$2a$", "$2b$", "$2y$"))
+
+def _legacy_sha256_matches(stored_hash: str, provided_password: str) -> bool:
+    """Constant-time check against the deprecated SHA-256 scheme (migration only)."""
+    legacy = hashlib.sha256(provided_password.encode()).hexdigest()
+    return hmac.compare_digest(str(stored_hash), legacy)
+
+def verify_password(stored_password_hash, provided_password) -> bool:
+    """Verifies a password against a bcrypt hash, falling back to legacy SHA-256.
+
+    Legacy SHA-256 hashes are accepted only so the login flow can transparently
+    re-hash them with bcrypt on the next successful login (see authentication_ui).
+    """
+    if not stored_password_hash:
+        return False
+    if _is_bcrypt_hash(stored_password_hash):
+        try:
+            return bcrypt.checkpw(
+                provided_password.encode("utf-8"), stored_password_hash.encode("utf-8")
+            )
+        except ValueError:
+            return False
+    return _legacy_sha256_matches(stored_password_hash, provided_password)
 
 # --- Authentication UI ---
 def authentication_ui():
@@ -522,20 +632,34 @@ def authentication_ui():
                 user_db = get_users_db() # UPDATED to use database function
                 if not user_db.empty and email in user_db["email"].values:
                     user_data = user_db[user_db["email"] == email].iloc[0]
-                    if verify_password(user_data["password_hash"], password):
-                        
+                    stored_hash = user_data["password_hash"]
+                    if verify_password(stored_hash, password):
+
+                        # Migrate legacy SHA-256 hashes to bcrypt on successful login,
+                        # so no mass password reset is required.
+                        if not _is_bcrypt_hash(stored_hash):
+                            try:
+                                update_user_password_db(email, hash_password(password))
+                            except Exception as e:
+                                print(f"WARNING: Failed to migrate password hash for {email}: {e}")
+
                         # --- START: MODIFIED SESSION LOGIC ---
-                        # 1. Generate a new unique session token.
+                        # 1. Generate a new unique session token with an expiry.
                         session_token = str(uuid.uuid4())
-                        
-                        # 2. Store the new token in the database.
-                        conn.client.table("users").update({"active_session_token": session_token}).eq("email", email).execute()
+                        expires_at = datetime.now(timezone.utc) + timedelta(hours=SESSION_TTL_HOURS)
+
+                        # 2. Store the new token + expiry in the database.
+                        conn.client.table("users").update({
+                            "active_session_token": session_token,
+                            "session_expires_at": expires_at.isoformat(),
+                        }).eq("email", email).execute()
 
                         # 3. Store user details in the session state.
                         # We no longer need to query for user_id.
                         st.session_state['logged_in'] = True
                         st.session_state['username'] = email      # This is the email, and our new key for logging
-                        st.session_state['session_token'] = session_token 
+                        st.session_state['session_token'] = session_token
+                        st.session_state['session_expires_at'] = expires_at.isoformat()
                         # --- END: MODIFIED SESSION LOGIC ---
                         
                         # --- ADD AUDIT LOG CALL (SUCCESS) ---
@@ -614,7 +738,7 @@ def log_audit_event(action_type: str, status: str, target_id: str = None, detail
 
 
 def validate_session():
-    """Checks if the current session_token matches the one in the database."""
+    """Checks that the current session token matches the DB and has not expired."""
     if not st.session_state.get('logged_in'):
         return False # Not logged in, no session to validate
 
@@ -622,14 +746,23 @@ def validate_session():
         email = st.session_state['username']
         local_token = st.session_state.get('session_token')
 
-        # Fetch the current token from the database
-        result = conn.client.table("users").select("active_session_token").eq("email", email).single().execute()
-        
+        # Fetch the current token + expiry from the database
+        result = conn.client.table("users").select("active_session_token, session_expires_at").eq("email", email).single().execute()
+
         db_token = result.data.get('active_session_token')
 
         # If tokens don't match, the session is invalid
         if local_token != db_token:
             return False
+
+        # Enforce session expiry. A NULL/absent value means "no expiry recorded"
+        # (e.g. a row from before this column existed) and is treated as valid so
+        # pre-migration sessions are not force-logged-out; every new login writes
+        # a real expiry via authentication_ui.
+        expires_at = _parse_timestamp(result.data.get('session_expires_at'))
+        if expires_at is not None and datetime.now(timezone.utc) >= expires_at:
+            return False
+
         return True
 
     except Exception as e:
@@ -641,11 +774,7 @@ def validate_session():
 
 def whitelist_manager_ui():
     """Renders a UI in the sidebar for admins to manage the email whitelist in Supabase."""
-    try:
-        admin_password = os.environ.get("APP_ADMIN_PASSWORD")
-    except (KeyError, FileNotFoundError):
-        admin_password = None
-
+    admin_password = os.environ.get("APP_ADMIN_PASSWORD")
     if not admin_password:
         return
 
@@ -702,13 +831,10 @@ def whitelist_manager_ui():
 # --- API Keys & Secrets ---
 # It's best practice to manage secrets in one place.
 # The app will try to get keys and handle errors gracefully if not found.
-try:
-    DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
-    FMP_API_KEY = os.environ.get("FMP_API_KEY")
-    OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-except (KeyError, FileNotFoundError):
-    st.sidebar.error("API keys not found in Streamlit secrets.")
-    st.stop()
+_keys = require_env("DEEPSEEK_API_KEY", "FMP_API_KEY")
+DEEPSEEK_API_KEY = _keys["DEEPSEEK_API_KEY"]
+FMP_API_KEY = _keys["FMP_API_KEY"]
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")  # optional: app uses Azure OpenAI by default
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 #openai_client = OpenAI(api_key=OPENAI_API_KEY)
@@ -826,7 +952,7 @@ def investment_memo_app():
                 {"role": "system", "content": "You are an expert document analyst."},
                 {"role": "user", "content": prompt}
             ]
-            response = requests.post(DEEPSEEK_API_URL, headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}, json={"model": "deepseek-chat", "messages": messages})
+            response = http_post(DEEPSEEK_API_URL, headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}, json={"model": "deepseek-chat", "messages": messages})
             response.raise_for_status()
             reply = response.json()['choices'][0]['message']['content']
             matches = re.findall(r'\d+', reply)
@@ -849,7 +975,7 @@ def investment_memo_app():
             {"role": "system", "content": "You are an expert in IPO documents."},
             {"role": "user", "content": prompt}
         ]
-        response = requests.post(DEEPSEEK_API_URL, headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}, json={"model": "deepseek-chat", "messages": messages})
+        response = http_post(DEEPSEEK_API_URL, headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}, json={"model": "deepseek-chat", "messages": messages})
         response.raise_for_status()
         
         # --- THE FIX IS HERE ---
@@ -941,7 +1067,7 @@ def investment_memo_app():
             ]
             
             try:
-                response = requests.post(
+                response = http_post(
                     DEEPSEEK_API_URL, 
                     headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}, 
                     json={"model": "deepseek-chat", "messages": messages, "temperature": 0.2}
@@ -1032,7 +1158,7 @@ def investment_memo_app():
             {"role": "system", "content": "You are a financial analyst specializing in concise summaries for infographics."},
             {"role": "user", "content": prompt}
         ]
-        response = requests.post(DEEPSEEK_API_URL, headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}, json={"model": "deepseek-chat", "messages": messages, "temperature": 0.3})
+        response = http_post(DEEPSEEK_API_URL, headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}, json={"model": "deepseek-chat", "messages": messages, "temperature": 0.3})
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
     
@@ -1113,7 +1239,7 @@ def investment_memo_app():
                 messages.append({"role": "user", "content": f"[Context from {source_label} {source_id}]:\n{text}"})
             messages.append({"role": "user", "content": f"Question: {query}"})
             
-            response = requests.post(DEEPSEEK_API_URL, headers={"Authorization": f"Bearer {self.api_key}"}, json={"model": "deepseek-chat", "messages": messages, "temperature": 0.2})
+            response = http_post(DEEPSEEK_API_URL, headers={"Authorization": f"Bearer {self.api_key}"}, json={"model": "deepseek-chat", "messages": messages, "temperature": 0.2})
             response.raise_for_status()
             
             answer_md = response.json()["choices"][0]["message"]["content"]
@@ -1363,7 +1489,7 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
     def get_fmp_data(ticker):
         def fetch(endpoint):
             url = f"https://financialmodelingprep.com/api/v3/{endpoint}/{ticker}?period=annual&limit=5&apikey={FMP_API_KEY}"
-            try: return requests.get(url).json()
+            try: return http_get(url).json()
             except requests.exceptions.RequestException: return []
         income, balance, cashflow = fetch("income-statement"), fetch("balance-sheet-statement"), fetch("cash-flow-statement")
         if not all(isinstance(d, list) and d for d in [income, balance, cashflow]): return pd.DataFrame()
@@ -1394,7 +1520,7 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
     def get_current_price(ticker):
         url = f"https://financialmodelingprep.com/api/v3/quote-short/{ticker}?apikey={FMP_API_KEY}"
         try:
-            r = requests.get(url).json()
+            r = http_get(url).json()
             if r and isinstance(r, list):
                 price = round(r[0].get("price", 0), 2)
                 # Convert pence to pounds for UK stocks
@@ -1409,7 +1535,7 @@ def dcf_agent_app(client: OpenAI, FMP_API_KEY: str):
     def get_company_news(ticker, limit=5):
         url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={ticker}&limit={limit}&apikey={FMP_API_KEY}"
         try:
-            items = requests.get(url).json()
+            items = http_get(url).json()
             return [f"{i['title']} ({i['site']})" for i in items]
         except Exception: return []
 
@@ -1873,19 +1999,10 @@ def special_situations_app():
 
     # ========== CONFIG & SETUP ==========
     # This section handles API key loading and global constants.
-    try:
-        DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
-    except (KeyError, FileNotFoundError):
-        st.error("DeepSeek API key not found. Please add it to your Streamlit secrets.")
-        st.stop()
-
+    _cfg = require_env("DEEPSEEK_API_KEY", "FMP_API_KEY")
+    DEEPSEEK_API_KEY = _cfg["DEEPSEEK_API_KEY"]
     DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
-
-    try:
-        FMP_API_KEY = os.environ.get("FMP_API_KEY")
-    except (KeyError, FileNotFoundError):
-        st.error("FMP API key not found. Please add it to your Streamlit secrets.")
-        st.stop()
+    FMP_API_KEY = _cfg["FMP_API_KEY"]
 
     # ==========================
     # REPORT & INFOGRAPHIC STRUCTURES
@@ -2013,7 +2130,7 @@ Buyback Analysis
         headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}
         payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0, "response_format": {"type": "json_object"}}
         try:
-            res = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=90)
+            res = http_post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=90)
             res.raise_for_status()
             response_json = json.loads(res.json()["choices"][0]["message"]["content"])
             if 'parent_co' in response_json and 'spin_co' in response_json:
@@ -2060,7 +2177,7 @@ Buyback Analysis
         headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}
         payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0}
         try:
-            res = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload)
+            res = http_post(DEEPSEEK_API_URL, headers=headers, json=payload)
             res.raise_for_status()
             ticker = res.json()["choices"][0]["message"]["content"].strip()
             return re.sub(r'[^A-Z\.]', '', ticker)
@@ -2071,7 +2188,7 @@ Buyback Analysis
     def get_ev_ebitda_multiple(ticker: str, fmp_key: str) -> float:
         url = f"https://financialmodelingprep.com/api/v3/key-metrics-ttm/{ticker}?apikey={fmp_key}"
         try:
-            r = requests.get(url)
+            r = http_get(url)
             data = r.json()
             if isinstance(data, list) and data:
                 return float(data[0].get("enterpriseValueOverEBITDATTM", 0))
@@ -2249,7 +2366,7 @@ Buyback Analysis
         {structure}"""
 
         # 5) Call LLM and process response
-        response = requests.post(DEEPSEEK_API_URL, headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}, json={"model":"deepseek-chat","messages":[{"role":"user","content":prompt}],"temperature":0.3})
+        response = http_post(DEEPSEEK_API_URL, headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}, json={"model":"deepseek-chat","messages":[{"role":"user","content":prompt}],"temperature":0.3})
         response.raise_for_status()
         raw_memo_text = response.json()["choices"][0]["message"]["content"]
         memo_dict_raw = split_into_sections(raw_memo_text, structure)
@@ -2291,7 +2408,7 @@ Section to Summarize:
 """
         headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}
         payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3}
-        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload)
+        response = http_post(DEEPSEEK_API_URL, headers=headers, json=payload)
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"].strip()
 
@@ -3002,7 +3119,7 @@ def portfolio_agent_app(user_id: str):
             if is_json:
                 payload["response_format"] = {"type": "json_object"}
 
-            response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=240)
+            response = http_post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=240)
             response.raise_for_status()
             
             raw_content = response.json()["choices"][0]["message"]["content"]
@@ -3314,7 +3431,7 @@ def portfolio_agent_app(user_id: str):
             # 1. Fetch Latest Earnings Call Transcripts (up to 3)
             try:
                 transcript_url = f"https://financialmodelingprep.com/api/v3/earning_call_transcript/{ticker}?apikey={FMP_API_KEY}"
-                transcript_res = requests.get(transcript_url, timeout=20)
+                transcript_res = http_get(transcript_url, timeout=20)
                 transcript_res.raise_for_status()
                 transcript_data = transcript_res.json()
                 
@@ -3333,7 +3450,7 @@ def portfolio_agent_app(user_id: str):
             # 2. Fetch Recent News
             try:
                 news_url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={ticker}&limit=20&apikey={FMP_API_KEY}"
-                news_res = requests.get(news_url, timeout=10)
+                news_res = http_get(news_url, timeout=10)
                 news_res.raise_for_status()
                 news_data = news_res.json()
                 if news_data and isinstance(news_data, list):
@@ -3426,16 +3543,17 @@ def portfolio_agent_app(user_id: str):
         class PortfolioAgent:
             def __init__(self, user_id: str, index_name: str = "portfolio-agent"):
                 self.namespace = user_id
+                pinecone_api_key = os.environ.get("PINECONE_API_KEY")
+                if not pinecone_api_key:
+                    st.error("Configuration error: PINECONE_API_KEY is missing or empty.")
+                    raise RuntimeError("PINECONE_API_KEY is not configured.")
                 try:
-                    self.pc = Pinecone(api_key=os.environ.get("PINECONE_API_KEY"))
+                    self.pc = Pinecone(api_key=pinecone_api_key)
                     if index_name not in [idx.name for idx in self.pc.list_indexes()]:
                         st.error(f"Pinecone index '{index_name}' was not found.")
                         raise NameError(f"Index '{index_name}' not found.")
                     self.index = self.pc.Index(index_name)
                     self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-                except KeyError as e:
-                    st.error(f"Missing configuration in secrets.toml: `pinecone.{e.args[0]}`")
-                    raise
                 except Exception as e:
                     st.error(f"Failed to connect to Pinecone: {e}")
                     raise
@@ -4434,12 +4552,12 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
         company_profile_url = f"https://financialmodelingprep.com/api/v3/profile/{ticker}?apikey={FMP_API_KEY}"
         try:
             company_name = "N/A"
-            profile_response = requests.get(company_profile_url)
+            profile_response = http_get(company_profile_url)
             profile_response.raise_for_status()
             profile_data = profile_response.json()
             if profile_data and "companyName" in profile_data[0]:
                 company_name = profile_data[0]['companyName']
-            response = requests.get(url)
+            response = http_get(url)
             response.raise_for_status()
             data = response.json()
             if data and "content" in data[0]:
@@ -4503,7 +4621,7 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {DEEPSEEK_API_KEY}"}
         data = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "response_format": {"type": "json_object"}}
         try:
-            response = requests.post("https://api.deepseek.com/chat/completions", headers=headers, json=data, timeout=120)
+            response = http_post("https://api.deepseek.com/chat/completions", headers=headers, json=data, timeout=120)
             response.raise_for_status()
             content_str = response.json()['choices'][0]['message']['content']
             return json.loads(content_str)
@@ -4721,15 +4839,15 @@ def pe_agent_app_azure():
     )
 
     # --- AGENT CONFIG ---
-    try:
-        di_endpoint = os.environ.get("AZURE_DI_ENDPOINT")
-        di_key = os.environ.get("AZURE_DI_KEY")
-        openai_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-        openai_key = os.environ.get("AZURE_OPENAI_KEY")
-        openai_deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
-    except KeyError as e:
-        st.error(f"Configuration error: Missing Azure secret: {e}. Please check your secrets.toml file.")
-        st.stop()
+    _cfg = require_env(
+        "AZURE_DI_ENDPOINT", "AZURE_DI_KEY", "AZURE_OPENAI_ENDPOINT",
+        "AZURE_OPENAI_KEY", "AZURE_OPENAI_DEPLOYMENT_NAME",
+    )
+    di_endpoint = _cfg["AZURE_DI_ENDPOINT"]
+    di_key = _cfg["AZURE_DI_KEY"]
+    openai_endpoint = _cfg["AZURE_OPENAI_ENDPOINT"]
+    openai_key = _cfg["AZURE_OPENAI_KEY"]
+    openai_deployment_name = _cfg["AZURE_OPENAI_DEPLOYMENT_NAME"]
 
     # --- Initialize AzureOpenAI client ---
     client = AzureOpenAI(
@@ -4862,7 +4980,7 @@ def pe_agent_app_azure():
             url = 'http://' + url
         try:
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-            response = requests.get(url, headers=headers, timeout=15)
+            response = http_get(url, headers=headers, timeout=15)
             response.raise_for_status()
             soup = BeautifulSoup(response.content, 'html.parser')
             for element in soup(["script", "style", "nav", "footer", "header"]):
@@ -5259,16 +5377,16 @@ def agent_credit_app_azure():
     )
 
     # --- AGENT CONFIG (Fetched from secrets for Azure) ---
-    try:
-        di_endpoint = os.environ.get("AZURE_DI_ENDPOINT")
-        di_key = os.environ.get("AZURE_DI_KEY")
-        openai_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-        openai_key = os.environ.get("AZURE_OPENAI_KEY")
-        openai_deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
-        conn = st.connection("supabase", type=SupabaseConnection)
-    except Exception as e:
-        st.error(f"Configuration or Connection error: {e}. Please check your secrets.toml file.")
-        st.stop()
+    _cfg = require_env(
+        "AZURE_DI_ENDPOINT", "AZURE_DI_KEY", "AZURE_OPENAI_ENDPOINT",
+        "AZURE_OPENAI_KEY", "AZURE_OPENAI_DEPLOYMENT_NAME",
+    )
+    di_endpoint = _cfg["AZURE_DI_ENDPOINT"]
+    di_key = _cfg["AZURE_DI_KEY"]
+    openai_endpoint = _cfg["AZURE_OPENAI_ENDPOINT"]
+    openai_key = _cfg["AZURE_OPENAI_KEY"]
+    openai_deployment_name = _cfg["AZURE_OPENAI_DEPLOYMENT_NAME"]
+    conn = st.connection("supabase", type=SupabaseConnection)
 
     # --- HELPER FUNCTIONS (ALIGNED WITH TEST FUNCTION) ---
     TOPIC_SYNONYMS = {
@@ -5933,13 +6051,10 @@ def model_integrity_agent_app():
     )
 
     # --- AGENT CONFIG (Fetched from secrets for Azure) ---
-    try:
-        openai_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-        openai_key = os.environ.get("AZURE_OPENAI_KEY")
-        openai_deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
-    except KeyError as e:
-        st.error(f"Configuration error: Missing Azure secret: {e}. Please check your secrets.toml file.")
-        st.stop()
+    _cfg = require_env("AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_KEY", "AZURE_OPENAI_DEPLOYMENT_NAME")
+    openai_endpoint = _cfg["AZURE_OPENAI_ENDPOINT"]
+    openai_key = _cfg["AZURE_OPENAI_KEY"]
+    openai_deployment_name = _cfg["AZURE_OPENAI_DEPLOYMENT_NAME"]
 
     # --- LOCAL HELPER FUNCTIONS ---
     def generate_report_html_from_markdown(analysis_results: dict) -> str:
@@ -6112,14 +6227,11 @@ def agent_sentinel_app():
     st.info("Note: This is an on-demand snapshot, not a continuous background service. Run it anytime to get the latest updates.", icon="ℹ️")
 
     # --- AGENT CONFIG (Fetched from secrets) ---
-    try:
-        FMP_API_KEY = os.environ.get("FMP_API_KEY")
-        openai_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-        openai_key = os.environ.get("AZURE_OPENAI_KEY")
-        openai_deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
-    except KeyError as e:
-        st.error(f"Configuration error: Missing a required secret: {e}. Please check your secrets.toml file.")
-        st.stop()
+    _cfg = require_env("FMP_API_KEY", "AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_KEY", "AZURE_OPENAI_DEPLOYMENT_NAME")
+    FMP_API_KEY = _cfg["FMP_API_KEY"]
+    openai_endpoint = _cfg["AZURE_OPENAI_ENDPOINT"]
+    openai_key = _cfg["AZURE_OPENAI_KEY"]
+    openai_deployment_name = _cfg["AZURE_OPENAI_DEPLOYMENT_NAME"]
 
     # --- LOCAL HELPER FUNCTIONS ---
     def generate_report_html_from_markdown(analysis_results: dict) -> str:
@@ -6170,7 +6282,7 @@ def agent_sentinel_app():
         try:
             tickers_str = ",".join(tickers_list)
             news_url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={tickers_str}&limit=50&apikey={FMP_API_KEY}"
-            news_response = requests.get(news_url).json()
+            news_response = http_get(news_url).json()
             if news_response and isinstance(news_response, list):
                 for item in news_response:
                     if item.get('symbol') in company_data:
@@ -6178,7 +6290,7 @@ def agent_sentinel_app():
             
             for ticker in tickers_list:
                 filings_url = f"https://financialmodelingprep.com/api/v3/sec_filings/{ticker}?type=8-K&from={date_from}&to={date_to}&limit=5&apikey={FMP_API_KEY}"
-                filings_response = requests.get(filings_url).json()
+                filings_response = http_get(filings_url).json()
                 if filings_response and isinstance(filings_response, list):
                     for item in filings_response:
                         company_data[ticker]['filings'].append(f"- 8-K Filing from {item.get('fillingDate')}: [Link]({item.get('finalLink')})")
@@ -6296,14 +6408,18 @@ def investment_pipeline_agent():
     st.markdown("### 💡 Agent IdeaGen")
     st.markdown("Define a theme. The agent will brainstorm ideas, find the correct tickers, validate them, and perform a deep-dive analysis.")
 
-    try:
-        eodhd_api_key = os.environ.get("EODHD_API_KEY")
-        fmp_api_key = os.environ.get("FMP_API_KEY")
-        client = AzureOpenAI(api_key=os.environ.get("AZURE_OPENAI_KEY"), api_version="2024-02-01", azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"))
-        llm_deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
-    except Exception as e:
-        st.error(f"Could not initialize secrets or clients. Error: {e}")
-        return
+    _cfg = require_env(
+        "EODHD_API_KEY", "FMP_API_KEY", "AZURE_OPENAI_KEY",
+        "AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_DEPLOYMENT_NAME",
+    )
+    eodhd_api_key = _cfg["EODHD_API_KEY"]
+    fmp_api_key = _cfg["FMP_API_KEY"]
+    client = AzureOpenAI(
+        api_key=_cfg["AZURE_OPENAI_KEY"],
+        api_version="2024-02-01",
+        azure_endpoint=_cfg["AZURE_OPENAI_ENDPOINT"],
+    )
+    llm_deployment_name = _cfg["AZURE_OPENAI_DEPLOYMENT_NAME"]
 
     # --- (Functions get_theme_sectors, get_company_ideas, get_exchange_rate, validate_ticker, filter_companies_by_theme_relevance remain the same) ---
     def get_theme_sectors(theme: str, client: AzureOpenAI, llm_deployment_name: str) -> list:
@@ -6349,7 +6465,7 @@ def investment_pipeline_agent():
         ticker = f"{from_currency}{to_currency}.FOREX"
         url = f"https://eodhistoricaldata.com/api/eod/{ticker}?api_token={api_key}&fmt=json&order=d&limit=1"
         try:
-            response = requests.get(url, timeout=10)
+            response = http_get(url, timeout=10)
             response.raise_for_status()
             data = response.json()
             if not data or not isinstance(data, list): return 1.0
@@ -6362,7 +6478,7 @@ def investment_pipeline_agent():
     def validate_ticker(ticker_full: str, filters: dict, eodhd_api_key: str, fmp_api_key: str, cache: dict) -> (str, dict):
         try:
             url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker_full}?api_token={eodhd_api_key}"
-            response = requests.get(url, timeout=10)
+            response = http_get(url, timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 market_cap = data.get('Highlights', {}).get('MarketCapitalization')
@@ -6383,12 +6499,12 @@ def investment_pipeline_agent():
         except Exception: pass
         try:
             profile_url = f"https://financialmodelingprep.com/api/v3/profile/{ticker_full}?apikey={fmp_api_key}"
-            profile_res = requests.get(profile_url, timeout=10)
+            profile_res = http_get(profile_url, timeout=10)
             if profile_res.status_code != 200 or not profile_res.json(): raise ValueError("FMP Profile failed.")
             profile_data = profile_res.json()[0]
             market_cap, currency, company_name = profile_data.get('mktCap'), profile_data.get('currency'), profile_data.get('companyName')
             ratios_url = f"https://financialmodelingprep.com/api/v3/ratios/{ticker_full}?apikey={fmp_api_key}"
-            ratios_res = requests.get(ratios_url, timeout=10)
+            ratios_res = http_get(ratios_url, timeout=10)
             if ratios_res.status_code != 200 or not ratios_res.json(): raise ValueError("FMP Ratios failed.")
             ratios_data = ratios_res.json()[0]
             div_yield = ratios_data.get('dividendYield', 0.0) or 0.0
@@ -6413,13 +6529,13 @@ def investment_pipeline_agent():
             description = None
             try:
                 url_eod = f"https://eodhistoricaldata.com/api/fundamentals/{ticker_code}?api_token={eodhd_api_key}"
-                response_eod = requests.get(url_eod, timeout=10)
+                response_eod = http_get(url_eod, timeout=10)
                 if response_eod.status_code == 200: description = response_eod.json().get('General', {}).get('Description', None)
             except Exception: pass
             if not description:
                 try:
                     url_fmp = f"https://financialmodelingprep.com/api/v3/profile/{ticker_code}?apikey={fmp_api_key}"
-                    response_fmp = requests.get(url_fmp, timeout=10)
+                    response_fmp = http_get(url_fmp, timeout=10)
                     if response_fmp.status_code == 200 and response_fmp.json(): description = response_fmp.json()[0].get('description', 'No description.')
                 except Exception: continue
             if description: detailed_company_data.append({"ticker": company['code'], "name": company['name'], "sector": company['sector'], "description": description[:700]})
@@ -6448,7 +6564,7 @@ def investment_pipeline_agent():
     def aggregate_qualitative_data_eodhd(ticker_code: str, api_key: str) -> str:
         base_url = "https://eodhistoricaldata.com/api/news"; ticker_only = ticker_code.split('.')[0]; params = {"api_token": api_key, "t": ticker_only, "limit": 50}
         try:
-            response = requests.get(base_url, params=params, timeout=15); response.raise_for_status(); news_data = response.json()
+            response = http_get(base_url, params=params, timeout=15); response.raise_for_status(); news_data = response.json()
             if news_data and isinstance(news_data, list): return "\n".join([f"- {item['title']} ({item['date']})" for item in news_data])
             return "No recent news found."
         except Exception: return "Could not fetch recent news."
@@ -6463,7 +6579,7 @@ def investment_pipeline_agent():
             url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker_code}?api_token={api_key}"
             metrics = {}
             try:
-                res = requests.get(url, timeout=10)
+                res = http_get(url, timeout=10)
                 res.raise_for_status()
                 data = res.json()
                 
@@ -6650,7 +6766,7 @@ def investment_pipeline_agent():
                 description_url = f"https://eodhistoricaldata.com/api/fundamentals/{ticker_code}?api_token={eodhd_api_key}"
                 description_text = "No description available."
                 try:
-                    desc_res = requests.get(description_url, timeout=10)
+                    desc_res = http_get(description_url, timeout=10)
                     if desc_res.status_code == 200: description_text = desc_res.json().get('General', {}).get('Description', 'No description available.')
                 except: pass
                 
@@ -6754,7 +6870,7 @@ def real_time_sentinel_app(user_id: str, client: AzureOpenAI):
             # Check for recent news using EODHD's global news API
             news_url = f"https://eodhd.com/api/news?s={ticker}&limit=5&api_token={eodhd_api_key}"
             try:
-                news_data = requests.get(news_url).json()
+                news_data = http_get(news_url).json()
                 if news_data and isinstance(news_data, list):
                     for item in news_data:
                         # Use LLM to check for MNPI proxy
@@ -6933,7 +7049,7 @@ def commodity_forecasting_agent(client: "AzureOpenAI"):
         """Fetches the list of available commodities from FMP."""
         try:
             url = f"https://financialmodelingprep.com/api/v3/symbol/available-commodities?apikey={_api_key}"
-            response = requests.get(url)
+            response = http_get(url)
             response.raise_for_status()
             data = response.json()
             st.session_state['commodity_name_map'] = {item['symbol']: item['name'] for item in data}
@@ -6950,7 +7066,7 @@ def commodity_forecasting_agent(client: "AzureOpenAI"):
             end_date = datetime.now()
             start_date = end_date - timedelta(days=int(years * 365.25))
             url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker}?from={start_date.strftime('%Y-%m-%d')}&to={end_date.strftime('%Y-%m-%d')}&apikey={_api_key}"
-            response = requests.get(url)
+            response = http_get(url)
             response.raise_for_status()
             data = response.json().get('historical', [])
             if not data:
@@ -7342,7 +7458,7 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"): # The 'client' paramet
                     "response_format": {"type": "json_object"},
                     "temperature": 0.0,
                 }
-                response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=120)
+                response = http_post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=120)
                 response.raise_for_status()
                 risks = json.loads(response.json()['choices'][0]['message']['content']).get("risks", [])
                 all_risks_data.extend(risks)
@@ -7415,7 +7531,7 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"): # The 'client' paramet
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.1,
             }
-            response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=60)
+            response = http_post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=60)
             response.raise_for_status()
             return response.json()['choices'][0]['message']['content'].strip().replace('"', '')
         except Exception:
