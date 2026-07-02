@@ -26,3 +26,5 @@ whitelist.csv
 secrets.toml
 __pycache__/
 *.pyc
+# One-time refactor work order (kept locally, not tracked)
+SPEC.md
