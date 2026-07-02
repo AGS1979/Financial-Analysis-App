@@ -71,6 +71,7 @@ from agents.commodity import commodity_forecasting_agent
 from agents.risk_correlator import portfolio_risk_correlator_app
 from agents.model_integrity import model_integrity_agent_app
 from agents.tariff import tariff_impact_tracker_app
+from agents.base import AgentRegistry, FunctionAgent
 
 
 # --- Must be the first st.* command ---
@@ -187,6 +188,41 @@ def show_history_page():
 # 16. MAIN APP ROUTER (CORRECTED AND COMPLETE)
 # ==============================================================================
 
+def _build_agent_registry():
+    """Single source of truth for both the router dispatch and the welcome cards.
+
+    Agents needing runtime arguments (the shared Azure client, API keys, or the
+    current user id) are wrapped in a lambda so those values are read when the
+    agent is actually rendered.
+    """
+    reg = AgentRegistry()
+
+    def add(name, title, description, render_fn):
+        agent = FunctionAgent(name, description, render_fn)
+        agent.title = title
+        reg.register(agent)
+
+    add("History", "📜 History", "View a full log of your recent activity and generated analyses.", show_history_page)
+    add("Agent IdeaGen", "💡 Agent IdeaGen", "Discover new investment ideas by screening the market based on a specific theme or set of custom criteria.", investment_pipeline_agent)
+    add("Agent PE", "🔒 Agent PE", "Analyze confidential IMs and teasers with enterprise-grade secured environment.", pe_agent_app_azure)
+    add("DCF Ginny", "📈 DCF Ginny", "Generate a document-driven Discounted Cash Flow (DCF) analysis using public data or your own financials.", lambda: dcf_agent_app(client=openai_client, FMP_API_KEY=FMP_API_KEY))
+    add("ESG Analyzer", "🌍 ESG Analyzer", "Extract and compare key ESG metrics from sustainability reports to benchmark corporate performance.", esg_analyzer_app)
+    add("Agent Pre-IPO", "📝 Agent Pre-IPO", "Upload a DRHP/IPO PDF to automatically generate a detailed investment memo and perform Q&A.", investment_memo_app)
+    add("Agent Credit", "🔒 Agent Credit", "Analyze confidential credit agreements, indentures, and loan documents in a secure environment.", agent_credit_app_azure)
+    add("Agent Portfolio", "🗂️ Agent Portfolio", "Index company-specific documents (10-Ks, earnings calls) and perform Q&A across your entire portfolio.", lambda: portfolio_agent_app(user_id=st.session_state.username))
+    add("Tariff Impact Tracker", "📈 Tariff Impact Tracker", "Analyze earnings calls or filings to extract mentions of tariffs and their financial impact.", lambda: tariff_impact_tracker_app(DEEPSEEK_API_KEY=DEEPSEEK_API_KEY, FMP_API_KEY=FMP_API_KEY, logo_base64_string=logo_base64))
+    add("Agent Special Situations", "📊 Agent Special Situations", "Analyze events like M&A, spin-offs, and activist campaigns by uploading relevant documents to generate a summary memo.", special_situations_app)
+    add("Agent Sentinel", "📡 Agent Sentinel", "Proactively monitor portfolio companies for key news, filings, and events.", agent_sentinel_app)
+    add("Model Integrity Agent", "🛡️ Model Integrity Agent", "Audit Excel financial models for errors, hard-codes, and inconsistencies.", model_integrity_agent_app)
+    add("Commodity Forecaster", "🌾 Commodity Forecaster", "Forecast commodity prices using time-series data, technical indicators, and news sentiment analysis.", lambda: commodity_forecasting_agent(client=openai_client))
+    add("Real-Time Sentinel", "🚨 Real-Time Sentinel", "Provides a real-time warning system for compliance issues and tail risks.", lambda: real_time_sentinel_app(user_id=st.session_state.username, client=openai_client))
+    add("Portfolio Risk Correlator", "🧬 Portfolio Risk Correlator", "Upload documents for multiple companies to identify and visualize hidden, correlated risks across your portfolio.", lambda: portfolio_risk_correlator_app(client=openai_client))
+    return reg
+
+
+AGENTS = _build_agent_registry()
+
+
 def main():
     """
     Main function to run the Streamlit app with authentication and routing.
@@ -248,36 +284,9 @@ def main():
     st.markdown("---")
 
     # --- ROUTER LOGIC ---
-    if app_mode == "Real-Time Sentinel":
-        real_time_sentinel_app(user_id=st.session_state.username, client=openai_client)
-    elif app_mode == "Agent IdeaGen": 
-        investment_pipeline_agent()
-    elif app_mode == "Portfolio Risk Correlator":
-        portfolio_risk_correlator_app(client=openai_client)
-    elif app_mode == "Agent Credit":
-        agent_credit_app_azure()
-    elif app_mode == "Model Integrity Agent":
-        model_integrity_agent_app()
-    elif app_mode == "Agent Sentinel":
-        agent_sentinel_app()
-    elif app_mode == "Agent PE":
-        pe_agent_app_azure()
-    elif app_mode == "Agent Pre-IPO":
-        investment_memo_app()
-    elif app_mode == "DCF Ginny":
-        dcf_agent_app(client=openai_client, FMP_API_KEY=FMP_API_KEY)
-    elif app_mode == "Agent Special Situations":
-        special_situations_app()
-    elif app_mode == "ESG Analyzer":
-        esg_analyzer_app()
-    elif app_mode == "Agent Portfolio":
-        portfolio_agent_app(user_id=st.session_state.username)
-    elif app_mode == "Tariff Impact Tracker":
-        tariff_impact_tracker_app(DEEPSEEK_API_KEY=DEEPSEEK_API_KEY, FMP_API_KEY=FMP_API_KEY, logo_base64_string=logo_base64)
-    elif app_mode == "Commodity Forecaster":
-        commodity_forecasting_agent(client=openai_client)
-    elif app_mode == "History":
-        show_history_page()
+    selected_agent = AGENTS.get(app_mode)
+    if selected_agent is not None:
+        selected_agent.render()
     else: # This is the "🏠 Welcome" page
         st.markdown('<p class="welcome-subtitle">A unified platform for advanced financial analysis.</p>', unsafe_allow_html=True)
         st.info("👈 **Select an agent from the sidebar to begin.**")
@@ -286,35 +295,17 @@ def main():
         
         st.subheader("Available Agents")
 
-        # Define all possible agent cards in a master list
-        ALL_AGENT_DETAILS = [
-            {"name": "History", "title": "📜 History", "description": "View a full log of your recent activity and generated analyses."},
-            {"name": "Agent IdeaGen", "title": "💡 Agent IdeaGen", "description": "Discover new investment ideas by screening the market based on a specific theme or set of custom criteria."},
-            {"name": "Agent PE", "title": "🔒 Agent PE", "description": "Analyze confidential IMs and teasers with enterprise-grade secured environment."},
-            {"name": "DCF Ginny", "title": "📈 DCF Ginny", "description": "Generate a document-driven Discounted Cash Flow (DCF) analysis using public data or your own financials."},
-            {"name": "ESG Analyzer", "title": "🌍 ESG Analyzer", "description": "Extract and compare key ESG metrics from sustainability reports to benchmark corporate performance."},
-            {"name": "Agent Pre-IPO", "title": "📝 Agent Pre-IPO", "description": "Upload a DRHP/IPO PDF to automatically generate a detailed investment memo and perform Q&A."},
-            {"name": "Agent Credit", "title": "🔒 Agent Credit", "description": "Analyze confidential credit agreements, indentures, and loan documents in a secure environment."},
-            {"name": "Agent Portfolio", "title": "🗂️ Agent Portfolio", "description": "Index company-specific documents (10-Ks, earnings calls) and perform Q&A across your entire portfolio."},
-            {"name": "Tariff Impact Tracker", "title": "📈 Tariff Impact Tracker", "description": "Analyze earnings calls or filings to extract mentions of tariffs and their financial impact."},
-            {"name": "Agent Special Situations", "title": "📊 Agent Special Situations", "description": "Analyze events like M&A, spin-offs, and activist campaigns by uploading relevant documents to generate a summary memo."},
-            {"name": "Agent Sentinel", "title": "📡 Agent Sentinel", "description": "Proactively monitor portfolio companies for key news, filings, and events."},
-            {"name": "Model Integrity Agent", "title": "🛡️ Model Integrity Agent", "description": "Audit Excel financial models for errors, hard-codes, and inconsistencies."},
-            {"name": "Commodity Forecaster", "title": "🌾 Commodity Forecaster", "description": "Forecast commodity prices using time-series data, technical indicators, and news sentiment analysis."},
-            {"name": "Real-Time Sentinel", "title": "🚨 Real-Time Sentinel", "description": "Provides a real-time warning system for compliance issues and tail risks."},
-            {"name": "Portfolio Risk Correlator", "title": "🧬 Portfolio Risk Correlator", "description": "Upload documents for multiple companies to identify and visualize hidden, correlated risks across your portfolio."}
-        ]
-
-        # Filter the cards based on the user's permissions
-        visible_agent_details = [agent for agent in ALL_AGENT_DETAILS if agent["name"] in visible_agents]
+        # Cards come from the same registry that drives the router, filtered by
+        # the user's permissions — one source of truth instead of a parallel list.
+        visible_agent_details = [a for a in AGENTS.all() if a.name in visible_agents]
 
         # Generate the HTML for the visible cards
         card_html_list = []
         for agent in visible_agent_details:
             card_html_list.append(f"""
-            <div class="agent-card" title="{agent['description']}">
-                <div class="agent-title">{agent['title']}</div>
-                <div class="agent-description">{agent['description']}</div>
+            <div class="agent-card" title="{agent.description}">
+                <div class="agent-title">{agent.title}</div>
+                <div class="agent-description">{agent.description}</div>
             </div>
             """)
 
