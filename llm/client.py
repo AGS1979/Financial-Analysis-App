@@ -41,9 +41,13 @@ class LLMClient:
         messages.append({"role": "user", "content": prompt})
         return self.chat(messages, provider=provider, **kwargs)
 
-    def chat(self, messages, provider: str = None, temperature: float = 0.3,
+    def chat(self, messages, provider: str = None, temperature: float = None,
              max_tokens: int = None, model: str = None, **kwargs) -> str:
-        """Run a chat completion for a pre-built messages list; returns the reply text."""
+        """Run a chat completion for a pre-built messages list; returns the reply text.
+
+        ``temperature``/``max_tokens`` are only sent when not None, so omitting them
+        uses each provider's own default (rather than forcing a value).
+        """
         provider = (provider or self.default_provider).lower()
         if provider == "deepseek":
             return self._deepseek(messages, temperature, max_tokens, model, **kwargs)
@@ -55,12 +59,10 @@ class LLMClient:
 
     # -- providers ------------------------------------------------------------
     def _deepseek(self, messages, temperature, max_tokens, model, timeout=None, **kwargs):
-        payload = {
-            "model": model or DEEPSEEK_MODEL,
-            "messages": messages,
-            "temperature": temperature,
-        }
-        if max_tokens:
+        payload = {"model": model or DEEPSEEK_MODEL, "messages": messages}
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if max_tokens is not None:
             payload["max_tokens"] = max_tokens
         payload.update(kwargs)
         post_kwargs = {
@@ -74,26 +76,24 @@ class LLMClient:
         return response.json()["choices"][0]["message"]["content"]
 
     def _azure(self, messages, temperature, max_tokens, model, **kwargs):
-        client = config.get_azure_client()
-        response = client.chat.completions.create(
-            model=model or config.AZURE_OPENAI_DEPLOYMENT_NAME,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            **kwargs,
-        )
+        params = {"model": model or config.AZURE_OPENAI_DEPLOYMENT_NAME, "messages": messages}
+        if temperature is not None:
+            params["temperature"] = temperature
+        if max_tokens is not None:
+            params["max_tokens"] = max_tokens
+        params.update(kwargs)
+        response = config.get_azure_client().chat.completions.create(**params)
         return response.choices[0].message.content
 
     def _openai(self, messages, temperature, max_tokens, model, **kwargs):
         from openai import OpenAI
-        client = OpenAI(api_key=config.OPENAI_API_KEY)
-        response = client.chat.completions.create(
-            model=model or "gpt-4o-mini",
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            **kwargs,
-        )
+        params = {"model": model or "gpt-4o-mini", "messages": messages}
+        if temperature is not None:
+            params["temperature"] = temperature
+        if max_tokens is not None:
+            params["max_tokens"] = max_tokens
+        params.update(kwargs)
+        response = OpenAI(api_key=config.OPENAI_API_KEY).chat.completions.create(**params)
         return response.choices[0].message.content
 
 

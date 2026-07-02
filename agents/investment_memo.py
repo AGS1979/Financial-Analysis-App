@@ -24,8 +24,8 @@ from docx.shared import Pt, Inches
 from jinja2 import Template
 from pathlib import Path
 from sentence_transformers import SentenceTransformer
+from llm import llm
 from utils.logging import log_audit_event, log_user_history, get_user_history
-from utils.net import http_post, http_get
 
 
 def investment_memo_app():
@@ -93,9 +93,7 @@ def investment_memo_app():
                 {"role": "system", "content": "You are an expert document analyst."},
                 {"role": "user", "content": prompt}
             ]
-            response = http_post(DEEPSEEK_API_URL, headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}, json={"model": "deepseek-chat", "messages": messages})
-            response.raise_for_status()
-            reply = response.json()['choices'][0]['message']['content']
+            reply = llm.chat(messages)
             matches = re.findall(r'\d+', reply)
             for m in matches:
                 if 1 <= int(m) <= total_pages:
@@ -116,12 +114,9 @@ def investment_memo_app():
             {"role": "system", "content": "You are an expert in IPO documents."},
             {"role": "user", "content": prompt}
         ]
-        response = http_post(DEEPSEEK_API_URL, headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}, json={"model": "deepseek-chat", "messages": messages})
-        response.raise_for_status()
-        
         # --- THE FIX IS HERE ---
         # Get the raw response and clean it by replacing newlines with spaces before returning.
-        company_name = response.json()['choices'][0]['message']['content'].strip()
+        company_name = llm.chat(messages).strip()
         return company_name.replace('\n', ' ')
 
     def find_relevant_text_for_section(full_text, section_title, keywords_map):
@@ -208,13 +203,7 @@ def investment_memo_app():
             ]
             
             try:
-                response = http_post(
-                    DEEPSEEK_API_URL, 
-                    headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}, 
-                    json={"model": "deepseek-chat", "messages": messages, "temperature": 0.2}
-                )
-                response.raise_for_status()
-                raw_content = response.json()['choices'][0]['message']['content']
+                raw_content = llm.chat(messages, temperature=0.2)
                 
                 # Clean the generated content
                 cleaned = clean_markdown(raw_content)
@@ -299,9 +288,7 @@ def investment_memo_app():
             {"role": "system", "content": "You are a financial analyst specializing in concise summaries for infographics."},
             {"role": "user", "content": prompt}
         ]
-        response = http_post(DEEPSEEK_API_URL, headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}, json={"model": "deepseek-chat", "messages": messages, "temperature": 0.3})
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
+        return llm.chat(messages, temperature=0.3)
     
     def parse_deepseek_response(summary_text):
         sections = defaultdict(list)
@@ -380,10 +367,7 @@ def investment_memo_app():
                 messages.append({"role": "user", "content": f"[Context from {source_label} {source_id}]:\n{text}"})
             messages.append({"role": "user", "content": f"Question: {query}"})
             
-            response = http_post(DEEPSEEK_API_URL, headers={"Authorization": f"Bearer {self.api_key}"}, json={"model": "deepseek-chat", "messages": messages, "temperature": 0.2})
-            response.raise_for_status()
-            
-            answer_md = response.json()["choices"][0]["message"]["content"]
+            answer_md = llm.chat(messages, temperature=0.2)
             cited_sources = sorted([source_ids[i] for i in I[0]])
             return markdown.markdown(answer_md), cited_sources, source_label
 

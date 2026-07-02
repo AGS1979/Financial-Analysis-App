@@ -16,7 +16,8 @@ import streamlit as st
 from datetime import datetime, timedelta, timezone
 from docx import Document
 from io import BytesIO
-from utils.net import http_post, http_get
+from llm import llm
+from utils.net import http_get
 
 
 def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base64_string: str):
@@ -142,12 +143,13 @@ def tariff_impact_tracker_app(DEEPSEEK_API_KEY: str, FMP_API_KEY: str, logo_base
         {_text_content[:40000]}
         ---
         """
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {DEEPSEEK_API_KEY}"}
-        data = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "response_format": {"type": "json_object"}}
         try:
-            response = http_post("https://api.deepseek.com/chat/completions", headers=headers, json=data, timeout=120)
-            response.raise_for_status()
-            content_str = response.json()['choices'][0]['message']['content']
+            content_str = llm.chat(
+                [{"role": "user", "content": prompt}],
+                temperature=0.1,
+                response_format={"type": "json_object"},
+                timeout=120,
+            )
             return json.loads(content_str)
         except requests.exceptions.RequestException as e:
             st.error(f"Error calling DeepSeek API: {e}")

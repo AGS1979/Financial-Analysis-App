@@ -5,7 +5,7 @@ Extracts risks across multiple companies' documents and clusters correlated risk
 """
 
 from openai import AzureOpenAI
-from utils.net import http_post, http_get
+from llm import llm
 
 
 def portfolio_risk_correlator_app(client: "AzureOpenAI"): # The 'client' parameter is no longer used but kept for consistency
@@ -85,16 +85,13 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"): # The 'client' paramet
             ---
             """
             try:
-                headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
-                payload = {
-                    "model": "deepseek-chat",
-                    "messages": [{"role": "user", "content": prompt}],
-                    "response_format": {"type": "json_object"},
-                    "temperature": 0.0,
-                }
-                response = http_post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=120)
-                response.raise_for_status()
-                risks = json.loads(response.json()['choices'][0]['message']['content']).get("risks", [])
+                content = llm.chat(
+                    [{"role": "user", "content": prompt}],
+                    temperature=0.0,
+                    response_format={"type": "json_object"},
+                    timeout=120,
+                )
+                risks = json.loads(content).get("risks", [])
                 all_risks_data.extend(risks)
             except Exception as e:
                 st.warning(f"An LLM error occurred during risk extraction: {e}")
@@ -159,15 +156,11 @@ def portfolio_risk_correlator_app(client: "AzureOpenAI"): # The 'client' paramet
         Cluster Name:
         """
         try:
-            headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
-            payload = {
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.1,
-            }
-            response = http_post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=60)
-            response.raise_for_status()
-            return response.json()['choices'][0]['message']['content'].strip().replace('"', '')
+            return llm.chat(
+                [{"role": "user", "content": prompt}],
+                temperature=0.1,
+                timeout=60,
+            ).strip().replace('"', '')
         except Exception:
             return "Unnamed Risk Cluster"
 

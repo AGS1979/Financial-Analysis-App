@@ -16,8 +16,9 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Pt, Inches
 from typing import List, Dict, Tuple
+from llm import llm
 from utils.logging import log_audit_event, log_user_history, get_user_history
-from utils.net import http_post, http_get
+from utils.net import http_get
 
 
 def special_situations_app():
@@ -156,12 +157,14 @@ Buyback Analysis
         CONTEXT:
         {text[:30000]}
         """
-        headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}
-        payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0, "response_format": {"type": "json_object"}}
         try:
-            res = http_post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=90)
-            res.raise_for_status()
-            response_json = json.loads(res.json()["choices"][0]["message"]["content"])
+            content = llm.chat(
+                [{"role": "user", "content": prompt}],
+                temperature=0,
+                response_format={"type": "json_object"},
+                timeout=90,
+            )
+            response_json = json.loads(content)
             if 'parent_co' in response_json and 'spin_co' in response_json:
                 return response_json
             return None
@@ -203,12 +206,11 @@ Buyback Analysis
     @st.cache_data(ttl=3600, show_spinner=False)
     def resolve_company_to_ticker(company_name: str) -> str:
         prompt = f"What is the stock ticker (FMP-compatible) for the public company '{company_name}'?"
-        headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}
-        payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0}
         try:
-            res = http_post(DEEPSEEK_API_URL, headers=headers, json=payload)
-            res.raise_for_status()
-            ticker = res.json()["choices"][0]["message"]["content"].strip()
+            ticker = llm.chat(
+                [{"role": "user", "content": prompt}],
+                temperature=0,
+            ).strip()
             return re.sub(r'[^A-Z\.]', '', ticker)
         except:
             return None
@@ -395,9 +397,7 @@ Buyback Analysis
         {structure}"""
 
         # 5) Call LLM and process response
-        response = http_post(DEEPSEEK_API_URL, headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}, json={"model":"deepseek-chat","messages":[{"role":"user","content":prompt}],"temperature":0.3})
-        response.raise_for_status()
-        raw_memo_text = response.json()["choices"][0]["message"]["content"]
+        raw_memo_text = llm.chat([{"role": "user", "content": prompt}], temperature=0.3)
         memo_dict_raw = split_into_sections(raw_memo_text, structure)
         memo_dict_cleaned = {title: clean_markdown(content) for title, content in memo_dict_raw.items()}
         
@@ -435,11 +435,7 @@ Each point must be a single sentence, highlighting key insights clearly and prof
 Section to Summarize:
 \"\"\"{section_text}\"\"\"
 """
-        headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}"}
-        payload = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3}
-        response = http_post(DEEPSEEK_API_URL, headers=headers, json=payload)
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"].strip()
+        return llm.chat([{"role": "user", "content": prompt}], temperature=0.3).strip()
 
     def build_infographic_html(company_name, sections):
         html = f"""

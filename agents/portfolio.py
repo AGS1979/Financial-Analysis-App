@@ -11,14 +11,15 @@ import os
 import re
 import streamlit as st
 
-from config import DEEPSEEK_API_URL, DEEPSEEK_API_KEY
+from config import DEEPSEEK_API_KEY
+from llm import llm
 from docx import Document
 from docx.enum.style import WD_STYLE_TYPE
 from docx.shared import Pt, Inches
 from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
 from typing import List, Dict, Tuple
-from utils.net import http_post, http_get
+from utils.net import http_get
 
 
 def portfolio_agent_app(user_id: str):
@@ -58,21 +59,14 @@ def portfolio_agent_app(user_id: str):
                 st.error("DeepSeek API Key is not configured in secrets.")
                 return "Error: API Key not available."
             
-            headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
-            payload = {
-                "model": "deepseek-chat", 
-                "messages": [{"role": "user", "content": prompt}], 
-                "temperature": 0.1, 
-                "max_tokens": 8192
-            }
-            # Add response_format if JSON is expected
-            if is_json:
-                payload["response_format"] = {"type": "json_object"}
-
-            response = http_post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=240)
-            response.raise_for_status()
-            
-            raw_content = response.json()["choices"][0]["message"]["content"]
+            json_kwargs = {"response_format": {"type": "json_object"}} if is_json else {}
+            raw_content = llm.chat(
+                [{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=8192,
+                timeout=240,
+                **json_kwargs,
+            )
             # For non-JSON, clean up spacing. For JSON, return as is.
             return raw_content if is_json else add_spacing_to_run_on_text(raw_content)
 
