@@ -1,0 +1,316 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
+
+/* 1. Apply Poppins font everywhere */
+html, body, * {
+    font-family: 'Poppins', sans-serif !important;
+}
+
+/* 2. Fine-tune main content spacing */
+.block-container {
+    padding-top: 1rem !important;
+    padding-left: 2rem !important;
+    padding-right: 2rem !important;
+}
+
+/* 3. Sidebar tweaks */
+[data-testid="stSidebar"] h1 {
+    font-size: 1.3rem !important;
+    margin-top: 0.5rem !important;
+    margin-bottom: 0 !important;
+}
+[data-testid="stSidebarUserContent"] {
+    padding-top: 1rem !important;
+}
+
+/* 4. Main page title alignment */
+h1.stTitle {
+    margin-top: 0.5rem !important;
+    font-size: 1.0rem !important;  /* 👈 increase font size here */
+    font-weight: 700 !important;
+}
+
+/* 5. Logo positioning - fixed */
+.aranca-logo {
+    position: absolute;
+    top: 0.75rem !important;
+    right: 2rem !important;
+    height: 44px !important;
+    display: flex;
+    align-items: center;
+    z-index: 9999;
+}
+
+/* 6. Header and Title styling */
+h1, h2, h3, .stTitle, .stHeader {
+    font-family: 'Poppins', sans-serif !important;
+    font-weight: 600 !important;
+    line-height: 1.25;
+    color: #1e1e1e;
+    margin-top: 1.5rem;
+    margin-bottom: 0.5rem;
+}
+
+/* 7. Radio button enhancements */
+div[data-baseweb="radio"] > label {
+    display: block;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 10px 15px;
+    margin-bottom: 5px;
+    transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+div[data-baseweb="radio"] > label > div:first-child {
+    display: none;
+}
+div[data-baseweb="radio"] > div[data-checked="true"] > label {
+    background-color: #e6f1f6;
+    border-color: #00416A;
+    font-weight: 600;
+}
+div[data-baseweb="radio"] > div:not([data-checked="true"]) > label:hover {
+    background-color: #f0f2f6;
+}
+
+/* 8. Report styling */
+.report-container {
+    font-family: 'Poppins', sans-serif !important;
+    color: #333;
+}
+.report-container h1, .report-container h2, .report-container h3 {
+    color: #00416A;
+    border-bottom: 2px solid #00416A;
+    padding-bottom: 10px;
+    margin-top: 30px;
+}
+.report-container .summary-cards {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    justify-content: space-around;
+    margin-top: 20px;
+}
+.report-container .card {
+    background-color: #f9f9f9;
+    border-left: 5px solid;
+    border-radius: 8px;
+    padding: 20px;
+    flex-basis: 300px;
+    flex-grow: 1;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+.report-container .card.base { border-color: #00416A; }
+.report-container .card.bull { border-color: #006400; }
+.report-container .card.bear { border-color: #8B0000; }
+.report-container .card-title {
+    font-size: 1.2em;
+    font-weight: bold;
+    margin-bottom: 10px;
+}
+.report-container .card-value {
+    font-size: 2.5em;
+    font-weight: bold;
+    color: #00416A;
+}
+.report-container .card-upside {
+    font-size: 1.2em;
+    margin-top: 10px;
+}
+.report-container .bull-text { color: #006400; }
+.report-container .bear-text { color: #8B0000; }
+.report-container .justification {
+    font-size: 0.9em;
+    color: #555;
+    font-style: italic;
+}
+.memo-title {
+    font-size: 1.75rem;
+    font-weight: 600;
+    color: #212529;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 40px;
+    margin-bottom: 15px;
+}
+.memo-container {
+    background-color: #f8f9fa;
+    padding: 25px;
+    border-radius: 8px;
+    line-height: 1.65;
+    font-size: 1em;
+    color: #343a40;
+    margin-bottom: 40px;
+}
+.report-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+    margin-bottom: 25px;
+    font-size: 0.95em;
+    border: none;
+}
+.report-table th, .report-table td {
+    padding: 12px 15px;
+    text-align: right;
+    border-bottom: 1px solid #e0e0e0;
+}
+.report-table th {
+    background-color: #f9f9f9;
+    color: #333;
+    font-weight: 600;
+    text-align: right;
+    border-bottom: 2px solid #00416A;
+}
+.report-table tr:hover {
+    background-color: #f5f5f5;
+}
+
+.welcome-subtitle {
+    font-size: 1.5rem !important;; /* Adjust this value as needed */
+    font-weight: 700;
+    color: #4a4a4a;
+    margin-top: -0.5rem; /* Optional: Reduces space below main title */
+    margin-bottom: 1rem;
+}
+
+/* 9. Hide ALL default tooltips within the sidebar */
+[data-testid="stSidebar"] div[role="tooltip"] {
+    display: none !important;
+}
+
+/* Align header and logo inline, cleanly */
+h1 {
+    display: inline-block;
+    vertical-align: middle;
+    font-size: 2rem !important;
+    margin-top: 1.2rem !important;
+    margin-bottom: 0.75rem !important;
+}
+
+.block-container {
+    padding-top: 4.5rem !important; /* Increased from 1rem to 4rem */
+    padding-left: 2rem !important;
+    padding-right: 2rem !important;
+}
+.aranca-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;  /* Aligns everything at the top */
+    margin-top: 0rem;
+    padding-top: 0.5rem;
+}
+
+.aranca-title {
+    font-size: 3.0rem !important;
+    font-weight: 700;
+    color: #1e1e1e;
+    margin: 0;
+    padding-top: 0.25rem;
+    line-height: 1.2;
+}
+
+.aranca-logo {
+    padding-top: 0rem;
+    height: 40px;
+}
+.aranca-logo img {
+    height: 38px;
+    object-fit: contain;
+}
+
+/* ADD THIS CODE */
+[data-testid="stSidebarCollapseButton"] {
+    display: none;
+}
+
+/* 10. Tariff Tracker Styles */
+.report-card {
+    background-color: #ffffff;
+    border: 1px solid #e0e0e0;
+    border-left: 5px solid #00416A;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+.report-card h3 {
+    margin-top: 0;
+    color: #00416A;
+}
+.report-card table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.report-card th, .report-card td {
+    padding: 10px 15px;
+    text-align: left;
+    border-bottom: 1px solid #e0e0e0;
+    vertical-align: top;
+}
+.report-card th {
+    background-color: #f9f9f9;
+}
+.report-card ul {
+    padding-left: 20px;
+    margin-top: 0;
+}
+
+
+/* 11. User History Styles */
+.history-item {
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
+    background-color: #ffffff;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+}
+.history-summary {
+    font-weight: 600;
+    font-size: 1.05em;
+    color: #1e1e1e;
+    margin-bottom: 4px;
+}
+.history-timestamp {
+    font-size: 0.9em;
+    color: #6c757d;
+    margin-bottom: 16px;
+}
+.history-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+}
+.history-tag {
+    font-size: 0.85em;
+    padding: 5px 12px;
+    border-radius: 16px;
+    background-color: #e6f1f6;
+    color: #00416A;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    max-width: 400px; /* Prevents tags from being too long */
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.history-tag-label {
+    font-weight: 600;
+    opacity: 0.7;
+}
+
+
+/* New container for a scrollable history feed */
+.history-scroll-container {
+    max-height: 440px; /* This sets the fixed height (approx. 3 cards) */
+    overflow-y: auto;  /* This adds a vertical scrollbar *only* if needed */
+    padding: 10px;     /* A little space inside the box */
+    margin-bottom: 20px;
+    background-color: #fdfdfd; /* A very light background to frame the cards */
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+}
+
+
