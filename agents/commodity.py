@@ -26,8 +26,6 @@ def commodity_forecasting_agent(client: "AzureOpenAI"):
     An advanced AI agent that uses Tools (Tavily Search) to autonomously find
     and analyze news for commodity price forecasting.
     """
-    # --- Page Configuration ---
-    st.set_page_config(layout="wide")
     st.markdown("### 🌾 Commodity Price Forecasting Agent")
     st.markdown("An agent that uses search tools to analyze market-moving news and forecast prices.")
 
